@@ -1,6 +1,6 @@
 # script to examine MUSE cubes
-# author: Ramsey Karim
 # created: September 19, 2019
+__author__ = "Ramsey Karim"
 
 import numpy as np
 from astropy.io import fits

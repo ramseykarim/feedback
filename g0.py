@@ -1,7 +1,9 @@
 # script to find G0 based on OB star positions, luminosities
-# author: Ramsey Karim
 # created: November 5, 2019
+__author__ = "Ramsey Karim"
 
+import datetime
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import glob
@@ -17,14 +19,14 @@ data_directory = "../ancillary_data/"
 # spitzer irac generator
 def irac_data(wl):
     i = [3.6, 4.5, 5.8, 8.0].index(wl) + 1
-    fn =  data_directory+"spitzer/irac/30002561.30002561-28687.IRAC.{:1d}.median_mosaic.fits".format(i)
+    fn =  "{:s}spitzer/irac/30002561.30002561-28687.IRAC.{:1d}.median_mosaic.fits".format(data_directory, i)
     data, image_header = fits.getdata(fn, header=True)
     return data, image_header, image_header['WAVELEN']
 # herschel spire/pacs generator
 def herschel_data(wl):
     i = [70, 160, 250, 350, 500].index(wl)
     folder = ["HPPJSMAPB", "HPPJSMAPR", "extdPSW", "extdPMW", "extdPLW"][i]
-    fn = glob.glob(fdata_directory+"herschel/anonymous1571176316/1342255009/level2_5/{folder}/*.fits*").pop()
+    fn = glob.glob(f"{data_directory}herschel/anonymous1571176316/1342255009/level2_5/{folder}/*.fits*").pop()
     with fits.open(fn) as hdul:
         global_header = hdul[0].header
         data = hdul[1].data
@@ -54,7 +56,7 @@ def plot_irac():
     plt.xlabel("RA")
     plt.ylabel("DEC")
 
-radec_df = pd.read_pickle(data_directory+"catalogs/OBradec.pkl")
+radec_df = pd.read_pickle(f"{data_directory}catalogs/OBradec.pkl")
 print(type(radec_df['coords'][1]))
 wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg))
 # Find everything within 11 arcminutes of the center (the rough size of the nebula on the sky)
@@ -160,30 +162,40 @@ def distance_from_point_pixelgrid(point_coord, w, distance_los_pc):
     """
     # grid_shape from w.array_shape
     grid_shape = w.array_shape
-    # Assume even pixel sampling in both directions (pretty safe)
-    pixel_scale = u.quantity.Quantity(w.to_header()['PC2_2'], w.to_header()['CUNIT2'])
     ref_pixel = w.world_to_array_index(point_coord)
-    grid = np.sqrt((np.arange(grid_shape[0]) - ref_pixel[0])[:, np.newaxis]**2 + (np.arange(grid_shape[1]) - ref_pixel[1])[np.newaxis, :]**2)
-    grid *= pixel_scale.to('rad').to_value() * distance_los_pc
+    # Get physical separation per pixel along each axis at 0,0 (assume they do not change -- this should be ok for small regions)
+    ds_di = w.array_index_to_world(*ref_pixel).separation(w.array_index_to_world(ref_pixel[0]+1, ref_pixel[1])).to('rad').to_value() * distance_los_pc
+    ds_dj = w.array_index_to_world(*ref_pixel).separation(w.array_index_to_world(ref_pixel[0], ref_pixel[1]+1)).to('rad').to_value() * distance_los_pc
+    grid = np.sqrt((ds_di*(np.arange(grid_shape[0]) - ref_pixel[0]))[:, np.newaxis]**2 + (ds_dj*(np.arange(grid_shape[1]) - ref_pixel[1]))[np.newaxis, :]**2)
     return grid
 
-def distance_from_point_wcssep():
-    pass
+def distance_from_point_wcssep(point_coord, w, distance_los_pc):
+    """
+    Again, this is way slower (probably grid.size**2)
+    """
+    grid = np.full(w.array_shape, np.nan)
+    ij_arrays = tuple(idx_grid.ravel() for idx_grid in np.mgrid[tuple(slice(0, shape_i) for shape_i in w.array_shape)])
+    grid[ij_arrays] = w.array_index_to_world(*ij_arrays).separation(point_coord).to('rad').to_value() * distance_los_pc
+    return grid
 
 
-import datetime
 args, kwargs = (4.16*1000,), {'pixel_scale_am': (3./50), 'grid_shape':(1000, 500), 'ref_pixel':(500, 250)}
-# grid, w = distance_from_point(wd2_center_coord, *args, **kwargs)
+img_data, img_header, wl = herschel_data(500)
+w = WCS(img_header)
+# base_grid, w = distance_from_center_wcssep(wd2_center_coord, *args, **kwargs)
+# print(w)
+test_point = w.array_index_to_world(1, 1)
+
+
 t0 = datetime.datetime.now()
-grid, w = distance_from_center_wcssep(wd2_center_coord, *args, **kwargs)
+grid = distance_from_point_pixelgrid(test_point, w, *args)
 t1 = datetime.datetime.now()
-grid2, w2 = distance_from_center_pixelgrid(wd2_center_coord, *args, **kwargs)
+grid2 = distance_from_point_wcssep(test_point, w, *args)
 t2 = datetime.datetime.now()
 print((t1-t0).total_seconds()*1000, "ms")
 print((t2-t1).total_seconds()*1000, "ms")
-grid = distance_from_point_pixelgrid(wd2_center_coord, w, *args)
-plt.subplot(projection=w)
-plt.imshow(grid, cmap='gray_r')
+plt.subplot(111, projection=w)
+plt.imshow((grid2-grid)/grid2, cmap='gray_r')
 plt.xlabel("RA")
 plt.ylabel("DEC")
 plt.show()

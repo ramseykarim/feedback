@@ -1,6 +1,6 @@
 # script to read/create star catalogs with pandas
-# author: Ramsey Karim
 # created: October 21, 2019
+__author__ = "Ramsey Karim"
 
 import numpy as np
 from astropy.io import ascii, fits
