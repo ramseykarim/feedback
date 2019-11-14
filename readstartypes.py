@@ -177,6 +177,6 @@ def plot_sternberg_stuff():
 if __name__ == "__main__":
     roman_num = '(I+|I?V)'
     peculiar = '(\\(*(f|e)(\\+|\\*)?\\)*\\*?)?'
-    cat = pd.read_pickle(f"{catalogs_directory}OBradec.pkl")
+    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
 
 
