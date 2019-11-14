@@ -56,7 +56,7 @@ def ST_parse_type(spectral_type_string):
         i += 1
     return f"{letter}{''.join(number)}", subtype
 
-    
+
 # Then remove f's and *'s and stuff like that
 
 # Then split up the luminosity class from the spectral type
@@ -68,24 +68,33 @@ def ST_parse_slash(spectral_type_string):
         return [spectral_type_string]
     roman_num = '(I+|I?V)'
     peculiar = '(\\(*(f|e)(\\+|\\*)?\\)*\\*?)'
-    number = '(\\d\\.?\\d?)' # HAVE NOT TRIED THIS YET
+    number = '(\\d{1}(\\.\\d)?)'
     # Parse the slash notation from SINGLE star (not binary)
     # The O/WN stars are a confusing category: see Wikipedia Wolf-Rayet stars: Slash stars
     if spectral_type_string[spectral_type_string.index('/') + 1] == 'W':
         # This is a "slash star", return both complete spectral types
         return spectral_type_string.split('/')
     # Add possible luminosity classes to this list
-    possibile_classes = []
-    pattern_lumclass = f'({roman_num}{peculiar}?)/({roman_num}{peculiar}?)'
+    possible_lumclasses = []
+    pattern_lumclass = f'({roman_num}{peculiar}?)(/({roman_num}{peculiar}?))+'
     match_lumclass = re.search(pattern_lumclass, spectral_type_string)
-    if match:
-        lumclasses = match.group().split('/')
-        for c in lumclasses:
-            possibile_classes.append(spectral_type_string.replace(match.group(), c))
+    if match_lumclass:
+        possible_lumclasses.extend(match_lumclass.group().split('/'))
+        for i in range(len(possible_lumclasses)):
+            possible_lumclasses[i] = spectral_type_string.replace(match_lumclass.group(), possible_lumclasses[i])
     else:
-        possibile_classes.append(spectral_type_string)
-    # NEED TO GO THRU POSSIBLE_CLASSES AND LOOK FOR POSSIBLE SUBTYPES
-
+        possible_lumclasses.append(spectral_type_string)
+    possible_classes = []
+    for possible_lumclass in possible_lumclasses:
+        pattern_subclass = f'({number})(/({number}))+'
+        match_subclass = re.search(pattern_subclass, possible_lumclass)
+        if match_subclass:
+            possible_subclasses = match_subclass.group().split('/')
+            for i in range(len(possible_subclasses)):
+                possible_classes.append(possible_lumclass.replace(match_subclass.group(), possible_subclasses[i]))
+        else:
+            possible_classes.append(possible_lumclass)
+    return possible_classes
 
 
 
@@ -173,10 +182,13 @@ def plot_sternberg_stuff():
     plt.show()
 
 
+def test_ST_parse_slash():
+    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
+    tests = [cat.SpectralType[19], cat.SpectralType[5], 'B5/6.5III', 'O4II/III', cat.SpectralType[26]]
+    for t in tests:
+        print(t, ST_parse_slash(t))
+
+
 
 if __name__ == "__main__":
-    roman_num = '(I+|I?V)'
-    peculiar = '(\\(*(f|e)(\\+|\\*)?\\)*\\*?)?'
-    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
-
-
+    test_ST_parse_slash()
