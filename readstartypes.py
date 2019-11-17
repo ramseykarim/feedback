@@ -121,14 +121,21 @@ def st_tuple_to_string(s):
 def st_to_number(spectral_type):
     # Returns a float number based on the spectral type, increasing with later type
     # Just simple letter+number spectral_type, decminal optional
+    # OR tuple ('letter', 'number', 'lumclass', 'peculiarity')
     # Like "O3" or "B1.5"
     # Wow ok this exact system was used in Vacca et al 1996... nice one dude
-    if isinstance(spectral_type, tuple):
-        spectral_type = spectral_type[0] + spectral_type[1]
-    if re.search(nonstandard_types_re, spectral_type):
-        return INVALID_STAR_FLAG
     type_key = 'OBAFGKM'
-    return type_key.index(re.search(standard_types_re, spectral_type).group())*10. + float(re.search(number_re, spectral_type).group())
+    if isinstance(spectral_type, str):
+        if re.search(nonstandard_types_re, spectral_type):
+            return INVALID_STAR_FLAG
+        t = re.search(standard_types_re, spectral_type).group()
+        subt = re.search(number_re, spectral_type).group()
+    else:
+        t, subt = spectral_type[0], spectral_type[1]
+    if t not in type_key:
+        return INVALID_STAR_FLAG
+    else:
+        return type_key.index(t)*10. + float(subt)
 
 
 def lc_to_number(lumclass):
@@ -139,13 +146,79 @@ def lc_to_number(lumclass):
     return ['I', 'II', 'III', 'IV', 'V'].index(lumclass) + 1
 
 
+def st_reduce_to_brightest_star(st):
+    # st = string
+    st = st_parse_binary(st)
+    # st = list(string)
+    st = [st_parse_slashdash(x) for x in st]
+    # st = list(list(string))
+    st = [[st_parse_type(y) for y in x] for x in st]
+    # st = list(list(tuple(string)))
+    st = [min(x, key=st_to_number) for x in st]
+    # st = list(tuple(string))
+    st = min(st, key=st_to_number)
+    # st = tuple(string)
+    return st
+
+
+def reduce_catalog_spectral_types(cat):
+    cat['SpectralType_Adopted'] = cat.SpectralType.where(cat.SpectralType != 'ET', other='O9V', inplace=False)
+    cat['SpectralType_ReducedTuple'] = cat.SpectralType_Adopted.apply(st_reduce_to_brightest_star)
+    cat['SpectralType_Reduced'] = cat.SpectralType_ReducedTuple.apply(st_tuple_to_string)
+    cat['SpectralType_Number'] = cat.SpectralType_Reduced.apply(st_to_number)
+
+"""
+===============================================================================
+================== Tests ======================================================
+===============================================================================
+"""
+
+
+def test_st_parse_slashdash():
+    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
+    tests = [cat.SpectralType[19], cat.SpectralType[5], cat.SpectralType[7], 'B5/6.5III', 'O4II/III', cat.SpectralType[26], cat.SpectralType[27]]
+    for t in tests:
+        l = st_parse_slashdash(t)
+        print(t, '\t', l)
+        print('\t', [st_parse_type(x) for x in l])
+        print()
+
+
+def test_full_st_parse():
+    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
+    count = 0
+    for st in cat.SpectralType:
+        assert isinstance(st, str)
+        if st == 'ET':
+            st = 'O9.5V'
+            count += 1
+        stars = [[st_parse_type(x) for x in st_parse_slashdash(y)] for y in st_parse_binary(st)]
+        types = [x[0][0:2] for x in stars]
+        if types and all(types[0]):
+            print([i[0]+i[1] for i in types])
+        else:
+            print(stars)
+    print(f"There are {count} ET stars")
+
+
+
+
+"""
+===============================================================================
+================== For Sternberg and Vacca ====================================
+===============================================================================
+"""
+
 def fit_characteristic(df_subtype, characteristic):
     # Get characteristic interp (i.e. "Teff")
     # from df_subtype (i.e. spectral_type_df_dict["III"])
     independent, dependent = np.array([st_to_number(x) for x in df_subtype.index]), df_subtype[characteristic]
     interp_from_number = interp1d(independent, dependent, kind='linear')
     def interp_function(spectral_type):
-        return interp_from_number(st_to_number(spectral_type))
+        try:
+            return interp_from_number(st_to_number(spectral_type))
+        except:
+            return 0
     return interp_function
 
 
@@ -156,19 +229,22 @@ class SpectralTypeTables:
         self.memoized_interpolations = {}
         self.memoized_type_names = {}
 
-    def lookup_characteristic(spectral_type_tuple, characteristic):
+    def lookup_characteristic(self, spectral_type_tuple, characteristic):
         # Spectral type tuple can be 3 or 4 elements (4th is peculiarity, ignored)
         # Characteristic is a valid column name, i.e. Teff or log_L
         if characteristic not in self.column_units.index:
             raise RuntimeError(f"{characteristic} is not a recognized column name.")
-        # Discard peculiarity
+        # Discard peculiarity and sanitize input
         spectral_type_tuple = spectral_type_tuple[:3]
+        spectral_type_tuple = self.sanitize_tuple(spectral_type_tuple)
+        if not spectral_type_tuple:
+            return 0
         lettertype, subtype, lumclass = spectral_type_tuple
         # Get subtype DataFrame
-        df_subtype = self.star_tables[lumclass]
-        if spectral_type in df_subtype.index:
+        df_lumclass = self.star_tables[lumclass]
+        if lettertype+subtype in df_lumclass.index:
             # If the spectral type is in this table, return value for characteristic
-            return df_subtype[characteristic].loc[spectral_type]
+            return df_lumclass[characteristic].loc[lettertype+subtype]
         else:
             # If type is not in table, interpolate between types using number approximation
             if spectral_type_tuple in self.memoized_interpolations:
@@ -176,16 +252,30 @@ class SpectralTypeTables:
                 interp_function = self.memoized_interpolations[spectral_type_tuple]
             else:
                 # If we don't, make one
-                interp_function = fit_characteristic(df_subtype, characteristic)
+                interp_function = fit_characteristic(df_lumclass, characteristic)
                 self.memoized_interpolations[spectral_type_tuple] = interp_function
             # Use interpolation to return a value for the characteristic
-            return interp_function(spectral_type)
+            return interp_function(spectral_type_tuple)
+
+    def sanitize_tuple(self, spectral_type_tuple):
+        if re.search(nonstandard_types_re, spectral_type_tuple[0]):
+            return False
+        if not re.search(roman_num_re, spectral_type_tuple[2]):
+            spectral_type_tuple = list(spectral_type_tuple)
+            spectral_type_tuple[2] = 'V'
+            return tuple(spectral_type_tuple)
+        return spectral_type_tuple
 
 
-    def lookup_units(characteristic):
+    def lookup_units(self, characteristic):
         if characteristic not in self.column_units.index:
             raise RuntimeError(f"{characteristic} is not a recognized column name.")
         return self.column_units['Units'].loc[characteristic]
+
+
+def get_catalog_properties_sternberg(cat, characteristic):
+    sternberg_tables = SpectralTypeTables()
+    cat[characteristic] = cat.SpectralType_ReducedTuple.apply(sternberg_tables.lookup_characteristic, args=(characteristic,))
 
 
 def vacca_calibration(spectral_type_number, luminosity_class_number, characteristic):
@@ -220,69 +310,7 @@ def plot_sternberg_stuff():
 
 
 
-def test_st_parse_slashdash():
-    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
-    tests = [cat.SpectralType[19], cat.SpectralType[5], cat.SpectralType[7], 'B5/6.5III', 'O4II/III', cat.SpectralType[26], cat.SpectralType[27]]
-    for t in tests:
-        l = st_parse_slashdash(t)
-        print(t, '\t', l)
-        print('\t', [st_parse_type(x) for x in l])
-        print()
-
-
-def test_full_st_parse():
-    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
-    count = 0
-    for st in cat.SpectralType:
-        assert isinstance(st, str)
-        if st == 'ET':
-            st = 'O9.5V'
-            count += 1
-        stars = [[st_parse_type(x) for x in st_parse_slashdash(y)] for y in st_parse_binary(st)]
-        types = [x[0][0:2] for x in stars]
-        if types and all(types[0]):
-            print([i[0]+i[1] for i in types])
-        else:
-            print(stars)
-    print(f"There are {count} ET stars")
-
-
-def draft_better_full_parse():
-    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
-    cat['SpectralType_Adopted'] = cat.SpectralType.where(cat.SpectralType != 'ET', other='O9V', inplace=False)
-    for idx in cat.index:
-        st = cat.SpectralType_Adopted[idx]
-        stars = st_parse_binary(st)
-        if len(stars) == 1:
-            stars = {'{}'.format(idx): stars.pop()}
-        else:
-            stars = {'{}{}'.format(idx, chr(ord('a')+i)): x for i,x in enumerate(stars)}
-        for k in stars:
-            possibilities = [st_parse_type(x) for x in st_parse_slashdash(stars[k])]
-            stars[k] = st_to_number(max(possibilities, key=st_to_number))
-
-def draft_even_better_full_parse():
-    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
-    cat['SpectralType_Adopted'] = cat.SpectralType.where(cat.SpectralType != 'ET', other='O9V', inplace=False)
-    def reduce_to_one_star(st):
-        # st = string
-        st = st_parse_binary(st)
-        # st = list(string)
-        st = [st_parse_slashdash(x) for x in st]
-        # st = list(list(string))
-        st = [[st_parse_type(y) for y in x] for x in st]
-        # st = list(list(tuple(string)))
-        st = [min(x, key=st_to_number) for x in st]
-        # st = list(tuple(string))
-        st = min(st, key=st_to_number)
-        # st = tuple(string)
-        return st_tuple_to_string(st)
-    cat['SpectralType_Reduced'] = cat.SpectralType_Adopted.apply(reduce_to_one_star)
-    cat['SpectralType_Number'] = cat.SpectralType_Reduced.apply(st_to_number)
-    return cat
-
-
-
-
 if __name__ == "__main__":
-    cat = draft_even_better_full_parse()
+    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
+    reduce_catalog_spectral_types(cat)
+

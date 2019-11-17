@@ -14,6 +14,8 @@ from astropy.coordinates import SkyCoord
 import pandas as pd
 from misc_utils import flquantiles
 
+from readstartypes import reduce_catalog_spectral_types, get_catalog_properties_sternberg
+
 data_directory = "../ancillary_data/"
 
 # spitzer irac generator
@@ -56,8 +58,10 @@ def plot_irac():
     plt.xlabel("RA")
     plt.ylabel("DEC")
 
-radec_df = pd.read_pickle(f"{data_directory}catalogs/OBradec.pkl")
-print(type(radec_df['coords'][1]))
+radec_df = pd.read_pickle(f"{data_directory}catalogs/Ramsey/OBradec.pkl")
+reduce_catalog_spectral_types(radec_df)
+get_catalog_properties_sternberg(radec_df, 'log_L')
+get_catalog_properties_sternberg(radec_df, 'Teff')
 wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg))
 # Find everything within 11 arcminutes of the center (the rough size of the nebula on the sky)
 def within_range(star_row):
@@ -93,7 +97,24 @@ def plot_nearby_Wd2():
     plt.legend()
     plt.show()
 
-def make_wcs(ref_coord, grid_shape, ref_pixel, pixel_scale):
+def plot_nearby_Wd2_types_JUSTSTARS(extra_filter=True):
+    df = radec_df.loc[is_within_range & (radec_df.SpectralType_Number < 20) & (radec_df.Teff > 0) & extra_filter]
+    values = df.Teff
+    plt.scatter(*get_radec(df), marker='o', s=12, c=values, cmap='Reds_r',
+        transform=get_transform(), label='stars')
+
+
+def plot_nearby_Wd2_types():
+    plt.figure(figsize=(13, 10))
+    plot_irac()
+    plot_nearby_Wd2_types_JUSTSTARS()
+    plt.scatter([wd2_center_coord.ra.deg], [wd2_center_coord.dec.deg], marker='x',
+        color='blue', transform=get_transform(), label='center of Wd2')
+    plt.legend()
+    plt.show()
+
+
+def make_wcs(ref_coord, grid_shape=None, ref_pixel=None, pixel_scale=None):
     """
     ref_pixel should be Numpy array index (0-indexed)
     If grid shape is (10, 10) i.e. (0..9, 0..9) and you want pixel (4, 4)
@@ -104,6 +125,8 @@ def make_wcs(ref_coord, grid_shape, ref_pixel, pixel_scale):
     """
     if not isinstance(pixel_scale, u.quantity.Quantity):
         pixel_scale *= u.arcmin
+    if ref_pixel is None:
+        ref_pixel = tuple(int(x/2) for x in grid_shape)
     kws = {
         'NAXIS': (2, "Number of axes"),
         'NAXIS1': (grid_shape[1], "X/j axis length"),
@@ -134,18 +157,18 @@ wcssep is more accurate across larger areas, since it deals in great circles ins
 Depending on the approximation being made, it may not matter so much
 """
 
-def distance_from_center_pixelgrid(center_coord, distance_los_pc, grid_shape=None, ref_pixel=None, pixel_scale_am=None):
-    w = make_wcs(center_coord, grid_shape, ref_pixel, pixel_scale_am)
+def distance_from_center_pixelgrid(center_coord, distance_los_pc, grid_shape=None, ref_pixel=None, pixel_scale=None):
+    w = make_wcs(center_coord, grid_shape, ref_pixel, pixel_scale)
     grid = np.sqrt((np.arange(grid_shape[0]) - ref_pixel[0])[:, np.newaxis]**2 + (np.arange(grid_shape[1]) - ref_pixel[1])[np.newaxis, :]**2)
-    grid = np.radians(grid * pixel_scale_am/60) * distance_los_pc
+    grid = np.radians(grid * pixel_scale.to('deg').to_value()) * distance_los_pc
     return grid, w
 
-def distance_from_center_wcssep(center_coord, distance_los_pc, grid_shape=None, ref_pixel=None, pixel_scale_am=None):
+def distance_from_center_wcssep(center_coord, distance_los_pc, grid_shape=None, ref_pixel=None, pixel_scale=None):
     """
     grid_shape and ref_pixel should be in i,j order (row, col), NOT x,y
     Returns grid with physical distances in pc from center_coord, as well as WCS object for this grid
     """
-    w = make_wcs(center_coord, grid_shape, ref_pixel, pixel_scale_am)
+    w = make_wcs(center_coord, grid_shape, ref_pixel, pixel_scale)
     grid = np.full(grid_shape, np.nan)
     ij_arrays = tuple(idx_grid.ravel() for idx_grid in np.mgrid[tuple(slice(0, shape_i) for shape_i in grid_shape)])
     grid[ij_arrays] = w.array_index_to_world(*ij_arrays).separation(center_coord).to('rad').to_value() * distance_los_pc
@@ -178,24 +201,54 @@ def distance_from_point_wcssep(point_coord, w, distance_los_pc):
     grid[ij_arrays] = w.array_index_to_world(*ij_arrays).separation(point_coord).to('rad').to_value() * distance_los_pc
     return grid
 
+args, kwargs = (4.16*1000,), {'pixel_scale': 1*u.arcsec, 'grid_shape':(1500, 1500), 'ref_pixel':(500, 500)}
 
-args, kwargs = (4.16*1000,), {'pixel_scale_am': (3./50), 'grid_shape':(1000, 500), 'ref_pixel':(500, 250)}
-img_data, img_header, wl = herschel_data(500)
-w = WCS(img_header)
+
+def test_compare_wcssep_pixelgrid():
+    img_data, img_header, wl = herschel_data(500)
+    w = WCS(img_header)
+    t0 = datetime.datetime.now()
+    grid = distance_from_point_pixelgrid(test_point, w, *args)
+    t1 = datetime.datetime.now()
+    grid2 = distance_from_point_wcssep(test_point, w, *args)
+    t2 = datetime.datetime.now()
+    print((t1-t0).total_seconds()*1000, "ms")
+    print((t2-t1).total_seconds()*1000, "ms")
+    plt.subplot(111, projection=w)
+    plt.imshow((grid2-grid)/grid2, cmap='gray_r')
+    plt.xlabel("RA")
+    plt.ylabel("DEC")
+    plt.show()
+
+
+
+def distance_from_all_points(point_coords, w, distance_los_pc):
+    return np.sum(point_coords.apply(lambda x: (.1/distance_from_point_pixelgrid(x, w, distance_los_pc)**2)), axis=0)
+
+def calc_g0(cat, w, distance_los_pc):
+    inv_dist = cat.coords.apply(lambda x: (.1/distance_from_point_pixelgrid(x, w, distance_los_pc)**2))
+    return np.sum(2.1 * np.exp(cat.log_L) * inv_dist, axis=0)
+
+# img_data, img_header, wl = irac_data(8)
+# w = WCS(img_header)
+w = make_wcs(wd2_center_coord, pixel_scale=2*u.arcsec, grid_shape=(1500, 1500))
 # base_grid, w = distance_from_center_wcssep(wd2_center_coord, *args, **kwargs)
 # print(w)
-test_point = w.array_index_to_world(1, 1)
-
+# test_point = w.array_index_to_world(1, 1)
 
 t0 = datetime.datetime.now()
-grid = distance_from_point_pixelgrid(test_point, w, *args)
+grid = calc_g0(radec_df, w, 4.16*1000)
 t1 = datetime.datetime.now()
-grid2 = distance_from_point_wcssep(test_point, w, *args)
-t2 = datetime.datetime.now()
 print((t1-t0).total_seconds()*1000, "ms")
-print((t2-t1).total_seconds()*1000, "ms")
+plt.figure(figsize=(13, 10))
 plt.subplot(111, projection=w)
-plt.imshow((grid2-grid)/grid2, cmap='gray_r')
+plt.imshow(np.log10(grid), cmap='gray')
+plot_nearby_Wd2_types_JUSTSTARS()
 plt.xlabel("RA")
 plt.ylabel("DEC")
+
+plot_nearby_Wd2_types()
+
 plt.show()
+
+
