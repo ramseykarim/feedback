@@ -34,29 +34,47 @@ def herschel_data(wl):
         data = hdul[1].data
         image_header = hdul[1].header
     return data, image_header, global_header['WAVELNTH']
+# sofia data that Maitraiyee emailed me on nov 18 2019
+def sofia_data_integrated():
+    data, header = fits.getdata(f"{data_directory}sofia/rcw49-cii-int.fits", header=True)
+    header.set('NAXIS', value=2)
+    for k in header:
+        if '3' in k:
+            header.remove(k)
+    return data[0, :, :], header, 157
 
-def plot_spire():
+def plot_spire(subplot=111):
     ### READY TO PLOT SPIRE 500 IN GREY
     img_data, img_header, wl = herschel_data(500)
     img_data = np.arcsinh(img_data)
     vmin, vmax = flquantiles(img_data[~np.isnan(img_data)].ravel(), 50)
     print("vlims: {:.2f}, {:.2f}".format(vmin, vmax), img_data.shape)
-    plt.subplot(projection=WCS(img_header))
+    plt.subplot(subplot, projection=WCS(img_header))
     plt.imshow(img_data, vmin=vmin, vmax=7, cmap='gray_r')
     plt.xlabel("RA")
     plt.ylabel("DEC")
     # CDELT1=-0.003888888888889
 
-def plot_irac():
+def plot_irac(subplot=111):
     ### READY TO PLOT IRAC 3.6um IN GREY
     img_data, img_header, wl = irac_data(3.6)
     img_data = np.arcsinh(img_data)
     vmin, vmax = flquantiles(img_data[~np.isnan(img_data)].ravel(), 50)
     print("vlims: {:.2f}, {:.2f}".format(vmin, vmax), img_data.shape)
-    plt.subplot(projection=WCS(img_header))
+    plt.subplot(subplot, projection=WCS(img_header))
     plt.imshow(img_data, vmin=vmin, vmax=4.3, cmap='gray_r')
     plt.xlabel("RA")
     plt.ylabel("DEC")
+
+def plot_sofia_integrated(subplot=111):
+    ### READT TO PLOT SOFIA INTEGRATED [CII] INTENSITY (moment 0)
+    img_data, img_header, wl = sofia_data_integrated()
+    vmin, vmax = 8, 400
+    plt.subplot(subplot, projection=WCS(img_header, naxis=2))
+    plt.imshow(img_data, vmin=vmin, vmax=vmax, cmap='gray_r')
+    plt.xlabel("RA")
+    plt.ylabel("DEC")
+
 
 radec_df = pd.read_pickle(f"{data_directory}catalogs/Ramsey/OBradec.pkl")
 reduce_catalog_spectral_types(radec_df)
@@ -91,7 +109,7 @@ def plot_nearby_Wd2():
     print(radec_df.shape)
     print(is_within_range.sum())
     plt.scatter(*get_radec(radec_df.loc[is_within_range]), marker='x',
-        color='blue', transform=get_transform(), label='stars')
+        color='blue', transform=get_transform(), label='Wd2 OB Stars')
     plt.scatter([wd2_center_coord.ra.deg], [wd2_center_coord.dec.deg], marker='o',
         color='red', transform=get_transform(), label='center of Wd2')
     plt.legend()
@@ -101,8 +119,11 @@ def plot_nearby_Wd2_types_JUSTSTARS(extra_filter=True):
     df = radec_df.loc[is_within_range & (radec_df.SpectralType_Number < 20) & (radec_df.Teff > 0) & extra_filter]
     values = df.Teff
     plt.scatter(*get_radec(df), marker='o', s=12, c=values, cmap='Reds_r',
-        transform=get_transform(), label='stars')
+        transform=get_transform(), label='Wd2 OB Stars')
 
+def plot_specific_stars(rows, names):
+    for row, name in zip(rows, names):
+        plt.plot([row['RAdeg']], [row['DEdeg']], marker='x', markersize=10, transform=get_transform(), label=name)
 
 def plot_nearby_Wd2_types():
     plt.figure(figsize=(13, 10))
@@ -227,28 +248,47 @@ def distance_from_all_points(point_coords, w, distance_los_pc):
 
 def calc_g0(cat, w, distance_los_pc):
     inv_dist = cat.coords.apply(lambda x: (.1/distance_from_point_pixelgrid(x, w, distance_los_pc)**2))
-    return np.sum(2.1 * np.exp(cat.log_L) * inv_dist, axis=0)
+    return np.sum(2.1 * (10**cat.log_L) * inv_dist, axis=0)
 
 # img_data, img_header, wl = irac_data(8)
 # w = WCS(img_header)
-w = make_wcs(wd2_center_coord, pixel_scale=2*u.arcsec, grid_shape=(1500, 1500))
-# base_grid, w = distance_from_center_wcssep(wd2_center_coord, *args, **kwargs)
-# print(w)
-# test_point = w.array_index_to_world(1, 1)
+
+# w = make_wcs(wd2_center_coord, pixel_scale=2*u.arcsec, grid_shape=(1500, 1500))
+def find_specific_star(spectral_type):
+    # Find first star of this spectral type
+    star = radec_df.loc[radec_df.SpectralType == spectral_type]
+    return star.loc[star.index[0]]
+
+def find_all_stars(condition):
+    stars = radec_df.loc[condition]
+    return [stars.loc[x] for x in stars.index]
+
+WRs = find_all_stars(radec_df.SpectralType.apply(lambda x: 'W' in x))
+
+# WN6ha = radec_df.loc[radec_df.SpectralType == 'WN6ha']
+# WN6ha = WN6ha.loc[WN6ha.index[0]]
+
+plt.figure(figsize=(13, 10))
+img_data, img_header, wl = sofia_data_integrated()
+w = WCS(img_header, naxis=2)
+# plot_sofia_integrated()
+# # plot_specific_stars(WRs, [x.SpectralType for x in WRs])
+# plot_nearby_Wd2_types_JUSTSTARS()
+# plt.legend()
+
+
 
 t0 = datetime.datetime.now()
 grid = calc_g0(radec_df, w, 4.16*1000)
+print(grid.shape)
 t1 = datetime.datetime.now()
 print((t1-t0).total_seconds()*1000, "ms")
-plt.figure(figsize=(13, 10))
-plt.subplot(111, projection=w)
+plt.subplot(121, projection=w)
 plt.imshow(np.log10(grid), cmap='gray')
 plot_nearby_Wd2_types_JUSTSTARS()
 plt.xlabel("RA")
 plt.ylabel("DEC")
-
-plot_nearby_Wd2_types()
+plot_sofia_integrated(subplot=122)
+plot_nearby_Wd2_types_JUSTSTARS()
 
 plt.show()
-
-
