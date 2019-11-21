@@ -30,7 +30,7 @@ peculiar_re = '((\\+|(ha)|n|(\\(*(f|e)(\\+|\\*)?\\)*))+\\*?)'
 number_re = '(\\d{1}(\\.\\d)?)'
 slashdash_re = '(/|-)'
 
-INVALID_STAR_FLAG = 999
+INVALID_STAR_FLAG = float('NaN')
 
 
 """
@@ -251,7 +251,7 @@ class SpectralTypeTables:
 
 def get_catalog_properties_sternberg(cat, characteristic):
     sternberg_tables = SpectralTypeTables()
-    cat[characteristic] = cat.SpectralType_ReducedTuple.apply(sternberg_tables.lookup_characteristic, args=(characteristic,))
+    cat[characteristic+'_S03'] = cat.SpectralType_ReducedTuple.apply(sternberg_tables.lookup_characteristic, args=(characteristic,))
 
 
 def vacca_calibration(spectral_type_number, luminosity_class_number, characteristic):
@@ -283,6 +283,20 @@ def plot_sternberg_stuff():
     plt.legend()
     plt.ylabel(charY), plt.xlabel(charX)
     plt.show()
+
+
+def get_catalog_properties_vacca(cat, characteristic):
+    sternberg_tables = SpectralTypeTables()
+    def vacca_cal(row):
+        st_tup = row['SpectralType_ReducedTuple']
+        spectral_type_number = row['SpectralType_Number']
+        if spectral_type_number == INVALID_STAR_FLAG:
+            return INVALID_STAR_FLAG
+        luminosity_class_number = lc_to_number(st_tup[2])
+        # return sternberg_tables.lookup_characteristic(st_tup, characteristic)
+        return vacca_calibration(spectral_type_number, luminosity_class_number, characteristic)
+    cat[characteristic+"_V96"] = cat.apply(vacca_cal, axis=1)
+
 
 
 """
@@ -345,9 +359,12 @@ class PoWRGrid:
         # close enough is NOT close enough!!!!
         model = self.grid_info.loc[(self.paramx == qparamx) & (self.paramy == qparamy)]
         if model.empty:
-            raise RuntimeError(f"Could not find x: {qparamx} / y: {qparamy} model in the {self.grid_name} grid.")
+            return self.grid_info.loc[((self.paramx - qparamx)**2 + (self.paramy - qparamy)**2).idxmin()]
         else:
             return model.loc[model.index[0]]
+            # if model.empty:
+            #     raise RuntimeError(f"Could not find x: {qparamx} / y: {qparamy} model in the {self.grid_name} grid.")
+        return model
 
     def get_model_filename(self, *args):
         # args are either (Teff, log_g) or the pandas.Series result from above
@@ -413,22 +430,28 @@ class PoWRGrid:
             Rt = trim_logRt(Rt)
             return Teff, Rt
 
-    def plot_grid_space(self, c=None, clabel=None):
-        plt.figure(figsize=(13, 9))
+    def plot_grid_space(self, c=None, clabel=None, setup=True, show=True):
+        if setup:
+            plt.figure(figsize=(13, 9))
         plt.scatter(self.paramx, self.paramy, c=c)
         plt.xlabel(self.paramx_name)
         plt.ylabel(self.paramy_name)
         if c is not None:
             plt.colorbar(label=clabel)
-        plt.show()
+        if show:
+            plt.show()
 
     def iter_models(self):
         return self.grid_info.itertuples()
 
     @staticmethod
-    def plot_spectrum(wl, flux, setup=True, show=True, fuv=False,
+    def plot_spectrum(*args, setup=True, show=True, fuv=False,
             xlim=None, ylim=None, xunit=None,
-            xlog=True, ylog=True):
+            xlog=True, ylog=True, label=None):
+        if len(args) == 2:
+            wl, flux = args
+        else:
+            wl, flux = args[0]
         if setup:
             plt.figure(figsize=(13, 9))
             if xlim:
@@ -440,7 +463,7 @@ class PoWRGrid:
             wl, flux = wl[mask], flux[mask]
         if xunit:
             wl = wl.to(xunit, equivalencies=u.spectral())
-        plt.plot(wl, flux)
+        plt.plot(wl, flux, label=label)
         if setup:
             plt.xlabel(f'wavelength ({wl.unit.to_string()})')
             plt.ylabel(f'flux ({flux.unit.to_string()})')
@@ -452,7 +475,11 @@ class PoWRGrid:
             plt.show()
 
     @staticmethod
-    def integrate_flux(wl, flux):
+    def integrate_flux(*args):
+        if len(args) == 2:
+            wl, flux = args
+        else:
+            wl, flux = args[0]
         # integrates flux from 6 to 13.6 eV
         # wl is in Angstroms
         mask = FUV_nonionizing_mask(wl)

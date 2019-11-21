@@ -14,7 +14,7 @@ from astropy.coordinates import SkyCoord
 import pandas as pd
 from misc_utils import flquantiles
 
-from readstartypes import reduce_catalog_spectral_types, get_catalog_properties_sternberg
+import readstartypes
 
 data_directory = "../ancillary_data/"
 
@@ -77,9 +77,9 @@ def plot_sofia_integrated(subplot=111):
 
 
 radec_df = pd.read_pickle(f"{data_directory}catalogs/Ramsey/OBradec.pkl")
-reduce_catalog_spectral_types(radec_df)
-get_catalog_properties_sternberg(radec_df, 'log_L')
-get_catalog_properties_sternberg(radec_df, 'Teff')
+readstartypes.reduce_catalog_spectral_types(radec_df)
+readstartypes.get_catalog_properties_vacca(radec_df, 'Teff')
+readstartypes.get_catalog_properties_vacca(radec_df, 'log_g')
 wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg))
 # Find everything within 11 arcminutes of the center (the rough size of the nebula on the sky)
 def within_range(star_row):
@@ -116,9 +116,9 @@ def plot_nearby_Wd2():
     plt.show()
 
 def plot_nearby_Wd2_types_JUSTSTARS(extra_filter=True):
-    df = radec_df.loc[is_within_range & (radec_df.SpectralType_Number < 20) & (radec_df.Teff > 0) & extra_filter]
-    values = df.Teff
-    plt.scatter(*get_radec(df), marker='o', s=12, c=values, cmap='Reds_r',
+    df = radec_df.loc[is_within_range & extra_filter] # & (radec_df.SpectralType_Number < 20) & (radec_df.Teff > 0)
+    values = df.paramx
+    plt.scatter(*get_radec(df), marker='o', s=12, c=values, cmap='cool',
         transform=get_transform(), label='Wd2 OB Stars')
 
 def plot_specific_stars(rows, names):
@@ -247,8 +247,14 @@ def distance_from_all_points(point_coords, w, distance_los_pc):
     return np.sum(point_coords.apply(lambda x: (.1/distance_from_point_pixelgrid(x, w, distance_los_pc)**2)), axis=0)
 
 def calc_g0(cat, w, distance_los_pc):
-    inv_dist = cat.coords.apply(lambda x: (.1/distance_from_point_pixelgrid(x, w, distance_los_pc)**2))
-    return np.sum(2.1 * (10**cat.log_L) * inv_dist, axis=0)
+    radfield1d = 1.6e-3 # erg cm-2 s-1
+    cm2_to_pc2 = (u.cm.to(u.pc))**2
+    # gives inverse distance in cm-2
+    inv_dist = cat.coords.apply(lambda x: cm2_to_pc2/(distance_from_point_pixelgrid(x, w, distance_los_pc)**2))
+    # gives luminosity in erg s-1
+    lum = cat.luminosity.apply(lambda x: x.to(u.erg/u.s).to_value())
+    # returns luminosity expressed in terms of avg 1d IRF
+    return np.sum(lum * inv_dist, axis=0) / radfield1d
 
 # img_data, img_header, wl = irac_data(8)
 # w = WCS(img_header)
@@ -263,32 +269,91 @@ def find_all_stars(condition):
     stars = radec_df.loc[condition]
     return [stars.loc[x] for x in stars.index]
 
-WRs = find_all_stars(radec_df.SpectralType.apply(lambda x: 'W' in x))
-
 # WN6ha = radec_df.loc[radec_df.SpectralType == 'WN6ha']
 # WN6ha = WN6ha.loc[WN6ha.index[0]]
 
-plt.figure(figsize=(13, 10))
+radec_df['paramx'] = radec_df.Teff_V96
+radec_df['paramy'] = radec_df.log_g_V96
+is_WR = radec_df.SpectralType_Number.isnull() & is_within_range
+WR_i = radec_df.loc[is_WR].index[0]
+radec_df.loc[WR_i, 'paramx'] = 43000
+radec_df.loc[WR_i, 'paramy'] = readstartypes.PoWRGrid.calculate_Rt(19.7, 8.5e-6, 1600, 4)
+
+OBGrid = readstartypes.PoWRGrid('OB')
+WRGrid = readstartypes.PoWRGrid('WNE')
+def nearest_gridpoint(row):
+    if row['SpectralType_ReducedTuple'][0][0] == 'W':
+        grid = WRGrid
+    else:
+        grid = OBGrid
+    paramx, paramy = grid.parse_query_params(row['paramx'], row['paramy'])
+    return paramx, paramy
+radec_df['grid_params'] = radec_df.loc[is_within_range].apply(nearest_gridpoint, axis=1)
+radec_df['grid_paramx'] = radec_df.grid_params.loc[is_within_range].apply(lambda x: x[0])
+radec_df['grid_paramy'] = radec_df.grid_params.loc[is_within_range].apply(lambda x: x[1])
+radec_df.drop(columns='grid_params', inplace=True)
+def get_wlflux(row):
+    if row['SpectralType_ReducedTuple'][0][0] == 'W':
+        grid = WRGrid
+    else:
+        grid = OBGrid
+    return grid.get_model(row['paramx'], row['paramy'])
+radec_df['wlflux'] = radec_df.loc[is_within_range].apply(get_wlflux, axis=1)
+radec_df['wl'] = radec_df.wlflux.loc[is_within_range].apply(lambda x: x[0])
+radec_df['flux'] = radec_df.wlflux.loc[is_within_range].apply(lambda x: x[1])
+
+def plot_model_grids():
+    plt.figure(figsize=(16, 9))
+    plt.subplot(121)
+    OBGrid.plot_grid_space(setup=False, show=False)
+    plt.scatter(radec_df.grid_paramx[~is_WR], radec_df.grid_paramy[~is_WR], color='red', marker='x')
+    plt.subplot(122)
+    WRGrid.plot_grid_space(setup=False, show=False)
+    plt.scatter(radec_df.grid_paramx[is_WR], radec_df.grid_paramy[is_WR], color='red', marker='x')
+    plt.show()
+
+def plot_all_fuv_spectra():
+    plt.figure(figsize=(13, 9))
+    radec_df.wlflux.loc[is_within_range].apply(readstartypes.PoWRGrid.plot_spectrum, setup=False, show=False, fuv=True, xunit=u.eV)
+    plt.show()
+
+radec_df['luminosity'] = radec_df.wlflux.loc[is_within_range].apply(readstartypes.PoWRGrid.integrate_flux)
+# radec_df['lum'] = radec_df.lum.loc[is_within_range].apply(lambda x: x.to_value())
+
+def save_html():
+    columns_to_drop = ['SpectralType_ReducedTuple', 'SpectralType_Number',
+        'wlflux','wl','flux', 'coords', 'SpectralType_Adopted',
+        'Teff_V96', 'paramy', 'grid_paramx', 'grid_paramy',]
+    for c in columns_to_drop:
+        radec_df.drop(columns=c, inplace=True)
+    radec_df.luminosity.loc[is_within_range] = radec_df.luminosity.loc[is_within_range].apply(lambda x: "{:.2f}".format(np.log10(x.to_value())))
+    radec_df.paramx.loc[is_within_range] = radec_df.paramx.loc[is_within_range].apply(lambda x: "{:.2f}".format(x/1000))
+    nearby_stars = radec_df.loc[is_within_range]
+    nearby_stars = nearby_stars[['RAdeg', 'DEdeg', 'MSP', 'SpectralType', 'SpectralType_Reduced', 'paramx', 'luminosity']]
+    nearby_stars.rename(columns={'SpectralType_Reduced': 'SpectralType_Adopted', 'paramx': 'Teff (kK)', 'luminosity': 'log FUV L (Lsun)'}, inplace=True)
+    nearby_stars.to_html('Wd2_catalog_FUVflux.html', na_rep='')
+
+plt.figure(figsize=(16, 8))
 img_data, img_header, wl = sofia_data_integrated()
 w = WCS(img_header, naxis=2)
-# plot_sofia_integrated()
-# # plot_specific_stars(WRs, [x.SpectralType for x in WRs])
-# plot_nearby_Wd2_types_JUSTSTARS()
-# plt.legend()
-
-
 
 t0 = datetime.datetime.now()
-grid = calc_g0(radec_df, w, 4.16*1000)
+grid = calc_g0(radec_df.loc[is_within_range], w, 4.16*1000)
 print(grid.shape)
 t1 = datetime.datetime.now()
 print((t1-t0).total_seconds()*1000, "ms")
 plt.subplot(121, projection=w)
-plt.imshow(np.log10(grid), cmap='gray')
+plt.imshow(np.log10(grid), cmap='cividis', vmax=5.5)
+plt.colorbar(label='log G0')
 plot_nearby_Wd2_types_JUSTSTARS()
 plt.xlabel("RA")
 plt.ylabel("DEC")
 plot_sofia_integrated(subplot=122)
+plt.colorbar()
 plot_nearby_Wd2_types_JUSTSTARS()
+plt.subplots_adjust(top=0.974, bottom=0.061, left=0.05, right=0.95, hspace=0.2, wspace=0.1)
+# plt.show()
+plt.savefig("Wd2_sofia_G0.pdf")
 
-plt.show()
+# save_html()
+
