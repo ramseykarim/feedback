@@ -318,7 +318,25 @@ def plot_all_fuv_spectra():
     plt.show()
 
 radec_df['luminosity'] = radec_df.wlflux.loc[is_within_range].apply(readstartypes.PoWRGrid.integrate_flux)
-# radec_df['lum'] = radec_df.lum.loc[is_within_range].apply(lambda x: x.to_value())
+
+def coords_to_string(coord):
+    return coord.to_string(style='hmsdms', sep=':').replace(' ', ',')
+def gen_region(row):
+    log_lum = (np.log10(row.luminosity) - 4.5)*10 + 5
+    comment = "# {:s}".format(row.SpectralType_Reduced)
+    return "circle({:s},{:.4f}\") {:s}".format(coords_to_string(row.coords), log_lum, comment)
+
+
+def write_region_file():
+    radec_df['luminosity'] = radec_df.luminosity.loc[is_within_range].apply(lambda x: x.to_value())
+    with open('figures/Wd2_stars_luminosity.reg', 'w') as f:
+        f.write("# Region file format: DS9 version 4.1\n")
+        f.write("global color=white dashlist=8 3 width=1 font=\"helvetica 10 normal roman\" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1\n")
+        for row in radec_df.loc[is_within_range].itertuples():
+            f.write(gen_region(row)+'\n')
+        f.write('\n')
+    print('done')
+
 
 def save_html():
     columns_to_drop = ['SpectralType_ReducedTuple', 'SpectralType_Number',
@@ -333,27 +351,95 @@ def save_html():
     nearby_stars.rename(columns={'SpectralType_Reduced': 'SpectralType_Adopted', 'paramx': 'Teff (kK)', 'luminosity': 'log FUV L (Lsun)'}, inplace=True)
     nearby_stars.to_html('Wd2_catalog_FUVflux.html', na_rep='')
 
-plt.figure(figsize=(16, 8))
-img_data, img_header, wl = sofia_data_integrated()
-w = WCS(img_header, naxis=2)
 
-t0 = datetime.datetime.now()
-grid = calc_g0(radec_df.loc[is_within_range], w, 4.16*1000)
-print(grid.shape)
-t1 = datetime.datetime.now()
-print((t1-t0).total_seconds()*1000, "ms")
-plt.subplot(121, projection=w)
-plt.imshow(np.log10(grid), cmap='cividis', vmax=5.5)
-plt.colorbar(label='log G0')
-plot_nearby_Wd2_types_JUSTSTARS()
-plt.xlabel("RA")
-plt.ylabel("DEC")
-plot_sofia_integrated(subplot=122)
-plt.colorbar()
-plot_nearby_Wd2_types_JUSTSTARS()
-plt.subplots_adjust(top=0.974, bottom=0.061, left=0.05, right=0.95, hspace=0.2, wspace=0.1)
-# plt.show()
-plt.savefig("Wd2_sofia_G0.pdf")
+def make_g0CII_figure():
+    plt.figure(figsize=(16, 8))
+    img_data, img_header, wl = sofia_data_integrated()
+    w = WCS(img_header, naxis=2)
 
-# save_html()
+    t0 = datetime.datetime.now()
+    grid = calc_g0(radec_df.loc[is_within_range], w, 4.16*1000)
+    print(grid.shape)
+    t1 = datetime.datetime.now()
+    print((t1-t0).total_seconds()*1000, "ms")
+    plt.subplot(121, projection=w)
+    plt.imshow(np.log10(grid), cmap='cividis', vmax=5.5)
+    plt.colorbar(label='log G0')
+    plot_nearby_Wd2_types_JUSTSTARS()
+    plt.xlabel("RA")
+    plt.ylabel("DEC")
+    plot_sofia_integrated(subplot=122)
+    plt.colorbar()
+    plot_nearby_Wd2_types_JUSTSTARS()
+    plt.subplots_adjust(top=0.974, bottom=0.061, left=0.05, right=0.95, hspace=0.2, wspace=0.1)
+    plt.show()
+    # plt.savefig("Wd2_sofia_G0.pdf")
 
+def make_g0hotstars_figure(Tcut_kK, hotter=True, fracmin=0.3, fracmax=0.7):
+    """
+    About half the global G0 is from stars > ~45kK
+    about 60% from > 40kK
+
+    Star 34 (O5V) dominates its own region
+    It is also the star with the bow-shock looking arc to the northwest
+    """
+    distance_to_Wd2 = 4.16*1000
+    plt.figure(figsize=(19, 8))
+    img_data, img_header, wl = sofia_data_integrated()
+    w = WCS(img_header, naxis=2)
+    if hotter:
+        condition = radec_df.paramx > Tcut_kK*1e3
+    else:
+        condition = radec_df.paramx < Tcut_kK*1e3
+    # print(radec_df.loc[is_hot & is_within_range])
+    grid_hot = calc_g0(radec_df.loc[condition & is_within_range], w, distance_to_Wd2)
+    grid_all = calc_g0(radec_df.loc[is_within_range], w, distance_to_Wd2)
+    grid_diff = grid_hot/grid_all
+    pkwargs = dict(cmap='cividis', vmin=2.7, vmax=5.5)
+    glt = ">" if hotter else "<"
+    for sp, grid, title in zip((131, 132, 133), (grid_hot, grid_diff, grid_all), ("Stars with Teff {:s} {:.0f} kK".format(glt, Tcut_kK), "Difference", "All stars")):
+        plt.subplot(sp, projection=w)
+        if sp == 132:
+            plt.imshow(grid, cmap='magma', vmin=fracmin, vmax=fracmax)
+            plt.colorbar(label='Hot star contribution fraction')
+        else:
+            plt.imshow(np.log10(grid), **pkwargs)
+            plt.colorbar(label='log G0')
+        plot_nearby_Wd2_types_JUSTSTARS()
+        plt.title(title)
+        plt.xlabel("RA")
+        plt.ylabel("DEC")
+    plt.subplots_adjust(top=0.974, bottom=0.019, left=0.054, right=0.985, hspace=0.2, wspace=0.223)
+    plt.show()
+
+
+def save_g0_fits():
+    img_data, img_header, wl = sofia_data_integrated()
+    w = WCS(img_header, naxis=2)
+
+    t0 = datetime.datetime.now()
+    grid = calc_g0(radec_df.loc[is_within_range], w, 4.16*1000)
+    t1 = datetime.datetime.now()
+    print((t1-t0).total_seconds()*1000, "ms")
+
+    header = fits.Header({'SIMPLE': True})
+    header.update(w.to_header())
+    header['BUNIT'] = ("Habing fields", "Data unit")
+    header['OBJECT'] = ("RCW49", "Target name")
+    header['CREATOR'] = ("Ramsey: {}".format(str(__file__)), "FITS file creator")
+    header['DATE'] = (datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(), "File creation date")
+    header['COMMENT'] = "Habing field taken to be 1.6e-3 erg cm-2 s-1"
+    header['HISTORY'] = "Star catalog synthesized from several literature sources"
+    header['HISTORY'] = "Catalog used here can be found as Wd2_catalog_FUVflux.csv"
+    fits.writeto("rcw49-g0.fits", grid, header)
+
+
+# O5 and earlier
+# make_g0hotstars_figure(45)
+
+# The swarm of ETs
+# make_g0hotstars_figure(36, hotter=False, fracmin=0.2, fracmax=0.45)
+
+# save_g0_fits()
+
+print(f'edit the end of {__file__} to save a file or make a figure')
