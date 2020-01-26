@@ -14,7 +14,7 @@ def quicklook(filename):
         fit, chisq, models, diffs = pickle.load(f)
 
     T, tau, beta = fit
-    p70, p160, s250, s350, s500 = diffs
+    p70, p160, s250, s350 = diffs
     # beta = np.full(T.shape, 2.0)
 
     plt.figure(figsize=(16, 9))
@@ -23,11 +23,11 @@ def quicklook(filename):
     plt.colorbar()
     plt.title('T')
     plt.subplot(232)
-    plt.imshow(tau, origin='lower', vmin=-3, vmax=-1)
+    plt.imshow(tau, origin='lower', vmin=-3.5, vmax=-1)
     plt.colorbar()
     plt.title('tau')
     plt.subplot(233)
-    plt.imshow(beta, origin='lower', vmin=1, vmax=2.5)
+    plt.imshow(beta, origin='lower', vmin=0, vmax=2.5)
     plt.colorbar()
     plt.title('beta')
 
@@ -45,7 +45,7 @@ def quicklook(filename):
     plt.title('model-350')
 
     plt.figure()
-    plt.imshow(np.log10(chisq), origin='lower', vmax=4)
+    plt.imshow((chisq), origin='lower', vmax=15)
     plt.colorbar()
     plt.show()
 
@@ -74,5 +74,6 @@ def combine(fn_template):
         pickle.dump(every_template, f)
     print('wrote full map')
 
-# combine(lambda i: f"{herschel_path}RCW49large_3p_nocal_TILE{i}.pkl")
-quicklook(herschel_path+"RCW49large_3p_freshcal_TILEFULL.pkl")
+
+# combine(lambda i: f"{herschel_path}RCW49large_350grid_3p_nocal_TILE{i}.pkl")
+quicklook(herschel_path+"RCW49large_350grid_3p_nocal_TILEFULL.pkl")

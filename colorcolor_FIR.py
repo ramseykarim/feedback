@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.cm as cmx
 import pickle
+from astropy.io import fits
 
 from mantipython.v3.src import greybody, dust, instrument
 
@@ -12,65 +13,162 @@ Grid varies by beta and temperature
 Purpose is to look at a color/color diagram
 """
 
+filename = "/home/rkarim/Research/Filaments/tb_grid_tau.pkl"
+filename = "/home/rkarim/Research/Filaments/tb_grid_kappa1Av.pkl"
+
+datasets = {
+    'Perseus': {'offsets': [None, '000045'],
+        'data_dir': "/n/sgraraid/filaments/Perseus/Herschel/processed/1342190326/"},
+    'RCW49': {'offsets': ['000102', '000343'],
+        'data_dir': "/n/sgraraid/filaments/data/TEST4/pacs70_cal_test/RCW49/processed/1342255009/"}
+}
+
 def make_grid():
     herschel = instrument.get_all_Herschel()
 
     # set up parameter grid
 
     # Temperature from 5 to 150 in geometric steps of 3%
-    T_range = np.exp(np.arange(np.log(5), np.log(150), np.log(1.03)))
+    T_range = np.exp(np.arange(np.log(5), np.log(150), np.log(1.02)))
     # Beta in arithmetic steps of 0.1
-    b_range = np.arange(1., 2.51, 0.1)
+    b_range = np.arange(1., 2.51, 0.05)
+    N1Av = np.log10(1.1) + 21
+    kappa2 = dust.Dust(beta=2.0, k0=0.05625, nu0=750*1e9)
+    tau160 = np.log10(kappa2(dust.nu0_160)*(10**N1Av))
+    print("Tau160: {:.3E}".format(10**tau160))
+    print("Tau350: {:.3E}".format(kappa2(dust.cst.c/(350*1e-6))*(10**N1Av)))
 
     TT, bb = np.meshgrid(T_range, b_range, indexing='xy')
     result = {d.name: np.full(TT.shape, np.nan).ravel() for d in herschel}
 
     for i, T, b in zip(range(TT.size), TT.flat, bb.flat):
         for d in herschel:
-            result[d.name][i] = d.detect(greybody.Greybody(T, 1, dust.TauOpacity(b)))
+            result[d.name][i] = d.detect(greybody.Greybody(T, N1Av, dust.Dust(beta=b, k0=0.05625, nu0=750*1e9)))
+            # result[d.name][i] = d.detect(greybody.Greybody(T, tau160, dust.TauOpacity(b)))
     for d in herschel:
         result[d.name] = result[d.name].reshape(TT.shape)
     result['T'] = TT
     result['beta'] = bb
-
-    with open("/home/ramsey/Documents/Research/Filaments/tb_grid.pkl", 'wb') as f:
+    print("grid shape:", TT.shape)
+    with open(filename, 'wb') as f:
         pickle.dump(result, f)
+    return result
 
 
-def color_color():
-    with open("/home/ramsey/Documents/Research/Filaments/tb_grid.pkl", 'rb') as f:
+def plot_data(dataset_name, SNR_MINIMUM=10, force160250=0, additional_mask=None, coverage_plot=True, extra_title=""):
+    # More or less automatic
+    dataset = datasets[dataset_name]
+    valid_bands = [1 if dataset_name[:3] == "RCW" else 0, 1, 1, 1, 1]
+    if dataset_name[:3] == "Per":
+        force160250 = 1
+    first_band = 0 + force160250
+    bands = [70, 160, 250, 350, 500]
+    data_dir = dataset['data_dir']
+    suffix, fitsstub = "-image-remapped-conv", ".fits"
+    errsuffix = "-error-remapped-conv"
+    p70_offset = "-plus"+dataset['offsets'][0] if dataset['offsets'][0] is not None else 'INVALID'
+    p160_offset = "-plus"+dataset['offsets'][-1]
+    offsets = [p70_offset, p160_offset] + ['']*3
+    prefixes = [f'SPIRE{wl}um' if wl > 200 else f'PACS{wl}um' for wl in bands]
+    img_names = {pre: data_dir+pre+suffix+offset+fitsstub for pre, offset in zip(prefixes, offsets)}
+    err_names = {pre: data_dir+pre+errsuffix+fitsstub for pre in prefixes}
+    SNRs, imgs = {}, {}
+    for i in range(len(bands)):
+        if not valid_bands[i]:
+            continue
+        img = fits.getdata(img_names[prefixes[i]])
+        imgs[prefixes[i]] = img
+        SNR = img / fits.getdata(err_names[prefixes[i]])
+        SNRs[prefixes[i]] = SNR
+    # Make mask
+    valid_snr_mask = np.all([SNRs[prefixes[i]] > SNR_MINIMUM for i in range(len(bands)) if valid_bands[i]], axis=0)
+    if additional_mask is not None:
+        additional_mask = additional_mask(imgs)
+        valid_snr_mask &= additional_mask
+    if coverage_plot:
+        # Plot image of what will be included in scatter plot
+        old_fig = plt.gcf()
+        new_fig = plt.figure()
+        plt.imshow(valid_snr_mask, origin='lower')
+        title = f"SNR > {SNR_MINIMUM}" + extra_title
+        plt.title(title)
+        plt.figure(old_fig.number)
+    # Make ratios
+    y_ratio = imgs[prefixes[first_band]] / imgs[prefixes[first_band+1]]
+    print(f"Y ratio: {prefixes[0+int(force160250)]} to {prefixes[1+int(force160250)]}")
+    x_ratio = imgs[prefixes[-2]] / imgs[prefixes[-1]]
+    print(f"X ratio: {prefixes[-2]} to {prefixes[-1]}")
+    y_ratio, x_ratio = (ratio[valid_snr_mask].flatten() for ratio in (y_ratio, x_ratio))
+    # Plot scatter plot
+    plt.plot(x_ratio, y_ratio, '.', alpha=0.1, markersize=3, color='k')
+    return ", " + title
+
+
+def color_color(dataset_name=None, force160250=0, SNR_MINIMUM=10, additional_mask=None, extra_title=""):
+    with open(filename, 'rb') as f:
         result = pickle.load(f)
     p70p160 = result['PACS70um'] / result['PACS160um']
+    p160s250 = result['PACS160um'] / result['SPIRE250um']
+
+    if (dataset_name is not None and dataset_name[:3] == "Per") or force160250:
+        selected_y = p160s250
+        ylabel = "PACS 160/SPIRE 250"
+    else:
+        selected_y = p70p160
+        ylabel = "PACS 70/160"
     s350s500 = result['SPIRE350um'] / result['SPIRE500um']
     plt.figure(figsize=(8, 8))
 
+    extra_title = plot_data(dataset_name, SNR_MINIMUM=SNR_MINIMUM, force160250=force160250, additional_mask=additional_mask, coverage_plot=True, extra_title=extra_title)
+
     # TEMPERATURE
-    n_T = p70p160.shape[1]
+    n_T = selected_y.shape[1]
     scalarMap = cmx.ScalarMappable(norm=mcolors.Normalize(vmin=0, vmax=n_T),
         cmap=plt.get_cmap('autumn'))
-    for i in range(0, n_T, 20):
-        plt.plot(s350s500[:, i], p70p160[:, i], linestyle='-', linewidth=4, color=scalarMap.to_rgba(i), label='{:4.1f}K'.format(result['T'][0, i]))
-    plt.legend(title="Isotherms", loc=4, fontsize='small', fancybox=True)
+    for i in reversed(range(0, n_T, 30)):
+        plt.plot(s350s500[:, i], selected_y[:, i], linestyle='-', linewidth=4, color=scalarMap.to_rgba(i), label='{:4.1f}K'.format(result['T'][0, i]))
+    plt.legend(title="Isotherms", loc=2, fontsize='small', fancybox=True)
 
     # BETA
-    n_beta = p70p160.shape[0]
+    n_beta = selected_y.shape[0]
     scalarMap = cmx.ScalarMappable(norm=mcolors.Normalize(vmin=1, vmax=2.5),
         cmap=plt.get_cmap('cool'))
-    for i in range(n_beta):
+    # for i in range(0, n_beta, 4):
+    print('using beta: ', end='')
+    for i in [12, 16, 20]:
         b = result['beta'][i, 0]
-        plt.plot(s350s500[i], p70p160[i], linestyle='-', color=scalarMap.to_rgba(b))
+        print("{:.2f}, ".format(b), end='')
+        plt.plot(s350s500[i], selected_y[i], linestyle='-', color=scalarMap.to_rgba(b))
         # for i, b in zip(range(n_beta), result['beta'][:, 0]):
-        #     plt.plot(s350s500[i], p70p160[i], label="{:.2f}".format(b))
+        #     plt.plot(s350s500[i], selected_y[i], label="{:.2f}".format(b))
         # plt.legend()
-    plt.yscale('log')#, plt.xscale('log')
-    # plt.xlim([0.2, 3.5]), plt.ylim([10**(-8), 10])
+    print()
+    # plt.yscale('log')#, plt.xscale('log')
+    # plt.xlim([0.2, 5]), plt.ylim([10**(-8), 5])
     cbar = plt.gcf().colorbar(scalarMap)
     cbar.set_label("beta")
 
-    plt.title("Herschel color-color diagram")
+    
+
+    plt.gcf().canvas.set_window_title("tau")
+    if dataset_name is not None:
+        dataset_name = ", " + dataset_name
+    else:
+        dataset_name = ""
+    plt.title("Herschel color-color diagram" + dataset_name + extra_title)
     plt.xlabel("SPIRE 350/500")
-    plt.ylabel("PACS 70/160")
+    plt.ylabel(ylabel)
+
+    # print(f"plt.xlim({plt.xlim()}), plt.ylim({plt.ylim()})")
+    plt.xlim((0.1561884485339575, 4.895977203736461)), plt.ylim((-0.3239731111304286, 7.395308040999753))
+    
     plt.show()
 
+
+
 if __name__ == "__main__":
-    color_color()
+    # make_grid()
+    def additional_mask(imgs):
+        s500 = imgs['SPIRE500um']
+        return s500 > 20
+    color_color("Perseus", SNR_MINIMUM=0, additional_mask=additional_mask, extra_title=", 500um > 20")
