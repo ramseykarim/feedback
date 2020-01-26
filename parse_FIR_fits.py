@@ -2,11 +2,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 
-testname = "/home/rkarim/Research/mantipython/TEST.pkl"
 
-herschel_path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
-# fns = ["2p_5b_freshoffsets", "3p_5b_freshoffsets", "2p_3b"]
-# fns = [f"{herschel_path}RCW49large_{fn}.pkl" for fn in fns]
+def open_FIR_pickle(filename):
+    with open(filename, 'rb') as f:
+        fit, chisq, models, diffs = pickle.load(f)
+    result_dict = {}
+    if len(fit) == 3:
+        T, tau, beta = fit
+        result_dict['beta'] = beta
+    else:
+        T, tau = fit
+    result_dict['T'] = T
+    result_dict['tau'] = tau
+    result_dict['chisq'] = chisq
+    return result_dict
 
 
 def quicklook(filename):
@@ -75,5 +84,11 @@ def combine(fn_template):
     print('wrote full map')
 
 
-# combine(lambda i: f"{herschel_path}RCW49large_350grid_3p_nocal_TILE{i}.pkl")
-quicklook(herschel_path+"RCW49large_350grid_3p_nocal_TILEFULL.pkl")
+if __name__ == "__main__":
+    # Desktop directory
+    herschel_path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
+    # Laptop directory
+    herschel_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
+
+    # combine(lambda i: f"{herschel_path}RCW49large_350grid_3p_nocal_TILE{i}.pkl")
+    quicklook(herschel_path+"RCW49large_350grid_3p_TILEFULL.pkl")
