@@ -433,6 +433,7 @@ def save_g0_fits():
     header['HISTORY'] = "Catalog used here can be found as Wd2_catalog_FUVflux.csv"
     fits.writeto("rcw49-g0.fits", grid, header)
 
+make_g0CII_figure()
 
 # O5 and earlier
 # make_g0hotstars_figure(45)
