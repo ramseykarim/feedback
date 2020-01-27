@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.constants as cst
 from astropy import units as u
+from scipy.special import factorial, zeta
+import sys
 
 from parse_FIR_fits import open_FIR_pickle
 
@@ -10,11 +12,12 @@ from parse_FIR_fits import open_FIR_pickle
 herschel_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
 filename = "RCW49large_350grid_3p_TILEFULL.pkl"
 
-# result_dict = open_FIR_pickle(herschel_path+filename)
-# T, tau, beta = (result_dict[x] for x in ('T', 'tau' ,'beta'))
+result_dict = open_FIR_pickle(herschel_path+filename)
+T, tau, beta = (result_dict[x] for x in ('T', 'tau' ,'beta'))
 
 
 a = (0.2 * u.micron).to(u.cm) # micron, grain size, from Xander conversation, range between 0.1-3
+
 grain_density = 3. * u.g / (u.cm ** 3) # g/cm2, according to Xander (notebook pg 111)
 avg_kappa_abs_FUV = 3.e4 * (u.cm ** 2) / u.g # cm2/g, based on the plots from plot_dust()
 m_grain = grain_density * (np.pi * 4./3) * a**3.
@@ -27,19 +30,41 @@ I need to implement this equation for G0:
 
 G0 =
     (1 / Q_abs_avgFUV) *
-    (4*15 / pi) *
+    (4*15 / pi**5) *
     (beta + 3)! *
     RiemannZeta(beta + 4) *
     Q0 *
-    (lambda0 * k_B * T_dust / hc)**beta
+    (lambda0 * k_B * T_dust / hc)**beta *
+    Stefan-Boltzmann * T_dust**4
+for output in W m-2 or erg cm-2 s-1
 where Q0 is 1 until further notice
 beta, Td are from dust SED fit solutions
 Q_abs_avgFUV is the averge Q_abs = C_abs / sigma_dust over the FUV absorption
     range that matters here
 """
 
+Q0 = 1
+k = u.Quantity(cst.k, cst.unit('Boltzmann constant'))
+h = u.Quantity(cst.h, cst.unit('Planck constant'))
+c = u.Quantity(cst.c, cst.unit('speed of light in vacuum'))
+hc = h*c
+sb = u.Quantity(cst.value('Stefan-Boltzmann constant'), cst.unit('Stefan-Boltzmann constant'))
+Td = T * u.K
+lambda0 = 2 * np.pi * a.to(u.m)
 
+G0 = (1 / avg_Qabs_FUV) * (4*15/(np.pi**5)) * factorial(beta+3) * zeta(beta+4) * Q0 * ((lambda0*k/hc)*Td)**beta * sb * Td**4.
+Habing = u.Quantity(1.6e-3, 'erg cm-2 s-1')
+G0 = G0.to('erg cm-2 s-1') / Habing
 
+obs70 = result_dict['model70um'] - result_dict['model-obs70um']
+plt.figure()
+plt.subplot(121)
+plt.imshow(np.log10(obs70), origin='lower', vmin=1, vmax=5)
+plt.title("70um")
+plt.subplot(122)
+plt.imshow(np.log10(G0.value), origin='lower')
+plt.title("G0")
+plt.show()
 
 
 

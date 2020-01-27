@@ -15,6 +15,10 @@ def open_FIR_pickle(filename):
     result_dict['T'] = T
     result_dict['tau'] = tau
     result_dict['chisq'] = chisq
+    bands = [70, 160, 250, 350, 500]
+    for i, m in enumerate(models):
+        result_dict[f"model{bands[i]}um"] = m
+        result_dict[f"model-obs{bands[i]}um"] = diffs[i]
     return result_dict
 
 
