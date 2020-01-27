@@ -36,7 +36,9 @@ def get_vlims(key):
         'model-obs350um': (-5, 5),
         'chisq': (None, 15),
     }
-    return {k, v for k, v in zip(('vmin', 'vmax'), vlims[key])}
+    result = {k: v for k, v in zip(('vmin', 'vmax'), vlims[key])}
+    result['origin'] = 'lower'
+    return result
 
 
 def quicklook(filename):
@@ -111,8 +113,21 @@ def interactive_SED_map(filename, display='T'):
     pixel, selected by mouse click. run in while loop to explore many points
     """
     fit_result_dict = open_FIR_pickle(filename)
-    fig_img = plt.figure(figsize=(8, 8))
+    fig_img = plt.figure(figsize=(8, 6))
+    ax_img = plt.subplot(111)
     plt.imshow(fit_result_dict[display], **get_vlims(display))
+    plt.title(display)
+    plt.colorbar()
+
+    fig_SED = plt.figure(figsize=(8, 6))
+    ax_SED = plt.subplot(111)
+    wavelengths = sorted([int(k.replace('model', '').replace('um', '')) for k in fit_result_dict if ('model' in k) and ('obs' not in k)])
+    # wl_range = np.arange(40, 1000, 5)
+    i, j = 50, 50
+    fluxes = [fit_result_dict[f'model{b}um'][i, j] for b in wavelengths]
+    ax_SED.plot(wavelengths, fluxes, 'x', color='green')
+
+    plt.show()
 
 if __name__ == "__main__":
     # Desktop directory
@@ -121,4 +136,4 @@ if __name__ == "__main__":
     herschel_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
 
     # combine(lambda i: f"{herschel_path}RCW49large_350grid_3p_nocal_TILE{i}.pkl")
-    quicklook(herschel_path+"RCW49large_350grid_3p_TILEFULL.pkl")
+    interactive_SED_map(herschel_path+"RCW49large_350grid_3p_TILEFULL.pkl")
