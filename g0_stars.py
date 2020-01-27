@@ -364,7 +364,7 @@ def make_g0CII_figure():
     print((t1-t0).total_seconds()*1000, "ms")
     plt.subplot(121, projection=w)
     plt.imshow(np.log10(grid), cmap='cividis', vmax=5.5)
-    plt.colorbar(label='log G0')
+    plt.colorbar(label='log10 G0')
     plot_nearby_Wd2_types_JUSTSTARS()
     plt.xlabel("RA")
     plt.ylabel("DEC")
