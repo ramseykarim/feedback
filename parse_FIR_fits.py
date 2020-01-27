@@ -21,6 +21,23 @@ def open_FIR_pickle(filename):
         result_dict[f"model-obs{bands[i]}um"] = diffs[i]
     return result_dict
 
+def get_vlims(key):
+    vlims = {
+        'T': (10, 70),
+        'tau': (-3.5, -1),
+        'beta': (0, 2.5),
+        'model70um': (1, 5),
+        'model160um': (1, 5),
+        'model250um': (0, 4),
+        'model350um': (0, 3),
+        'model-obs70um': (-20, 20),
+        'model-obs160um': (-100, 100),
+        'model-obs250um': (-30, 30),
+        'model-obs350um': (-5, 5),
+        'chisq': (None, 15),
+    }
+    return {k, v for k, v in zip(('vmin', 'vmax'), vlims[key])}
+
 
 def quicklook(filename):
     with open(filename, 'rb') as f:
@@ -32,33 +49,33 @@ def quicklook(filename):
 
     plt.figure(figsize=(16, 9))
     plt.subplot(231)
-    plt.imshow(T, origin='lower', vmin=10, vmax=70)
+    plt.imshow(T, **get_vlims('T'))
     plt.colorbar()
     plt.title('T')
     plt.subplot(232)
-    plt.imshow(tau, origin='lower', vmin=-3.5, vmax=-1)
+    plt.imshow(tau, **get_vlims('tau'))
     plt.colorbar()
     plt.title('tau')
     plt.subplot(233)
-    plt.imshow(beta, origin='lower', vmin=0, vmax=2.5)
+    plt.imshow(beta, **get_vlims('beta'))
     plt.colorbar()
     plt.title('beta')
 
     plt.subplot(234)
-    plt.imshow(p70, origin='lower', vmin=-20, vmax=20)
+    plt.imshow(p70, **get_vlims('model-obs70um'))
     plt.colorbar()
     plt.title('model-70')
     plt.subplot(235)
-    plt.imshow(p160, origin='lower', vmin=-20, vmax=20)
+    plt.imshow(p160, **get_vlims('model-obs70um'))
     plt.colorbar()
     plt.title('model-160')
     plt.subplot(236)
-    plt.imshow(s350, origin='lower', vmin=-2, vmax=2)
+    plt.imshow(s350, **get_vlims('model-obs350um'))
     plt.colorbar()
     plt.title('model-350')
 
     plt.figure()
-    plt.imshow((chisq), origin='lower', vmax=15)
+    plt.imshow((chisq), **get_vlims('chisq'))
     plt.colorbar()
     plt.show()
 
@@ -87,6 +104,15 @@ def combine(fn_template):
         pickle.dump(every_template, f)
     print('wrote full map')
 
+
+def interactive_SED_map(filename, display='T'):
+    """
+    use matplotlib interactive mode to plot up SED fits to data for a given
+    pixel, selected by mouse click. run in while loop to explore many points
+    """
+    fit_result_dict = open_FIR_pickle(filename)
+    fig_img = plt.figure(figsize=(8, 8))
+    plt.imshow(fit_result_dict[display], **get_vlims(display))
 
 if __name__ == "__main__":
     # Desktop directory
