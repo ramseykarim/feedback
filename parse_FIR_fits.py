@@ -1,6 +1,13 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
+
+# Desktop directory
+herschel_path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
+if not os.path.isdir(herschel_path):
+    # Laptop directory
+    herschel_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
 
 
 def open_FIR_pickle(filename):
@@ -19,6 +26,7 @@ def open_FIR_pickle(filename):
     for i, m in enumerate(models):
         result_dict[f"model{bands[i]}um"] = m
         result_dict[f"model-obs{bands[i]}um"] = diffs[i]
+        result_dict[f"obs{bands[i]}um"] = m - diffs[i]
     return result_dict
 
 def get_vlims(key):
@@ -36,7 +44,10 @@ def get_vlims(key):
         'model-obs350um': (-5, 5),
         'chisq': (None, 15),
     }
-    result = {k: v for k, v in zip(('vmin', 'vmax'), vlims[key])}
+    try:
+        result = {k: v for k, v in zip(('vmin', 'vmax'), vlims[key])}
+    except KeyError:
+        result = dict(vmin=None, vmax=None)
     result['origin'] = 'lower'
     return result
 
@@ -107,33 +118,7 @@ def combine(fn_template):
     print('wrote full map')
 
 
-def interactive_SED_map(filename, display='T'):
-    """
-    use matplotlib interactive mode to plot up SED fits to data for a given
-    pixel, selected by mouse click. run in while loop to explore many points
-    """
-    fit_result_dict = open_FIR_pickle(filename)
-    fig_img = plt.figure(figsize=(8, 6))
-    ax_img = plt.subplot(111)
-    plt.imshow(fit_result_dict[display], **get_vlims(display))
-    plt.title(display)
-    plt.colorbar()
-
-    fig_SED = plt.figure(figsize=(8, 6))
-    ax_SED = plt.subplot(111)
-    wavelengths = sorted([int(k.replace('model', '').replace('um', '')) for k in fit_result_dict if ('model' in k) and ('obs' not in k)])
-    # wl_range = np.arange(40, 1000, 5)
-    i, j = 50, 50
-    fluxes = [fit_result_dict[f'model{b}um'][i, j] for b in wavelengths]
-    ax_SED.plot(wavelengths, fluxes, 'x', color='green')
-
-    plt.show()
-
 if __name__ == "__main__":
-    # Desktop directory
-    herschel_path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
-    # Laptop directory
-    herschel_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
 
     # combine(lambda i: f"{herschel_path}RCW49large_350grid_3p_nocal_TILE{i}.pkl")
-    interactive_SED_map(herschel_path+"RCW49large_350grid_3p_TILEFULL.pkl")
+    quicklook(herschel_path+"RCW49large_350grid_3p_TILEFULL.pkl",)
