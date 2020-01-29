@@ -5,11 +5,10 @@ from astropy import units as u
 from scipy.special import factorial, zeta
 import sys
 
-from parse_FIR_fits import open_FIR_pickle
+from parse_FIR_fits import open_FIR_pickle, herschel_path
 
 
 # Laptop directory
-herschel_path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
 filename = "RCW49large_350grid_3p_TILEFULL.pkl"
 
 result_dict = open_FIR_pickle(herschel_path+filename)
