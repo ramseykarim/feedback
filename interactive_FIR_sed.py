@@ -4,7 +4,7 @@ import scipy.constants as cst
 from itertools import cycle
 
 from parse_FIR_fits import open_FIR_pickle, herschel_path, get_vlims
-from mantipython.v3.src import dust, greybody, instrument
+from mantipython.v3.physics import dust, greybody, instrument
 
 
 

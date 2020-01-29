@@ -5,7 +5,7 @@ import matplotlib.cm as cmx
 import pickle
 from astropy.io import fits
 
-from mantipython.v3.src import greybody, dust, instrument
+from mantipython.v3.physics import greybody, dust, instrument
 
 """
 Generating a grid of measurements for a fixed optical depth.
