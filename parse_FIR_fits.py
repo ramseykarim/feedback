@@ -42,7 +42,7 @@ def get_vlims(key):
         'model-obs160um': (-100, 100),
         'model-obs250um': (-30, 30),
         'model-obs350um': (-5, 5),
-        'chisq': (None, 15),
+        'chisq': (None, 40),
     }
     try:
         result = {k: v for k, v in zip(('vmin', 'vmax'), vlims[key])}
