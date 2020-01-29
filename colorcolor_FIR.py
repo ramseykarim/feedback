@@ -15,6 +15,11 @@ Purpose is to look at a color/color diagram
 
 filename = "/home/rkarim/Research/Filaments/tb_grid_tau.pkl"
 filename = "/home/rkarim/Research/Filaments/tb_grid_kappa1Av.pkl"
+# filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.001.pkl"
+# filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.01.pkl"
+# filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.1.pkl"
+filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.3.pkl"
+WINDOW_TITLE = filename.split('t160-')[-1]
 
 datasets = {
     'Perseus': {'offsets': [None, '000045'],
@@ -32,19 +37,22 @@ def make_grid():
     T_range = np.exp(np.arange(np.log(5), np.log(150), np.log(1.02)))
     # Beta in arithmetic steps of 0.1
     b_range = np.arange(1., 2.51, 0.05)
-    N1Av = np.log10(1.1) + 21
-    kappa2 = dust.Dust(beta=2.0, k0=0.05625, nu0=750*1e9)
-    tau160 = np.log10(kappa2(dust.nu0_160)*(10**N1Av))
-    print("Tau160: {:.3E}".format(10**tau160))
-    print("Tau350: {:.3E}".format(kappa2(dust.cst.c/(350*1e-6))*(10**N1Av)))
+
+    # N1Av = np.log10(1.1) + 21
+    # kappa2 = dust.Dust(beta=2.0, k0=0.05625, nu0=750*1e9)
+    # tau160 = np.log10(kappa2(dust.nu0_160)*(10**N1Av))
+    # print("Tau160: {:.3E}".format(10**tau160))
+    # print("Tau350: {:.3E}".format(kappa2(dust.cst.c/(350*1e-6))*(10**N1Av)))
+    tau160 = np.log10(0.3)
+    print(f"Tau160 = {tau160:.3f}")
 
     TT, bb = np.meshgrid(T_range, b_range, indexing='xy')
     result = {d.name: np.full(TT.shape, np.nan).ravel() for d in herschel}
 
     for i, T, b in zip(range(TT.size), TT.flat, bb.flat):
         for d in herschel:
-            result[d.name][i] = d.detect(greybody.Greybody(T, N1Av, dust.Dust(beta=b, k0=0.05625, nu0=750*1e9)))
-            # result[d.name][i] = d.detect(greybody.Greybody(T, tau160, dust.TauOpacity(b)))
+            # result[d.name][i] = d.detect(greybody.Greybody(T, N1Av, dust.Dust(beta=b, k0=0.05625, nu0=750*1e9)))
+            result[d.name][i] = d.detect(greybody.Greybody(T, tau160, dust.TauOpacity(b)))
     for d in herschel:
         result[d.name] = result[d.name].reshape(TT.shape)
     result['T'] = TT
@@ -150,7 +158,7 @@ def color_color(dataset_name=None, force160250=0, SNR_MINIMUM=10, additional_mas
 
     
 
-    plt.gcf().canvas.set_window_title("tau")
+    plt.gcf().canvas.set_window_title(WINDOW_TITLE)
     if dataset_name is not None:
         dataset_name = ", " + dataset_name
     else:
@@ -168,7 +176,8 @@ def color_color(dataset_name=None, force160250=0, SNR_MINIMUM=10, additional_mas
 
 if __name__ == "__main__":
     # make_grid()
-    def additional_mask(imgs):
-        s500 = imgs['SPIRE500um']
-        return s500 > 20
-    color_color("Perseus", SNR_MINIMUM=0, additional_mask=additional_mask, extra_title=", 500um > 20")
+    # def additional_mask(imgs):
+    #     s500 = imgs['SPIRE500um']
+    #     return s500 > 20
+    # color_color("Perseus", SNR_MINIMUM=0, additional_mask=additional_mask, extra_title=", 500um > 20")
+    color_color("Perseus", SNR_MINIMUM=10)
