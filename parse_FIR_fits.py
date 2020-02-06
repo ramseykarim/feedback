@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
+from astropy.io import fits
 
 # Desktop directory
 herschel_path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
@@ -9,6 +10,14 @@ if not os.path.isdir(herschel_path):
     # Laptop directory
     herschel_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
 
+def open_FIR_fits(filename):
+    result_dict = {}
+    with fits.open(filename) as hdul:
+        for i in range(1, len(hdul)):
+            key = hdul[i].header['EXTNAME']
+            key = key.replace('solution', '')
+            result_dict[key] = hdul[i].data
+    return result_dict
 
 def open_FIR_pickle(filename):
     with open(filename, 'rb') as f:

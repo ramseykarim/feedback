@@ -2,14 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.constants as cst
 from itertools import cycle
+import sys
 
-from parse_FIR_fits import open_FIR_pickle, herschel_path, get_vlims
+from parse_FIR_fits import open_FIR_fits, open_FIR_pickle, herschel_path, get_vlims
 from mantipython.v3.physics import dust, greybody, instrument
 
 
 
-def plot_points_and_greybody(ax, x_limited, x, obs, model, gb, nu, color):
-    ax.plot(x_limited, obs, '.', color=color, marker='x', label='Observed')
+def plot_points_and_greybody(ax, x_limited, x, obs, err, model, gb, nu, color):
+    ax.errorbar(x_limited, obs, yerr=err, color=color, fmt='o', label='Observed')
+    # This next part is just a complicated way to plot a horizontal line for the model flux
     model_plots_iter = (([xpos*0.99, xpos*1.01], [ypos, ypos]) for xpos, ypos in zip(x_limited, model))
     model_plots = []
     for mpx, mpy in model_plots_iter:
@@ -36,11 +38,14 @@ def setup_SED_ax(ax_SED_lin, ax_SED_log):
 
 if __name__ == "__main__":
 
-    print("I think 70um offset needs 20less, and 160um needs 20more.")
-    print("look at these plots for more info....")
-    print("try model-obs160um/obs160um")
+    # print("I think 70um offset needs 20less, and 160um needs 20more.")
+    # print("look at these plots for more info....")
 
-    filename = herschel_path+"RCW49large_350grid_3p_TILEFULL.pkl"
+    filename = herschel_path+"RCW49large_3p_secondCal_jac.fits"
+    fit_result_dict = open_FIR_fits(filename)
+
+    print(f"try one of...\n {'    '.join(map(str, fit_result_dict.keys()))}")
+
     displaytxt = input("display on? ")
     if not displaytxt:
         displaytxt='chisq'
@@ -53,7 +58,7 @@ if __name__ == "__main__":
     """
     colors = {"PACS70um": 'violet', "PACS160um": 'blue', "SPIRE250um": 'green', "SPIRE350um": 'red',}
     # Load in the data (the data is in a format that sucks so I should fix that)
-    fit_result_dict = open_FIR_pickle(filename)
+
     # Set up image figure. This figure will be clicked on
     fig_img = plt.figure(figsize=(7, 5))
     ax_img = plt.subplot(111)
@@ -67,7 +72,7 @@ if __name__ == "__main__":
     # Get the SED plot components
     fig_SED, ax_SED_lin, ax_SED_log = create_SED_figure()
     # Set up wavelength axes and such
-    wavelengths = sorted([int(k.replace('model', '').replace('um', '')) for k in fit_result_dict if ('model' in k) and ('obs' not in k)])
+    wavelengths = sorted([int(k.replace('dBAND', '')) for k in fit_result_dict if ('dBAND' in k)])
     wavelengths_plot = [np.log(x) for x in wavelengths]
     wl_range_plot = np.linspace(np.log(40), np.log(1000), 200)
     wl_range = np.exp(wl_range_plot)
@@ -109,18 +114,20 @@ if __name__ == "__main__":
     def plot_new_SED(i, j, color='k', horiz_offset=0.05):
         # Iterate through bands to do get the model and observed data
         model_fluxes, obs_fluxes = [], []
+        errors = []
         for idx, b in enumerate(wavelengths):
             # Get model and observed data
-            model_flux = fit_result_dict[f'model{b}um'][i, j]
-            diff_flux = fit_result_dict[f'model-obs{b}um'][i, j]
-            obs_flux = model_flux - diff_flux
+            model_flux = fit_result_dict[f'model_flux{b}'][i, j]
+            obs_flux = fit_result_dict[f'BAND{b}'][i, j]
+            err = fit_result_dict[f'dBAND{b}'][i, j]
             model_fluxes.append(model_flux)
             obs_fluxes.append(obs_flux)
+            errors.append(err)
         # Make and plot model for this pixel
         T, tau, beta = (fit_result_dict[k][i, j] for k in ('T', 'tau', 'beta'))
         gb = greybody.Greybody(T, tau, dust.TauOpacity(beta))
-        plot_points_and_greybody(ax_SED_lin, wavelengths_plot, wl_range_plot, obs_fluxes, model_fluxes, gb, nu_range, color=color)
-        plot_points_and_greybody(ax_SED_log, wavelengths_plot, wl_range_plot, obs_fluxes, model_fluxes, gb, nu_range, color=color)
+        plot_points_and_greybody(ax_SED_lin, wavelengths_plot, wl_range_plot, obs_fluxes, errors, model_fluxes, gb, nu_range, color=color)
+        plot_points_and_greybody(ax_SED_log, wavelengths_plot, wl_range_plot, obs_fluxes, errors, model_fluxes, gb, nu_range, color=color)
         # Add legend and text describing some things
         ax_SED_lin.legend(loc='upper right', shadow=True)
         desc = f"{T:4.1f} K\n{tau:4.2f}\n{beta:4.2f}"
