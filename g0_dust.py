@@ -5,24 +5,11 @@ from astropy import units as u
 from scipy.special import factorial, zeta
 import sys
 
-from parse_FIR_fits import open_FIR_pickle, herschel_path
+from parse_FIR_fits import open_FIR_pickle, open_FIR_fits, herschel_path
 
 
 # Laptop directory
-filename = "RCW49large_350grid_3p_TILEFULL.pkl"
-
-result_dict = open_FIR_pickle(herschel_path+filename)
-T, tau, beta = (result_dict[x] for x in ('T', 'tau' ,'beta'))
-
-
-a = (0.2 * u.micron).to(u.cm) # micron, grain size, from Xander conversation, range between 0.1-3
-
-grain_density = 3. * u.g / (u.cm ** 3) # g/cm2, according to Xander (notebook pg 111)
-avg_kappa_abs_FUV = 3.e4 * (u.cm ** 2) / u.g # cm2/g, based on the plots from plot_dust()
-m_grain = grain_density * (np.pi * 4./3) * a**3.
-xr_grain = np.pi * a**2.
-avg_Cabs_FUV = avg_kappa_abs_FUV * m_grain
-avg_Qabs_FUV = avg_Cabs_FUV / xr_grain
+filename = "RCW49large_3p_secondCal_sysErr_jac.fits"
 
 """
 I need to implement this equation for G0:
@@ -42,7 +29,20 @@ Q_abs_avgFUV is the averge Q_abs = C_abs / sigma_dust over the FUV absorption
     range that matters here
 """
 
-def make_plot_g0():
+def calculate_g0():
+    result_dict = open_FIR_fits(herschel_path+filename)
+    T, tau, beta = (result_dict[x] for x in ('T', 'tau' ,'beta'))
+
+
+    a = (0.2 * u.micron).to(u.cm) # micron, grain size, from Xander conversation, range between 0.1-3
+
+    grain_density = 3. * u.g / (u.cm ** 3) # g/cm2, according to Xander (notebook pg 111)
+    avg_kappa_abs_FUV = 3.e4 * (u.cm ** 2) / u.g # cm2/g, based on the plots from plot_dust()
+    m_grain = grain_density * (np.pi * 4./3) * a**3.
+    xr_grain = np.pi * a**2.
+    avg_Cabs_FUV = avg_kappa_abs_FUV * m_grain
+    avg_Qabs_FUV = avg_Cabs_FUV / xr_grain
+
     Q0 = 1
     k = u.Quantity(cst.k, cst.unit('Boltzmann constant'))
     h = u.Quantity(cst.h, cst.unit('Planck constant'))
@@ -55,15 +55,18 @@ def make_plot_g0():
     G0 = (1 / avg_Qabs_FUV) * (4*15/(np.pi**5)) * factorial(beta+3) * zeta(beta+4) * Q0 * ((lambda0*k/hc)*Td)**beta * sb * Td**4.
     Habing = u.Quantity(1.6e-3, 'erg cm-2 s-1')
     G0 = G0.to('erg cm-2 s-1') / Habing
+    return G0
 
-    obs70 = result_dict['model70um'] - result_dict['model-obs70um']
+def make_plot_g0():
+    G0 = calculate_g0()
+    obs70 = result_dict['BAND70']
     plt.figure()
     plt.subplot(121)
     plt.imshow(np.log10(obs70), origin='lower', vmin=1, vmax=5)
     plt.title("70um")
     plt.colorbar()
     plt.subplot(122)
-    plt.imshow(np.log10(G0.value), origin='lower', cmap='cividis', vmin=0, vmax=3.5)
+    plt.imshow(np.log10(G0.value), origin='lower', cmap='cividis', vmin=0.5, vmax=4)
     plt.colorbar()
     plt.title("G0")
     plt.show()
@@ -71,7 +74,9 @@ def make_plot_g0():
 
 
 
-make_plot_g0()
+
+if __name__ == "__main__":
+    make_plot_g0()
 
 
 

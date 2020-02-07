@@ -41,9 +41,14 @@ if __name__ == "__main__":
     # print("I think 70um offset needs 20less, and 160um needs 20more.")
     # print("look at these plots for more info....")
 
-    filename = herschel_path+"RCW49large_3p_secondCal_jac.fits"
+    if len(sys.argv) > 1:
+        filename = sys.argv[1]
+    else:
+        filename = "RCW49large_3p_secondCal_jac.fits"
+    filename = herschel_path+filename
     fit_result_dict = open_FIR_fits(filename)
 
+    print(f"Opened {filename}")
     print(f"try one of...\n {'    '.join(map(str, fit_result_dict.keys()))}")
 
     displaytxt = input("display on? ")
@@ -68,6 +73,7 @@ if __name__ == "__main__":
     else:
         display = fit_result_dict[displaytxt]
     plt.imshow(display, **get_vlims(displaytxt))
+    plt.colorbar()
     plt.title(displaytxt)
     # Get the SED plot components
     fig_SED, ax_SED_lin, ax_SED_log = create_SED_figure()
@@ -124,7 +130,11 @@ if __name__ == "__main__":
             obs_fluxes.append(obs_flux)
             errors.append(err)
         # Make and plot model for this pixel
-        T, tau, beta = (fit_result_dict[k][i, j] for k in ('T', 'tau', 'beta'))
+        try:
+            T, tau, beta = (fit_result_dict[k][i, j] for k in ('T', 'tau', 'beta'))
+        except KeyError:
+            T, tau = (fit_result_dict[k][i, j] for k in ('T', 'tau'))
+            beta = 2.0
         gb = greybody.Greybody(T, tau, dust.TauOpacity(beta))
         plot_points_and_greybody(ax_SED_lin, wavelengths_plot, wl_range_plot, obs_fluxes, errors, model_fluxes, gb, nu_range, color=color)
         plot_points_and_greybody(ax_SED_log, wavelengths_plot, wl_range_plot, obs_fluxes, errors, model_fluxes, gb, nu_range, color=color)

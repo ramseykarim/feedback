@@ -15,6 +15,7 @@ import pandas as pd
 from misc_utils import flquantiles
 
 import readstartypes
+import g0_dust
 
 data_directory = "../ancillary_data/"
 
@@ -34,6 +35,22 @@ def herschel_data(wl):
         data = hdul[1].data
         image_header = hdul[1].header
     return data, image_header, global_header['WAVELNTH']
+# herschel SED fit on 350 grid cutout generator
+def herschel_SED_fit():
+    fn = f"{data_directory}herschel/RCW49large_3p_secondCal_sysErr_jac.fits"
+    with fits.open(fn) as hdul:
+        T = hdul[1].data
+        image_header = hdul[1].header
+    return T, image_header, 'T'
+# herschel spire/pacs processed data generator
+def processed_herschel_data(wl):
+    band_stub = {70:"PACS70um", 160:"PACS160um", 250:"SPIRE250um", 350:"SPIRE350um", 500:"SPIRE500um"}
+    offset = {70: 80, 160: 370}
+    folder = f"{data_directory}herschel/helpssproc/processed/1342255009_reproc350/"
+    offset_stub = f"-plus{offset[wl]:06d}" if wl in offset else ""
+    fn = f"{folder}{band_stub[wl]}-image-remapped-conv{offset_stub}.fits"
+    data, image_header = fits.getdata(fn, header=True)
+    return data, image_header, image_header['WAVELNTH']    
 # sofia data that Maitraiyee emailed me on nov 18 2019
 def sofia_data_integrated():
     data, header = fits.getdata(f"{data_directory}sofia/rcw49-cii-int.fits", header=True)
@@ -385,7 +402,7 @@ def make_g0hotstars_figure(Tcut_kK, hotter=True, fracmin=0.3, fracmax=0.7):
     """
     distance_to_Wd2 = 4.16*1000
     plt.figure(figsize=(19, 8))
-    img_data, img_header, wl = sofia_data_integrated()
+    img_data, img_header, wl = herschel_SED_fit()
     w = WCS(img_header, naxis=2)
     if hotter:
         condition = radec_df.paramx > Tcut_kK*1e3
@@ -413,12 +430,21 @@ def make_g0hotstars_figure(Tcut_kK, hotter=True, fracmin=0.3, fracmax=0.7):
     plt.show()
 
 
-def save_g0_fits():
-    img_data, img_header, wl = sofia_data_integrated()
+def save_g0_fits(Tcut_kK=None, hotter=True):
+    img_data, img_header, wl = herschel_SED_fit()
     w = WCS(img_header, naxis=2)
 
+    if Tcut_kK is not None:
+        if hotter:
+            condition = radec_df.paramx > Tcut_kK*1e3
+        else:
+            condition = radec_df.paramx < Tcut_kK*1e3
+        condition = condition & is_within_range
+    else:
+        condition = is_within_range
+
     t0 = datetime.datetime.now()
-    grid = calc_g0(radec_df.loc[is_within_range], w, 4.16*1000)
+    grid = calc_g0(radec_df.loc[condition], w, 4.16*1000)
     t1 = datetime.datetime.now()
     print((t1-t0).total_seconds()*1000, "ms")
 
@@ -431,15 +457,59 @@ def save_g0_fits():
     header['COMMENT'] = "Habing field taken to be 1.6e-3 erg cm-2 s-1"
     header['HISTORY'] = "Star catalog synthesized from several literature sources"
     header['HISTORY'] = "Catalog used here can be found as Wd2_catalog_FUVflux.csv"
-    fits.writeto("rcw49-g0.fits", grid, header)
+    header['HISTORY'] = "Used Hershel SPIRE 350um pixel grid"
+    fits.writeto("figures/rcw49-g0-stars.fits", grid, header)
 
-make_g0CII_figure()
+
+def make_g0_starsVdust_figure(Tcut_kK=None, hotter=True):
+    distance_to_Wd2 = 4.16*1000
+    plt.figure(figsize=(14, 10))
+    img_data, img_header, wl = herschel_SED_fit()
+    w = WCS(img_header, naxis=2)
+    if Tcut_kK is not None:
+        glt = ">" if hotter else "<"
+        if hotter:
+            condition = radec_df.paramx > Tcut_kK*1e3
+        else:
+            condition = radec_df.paramx < Tcut_kK*1e3
+        condition = condition & is_within_range
+        stars_txt = "G0 from stars with Teff {:s} {:.0f} kK".format(glt, Tcut_kK)
+    else:
+        condition = is_within_range
+        stars_txt = "G0 from stars"
+    # print(radec_df.loc[is_hot & is_within_range])
+    grid_stars = calc_g0(radec_df.loc[condition], w, distance_to_Wd2)
+    grid_dust = g0_dust.calculate_g0()
+    grid_diff = grid_stars/grid_dust
+    pkwargs = dict(cmap='cividis', vmin=1, vmax=5)
+    for sp, grid, title in zip((221, 223, 222), (grid_stars, grid_diff, grid_dust), (stars_txt, "Difference", "G0 from dust")):
+        plt.subplot(sp, projection=w)
+        if sp == 223:
+            plt.imshow(np.log10(grid), cmap='magma', vmin=-1, vmax=4)
+            plt.colorbar(label='log stellar G0 excess')
+        else:
+            plt.imshow(np.log10(grid), **pkwargs)
+            plt.colorbar(label='log G0')
+        plot_nearby_Wd2_types_JUSTSTARS()
+        plt.title(title)
+        plt.xlabel("RA")
+        plt.ylabel("DEC")
+    plt.subplots_adjust(top=0.974, bottom=0.019, left=0.054, right=0.985, hspace=0.2, wspace=0.223)
+    plt.show()
+
+
+
+# All stars, real simple
+# make_g0CII_figure()
 
 # O5 and earlier
 # make_g0hotstars_figure(45)
 
 # The swarm of ETs
 # make_g0hotstars_figure(36, hotter=False, fracmin=0.2, fracmax=0.45)
+
+# COMPARE TO DUST
+make_g0_starsVdust_figure()
 
 # save_g0_fits()
 

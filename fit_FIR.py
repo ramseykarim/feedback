@@ -14,11 +14,11 @@ data_fns = {
     # 500: "SPIRE500um-image-remapped-conv.fits",
 }
 err_fns = {
-    70: "PACS70um-error-remapped-conv.fits",
-    160: "PACS160um-error-remapped-conv.fits",
-    250: "SPIRE250um-error-remapped-conv.fits",
-    350: "SPIRE350um-error-remapped-conv.fits",
-    # 500: "SPIRE500um-error-remapped-conv.fits",
+    70: "PACS70um-error-remapped-conv-plus6.0pct.fits",
+    160: "PACS160um-error-remapped-conv-plus8.0pct.fits",
+    250: "SPIRE250um-error-remapped-conv-plus5.5pct.fits",
+    350: "SPIRE350um-error-remapped-conv-plus5.5pct.fits",
+    # 500: "SPIRE500um-error-remapped-conv-plus5.5pct.fits",
 }
 
 # organize filenames
@@ -31,8 +31,8 @@ width_i, width_j = 220, 280
 # decide whether or not this is parallel
 n_processes = 10
 path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
-write_fn = "RCW49large_3p_secondCal_jac.fits"
-mantipython.fit_entire_map(data_dictionary, [70, 160, 250, 350], ('T', 'tau', 'beta'),
+write_fn = "RCW49large_2p_secondCal_sysErr_jac.fits"
+mantipython.fit_entire_map(data_dictionary, [70, 160, 250, 350], ('T', 'tau'),
     data_directory=data_dir, log_name_func=lambda s: f"{path}log{s}.log",
     n_procs=n_processes, destination_filename=path+write_fn,
     cutout=((i0, j0), (width_i, width_j)), fitting_function='jac',

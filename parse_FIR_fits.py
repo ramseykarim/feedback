@@ -47,11 +47,11 @@ def get_vlims(key):
         'model160um': (1, 5),
         'model250um': (0, 4),
         'model350um': (0, 3),
-        'model-obs70um': (-20, 20),
+        'model-obs70um': (-10, 10),
         'model-obs160um': (-100, 100),
         'model-obs250um': (-30, 30),
         'model-obs350um': (-5, 5),
-        'chisq': (None, 40),
+        'chisq': (None, 2),
     }
     try:
         result = {k: v for k, v in zip(('vmin', 'vmax'), vlims[key])}
@@ -62,12 +62,26 @@ def get_vlims(key):
 
 
 def quicklook(filename):
-    with open(filename, 'rb') as f:
-        fit, chisq, models, diffs = pickle.load(f)
-
-    T, tau, beta = fit
-    p70, p160, s250, s350 = diffs
-    # beta = np.full(T.shape, 2.0)
+    if "fits" in filename:
+        with fits.open(filename) as hdul:
+            T, tau = (hdul[i].data for i in (1, 2))
+            if 'beta' in hdul[3].header['EXTNAME']:
+                beta = hdul[3].data
+                i0 = 0
+            else:
+                i0 = -1
+                beta = 2.0
+            chisq = hdul[12+i0].data
+            p70, p160, s250, s350 = (hdul[i].data for i in range(8+i0, 12+i0))
+    elif "pkl" in filename:
+        with open(filename, 'rb') as f:
+            fit, chisq, models, diffs = pickle.load(f)
+        p70, p160, s250, s350 = diffs
+        try:
+            T, tau, beta = fit
+        except:
+            T, tau = fit
+            beta = np.full(T.shape, 2.0)
 
     plt.figure(figsize=(16, 9))
     plt.subplot(231)
@@ -127,7 +141,21 @@ def combine(fn_template):
     print('wrote full map')
 
 
+def compare_jac_3p():
+    withjac = open_FIR_fits(herschel_path+"RCW49large_3p_firstCal_jac.fits")
+    withoutjac = open_FIR_fits(herschel_path+"RCW49large_3p_firstCal.fits")
+    plt.imshow(withjac['T'] - withoutjac['T'], origin='lower', vmin=-4, vmax=4)
+    plt.show()
+    # Shows that jacobian only affects performance really
+
+def compare_sysErr():
+    withsys = open_FIR_fits(herschel_path+"RCW49large_3p_secondCal_sysErr_jac.fits")
+    withoutsys = open_FIR_fits(herschel_path+"RCW49large_3p_secondCal_jac.fits")
+    plt.imshow(withsys['T'] - withoutsys['T'], origin='lower', vmin=-4, vmax=4)
+    plt.show()
+
+
 if __name__ == "__main__":
 
     # combine(lambda i: f"{herschel_path}RCW49large_350grid_3p_nocal_TILE{i}.pkl")
-    quicklook(herschel_path+"RCW49large_350grid_3p_TILEFULL.pkl",)
+    quicklook(herschel_path+"RCW49large_3p_secondCal_sysErr_jac.fits",)
