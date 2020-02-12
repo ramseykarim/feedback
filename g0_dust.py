@@ -75,13 +75,6 @@ def make_plot_g0():
 
 
 
-if __name__ == "__main__":
-    make_plot_g0()
-
-
-
-
-
 """
 Dust opacity vs wavelength plot that I probably might use again later
 """
@@ -114,15 +107,19 @@ def plot_dust():
     selected_age = 5
     dt = dust_types[3]
     # for dt in dust_types:
-    for selected_age in times:
+    for selected_age in [4]:
         a = np.genfromtxt(gen_ormel_fn(dt, selected_age))
         wl_um = a[:, 0] * 1e4
         kext = a[:, 1]
         ksca = a[:, 2]
         kabs = kext - ksca
-        # plt.plot(wl_um, kext, '-', label="Ormel "+dt+"ext")
-        # plt.plot(wl_um, ksca, '-', label="Ormel "+dt+"sca")
+        plt.plot(wl_um, kext, '-', label="Ormel "+dt+f" {times[selected_age]}ext")
+        plt.plot(wl_um, ksca, '-', label="Ormel "+dt+f" {times[selected_age]}sca")
         plt.plot(wl_um, kabs, '-', label="Ormel "+dt+f" {times[selected_age]}abs")
     plt.xscale('log'), plt.yscale('log')
     plt.legend()
     plt.show()
+
+
+if __name__ == "__main__":
+    plot_dust()
