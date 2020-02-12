@@ -60,8 +60,8 @@ def get_tau(filename=fit2p_filename, chisq_cut=2.0, flux_cut=3e3):
         tau = hdul['solutiontau'].data
         chisq = hdul['chisq'].data
         p70 = hdul['BAND70'].data
-    # tau[chisq > chisq_cut] = np.nan
-    # tau[p70 < flux_cut] = np.nan
+    tau[chisq > chisq_cut] = np.nan
+    tau[p70 < flux_cut] = np.nan
     return 10.**tau
 
 def get_wcs(filename=fit2p_filename):
@@ -88,6 +88,12 @@ def get_physical_area_pixel(array, wcs_obj, los_distance_pc):
     area_per_pixel = phys_scale ** 2
     print(f"area per pixel: {area_per_pixel.to(u.cm*u.cm):.2E}")
     return area_per_pixel.to(u.cm*u.cm)
+
+def get_physical_image_axes(array, wcs_obj, los_distance_pc):
+    phys_scale = get_physical_scale(wcs_obj, los_distance_pc).to_value()
+    i, j = ((np.arange(x+1) - 0.5 - x//2)*phys_scale for x in array.shape)
+    return i, j
+
 
 def convert_tautomass_k(tau160, k160):
     return gastodust * tau160/k160
@@ -122,14 +128,22 @@ if __name__ == "__main__":
     Cabs160 = get_val_at(160., wl, Cabs)
     kabs160 = get_val_at(160., wl, kabs)
 
+    losD = 4.16*1000
 
     w = get_wcs(filename="RCW49large_2p.fits")
     tau = get_tau(filename="RCW49large_2p.fits", chisq_cut=7.0, flux_cut=2e3)
-    valid_area = get_physical_area_pixel(tau, w, 4.16*1000)
+    valid_area = get_physical_area_pixel(tau, w, losD)
 
+    N = convert_tautoN_C(tau, Cabs160)
     mass = convert_tautomass_k(tau, kabs160) * u.g / (u.cm*u.cm)
     total_mass = valid_area * np.sum(mass[np.isfinite(mass)])
     print(f"{total_mass.to('solMass'):.3E}")
 
-    # plt.imshow(mass.to_value(), origin='lower')
-    # plt.show()
+    extent_arrays = get_physical_image_axes(N, w, losD)
+    ext = (extent_arrays[1][0], extent_arrays[1][-1], extent_arrays[0][0], extent_arrays[0][-1])
+    print(ext)
+
+    plt.imshow(np.log10(N), origin='lower', extent=ext)
+    plt.title("column density N(H) (cm-2)")
+    plt.colorbar()
+    plt.show()
