@@ -5,7 +5,7 @@ from itertools import cycle
 import sys
 
 from parse_FIR_fits import open_FIR_fits, open_FIR_pickle, herschel_path, get_vlims
-from mantipython.v3.physics import dust, greybody, instrument
+from mantipython.physics import dust, greybody, instrument
 
 
 
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     use matplotlib interactive mode to plot up SED fits to data for a given
     pixel, selected by mouse click. run in while loop to explore many points
     """
-    colors = {"PACS70um": 'violet', "PACS160um": 'blue', "SPIRE250um": 'green', "SPIRE350um": 'red',}
+    colors = {"PACS70um": 'violet', "PACS160um": 'blue', "SPIRE250um": 'green', "SPIRE350um": 'red', 'SPIRE500um': 'brown'}
     # Load in the data (the data is in a format that sucks so I should fix that)
 
     # Set up image figure. This figure will be clicked on

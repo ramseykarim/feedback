@@ -64,15 +64,13 @@ def get_vlims(key):
 def quicklook(filename):
     if "fits" in filename:
         with fits.open(filename) as hdul:
-            T, tau = (hdul[i].data for i in (1, 2))
-            if 'beta' in hdul[3].header['EXTNAME']:
-                beta = hdul[3].data
-                i0 = 0
+            T, tau = (hdul[i].data for i in ('solutionT', 'solutiontau'))
+            chisq = hdul['chisq'].data
+            if 'solutionbeta' in hdul:
+                beta = hdul['solutionbeta'].data
             else:
-                i0 = -1
-                beta = 2.0
-            chisq = hdul[12+i0].data
-            p70, p160, s250, s350 = (hdul[i].data for i in range(8+i0, 12+i0))
+                beta = np.full(T.shape, 2.0)
+            p70, p160, s250, s350 = (hdul[f"diff_flux{i:d}"].data for i in [70, 160, 250, 350])
     elif "pkl" in filename:
         with open(filename, 'rb') as f:
             fit, chisq, models, diffs = pickle.load(f)
@@ -158,4 +156,4 @@ def compare_sysErr():
 if __name__ == "__main__":
 
     # combine(lambda i: f"{herschel_path}RCW49large_350grid_3p_nocal_TILE{i}.pkl")
-    quicklook(herschel_path+"RCW49large_3p_secondCal_sysErr_jac.fits",)
+    quicklook(herschel_path+"RCW49large_3p.fits",)
