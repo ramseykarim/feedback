@@ -8,6 +8,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 
 from mantipython import physics
+import geometric_model as geomodel
 
 ancillary_data_path = "/home/rkarim/Research/Feedback/ancillary_data/"
 dust_path = f"{ancillary_data_path}dust/"
@@ -55,13 +56,15 @@ def get_val_at(wl, wl_array, val_array):
 
 fit2p_filename = "RCW49large_2p.fits"
 
-def get_tau(filename=fit2p_filename, chisq_cut=2.0, flux_cut=3e3):
+def get_tau(filename=fit2p_filename, chisq_cut=None, flux_cut=None):
     with fits.open(herschel_path+filename) as hdul:
         tau = hdul['solutiontau'].data
         chisq = hdul['chisq'].data
         p70 = hdul['BAND70'].data
-    tau[chisq > chisq_cut] = np.nan
-    tau[p70 < flux_cut] = np.nan
+    if chisq_cut is not None:
+        tau[chisq > chisq_cut] = np.nan
+    if flux_cut is not None:
+        tau[p70 < flux_cut] = np.nan
     return 10.**tau
 
 def get_wcs(filename=fit2p_filename):
@@ -131,12 +134,21 @@ if __name__ == "__main__":
     losD = 4.16*1000
 
     w = get_wcs(filename="RCW49large_2p.fits")
-    tau = get_tau(filename="RCW49large_2p.fits", chisq_cut=7.0, flux_cut=2e3)
-    valid_area = get_physical_area_pixel(tau, w, losD)
+    tau = get_tau(filename="RCW49large_2p.fits") #, chisq_cut=7.0, flux_cut=2e3)
+
+    estimated_center_pixel = (103, 138)
+    radius_deg = 0.09
+    thickness_deg = 0.05
+    pixel_scale_deg = get_pixel_scale(w).to_value()
+
+    # mask to just the shell
+    half_shell_mask = geomodel.shell_mask_2d(tau, pixel_scale_deg, radius_deg, thickness_deg, estimated_center_pixel, ang=70)
+    tau[~half_shell_mask] = np.nan
 
     N = convert_tautoN_C(tau, Cabs160)
     mass = convert_tautomass_k(tau, kabs160) * u.g / (u.cm*u.cm)
-    total_mass = valid_area * np.sum(mass[np.isfinite(mass)])
+    pixel_area = get_physical_area_pixel(tau, w, losD)
+    total_mass = pixel_area * np.sum(mass[np.isfinite(mass)])
     print(f"{total_mass.to('solMass'):.3E}")
 
     extent_arrays = get_physical_image_axes(N, w, losD)
