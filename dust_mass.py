@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.constants as cst
@@ -10,7 +11,10 @@ from astropy.coordinates import SkyCoord
 from mantipython import physics
 import geometric_model as geomodel
 
+
 ancillary_data_path = "/home/rkarim/Research/Feedback/ancillary_data/"
+if not os.path.isdir(ancillary_data_path):
+    ancillary_data_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/"
 dust_path = f"{ancillary_data_path}dust/"
 herschel_path = f"{ancillary_data_path}herschel/"
 
@@ -134,7 +138,8 @@ if __name__ == "__main__":
     losD = 4.16*1000
 
     w = get_wcs(filename="RCW49large_2p.fits")
-    tau = get_tau(filename="RCW49large_2p.fits") #, chisq_cut=7.0, flux_cut=2e3)
+    # tau = get_tau(filename="RCW49large_2p.fits", chisq_cut=7.0, flux_cut=2e3)
+    tau = get_tau(filename="RCW49large_2p.fits")
 
     estimated_center_pixel = (103, 138)
     radius_deg = 0.09
