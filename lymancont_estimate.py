@@ -51,17 +51,21 @@ def solve_LLy_Hj(D, S, *args):
     D2S = D*D*S
     return D2S / numerical_factor_Hj
 
-S843 = 34. # Jy
+regions = {"Ring A": (110., np.nan), "Ring B": (34., 1.5e49),
+    "Total": (210., 9.5e49)}
+
+selected_region = "Total"
+S843, WUf = regions[selected_region] # Jy
 
 def tryD(d, T=8000.):
     print(f"Trying d={d:.1f} kpc")
     RCWLLy_me = solve_LLy(d, S843, T, 843.e6)
     RCWLLy_Hj = solve_LLy_Hj(d, S843, T, 843.e6)
-    print(f"{RCWLLy_me:.2E} from my method")
-    print(f"{RCWLLy_Hj:.2E} from Hjellming")
+    print(f"{RCWLLy_me:.2E} ({np.log10(RCWLLy_me):.2f})  from my method")
+    print(f"{RCWLLy_Hj:.2E} ({np.log10(RCWLLy_Hj):.2f}) from Hjellming")
 
 if __name__ == "__main__":
     T_try = 8e3
-    print("Whiteoak and Uchida 1997 found 1.5 +/- 0.2 E+49 Lyman continuum photons s-1")
+    print(f"In {selected_region}, Whiteoak and Uchida 1997 found {WUf:.2E} ({np.log10(WUf):.2f}) Lyman continuum photons s-1")
     tryD(2.3, T=T_try)
     tryD(4.2, T=T_try)
