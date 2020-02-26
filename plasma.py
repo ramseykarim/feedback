@@ -86,6 +86,9 @@ if __name__ == "__main__":
     # FEEDBACK estimate of physical bubble radius
     bubble_radius = 8.5 # pc, based on ~7 min radius bubble at 4.21 kpc (Townsley's distance)
 
+    bubble_radius_ang = 300 * u.arcsec
+    bubble_radius = 4.21e3 * bubble_radius_ang.to(u.rad).to_value()
+
     print(f"Assuming {bubble_radius:.1f} pc radius bubble of constant density,\n fully ionized, cosmic abundance plasma.\n Assumes nH = ne for electron density.")
 
     print()
