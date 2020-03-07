@@ -1,23 +1,86 @@
 import numpy as np
 from astropy.io import fits
+from astropy.wcs import WCS
+
 import spectr
 import extinction
 
 """
 Convenience functions for MUSE cubes
 Created: October 3, 2019
+Revisited: March 5, 2020
 """
 __author__ = "Ramsey Karim"
 
+filename_stubs = {
+    # large rectangular cubes
+    "mid-large-long": "ADP.2016-09-26T19_23_53.951",
+    "mid-large-short": "ADP.2016-09-26T19_23_53.919",
+    "east-large-long": "ADP.2016-09-26T19_23_54.012",
+    "east-large-short": "ADP.2016-09-26T19_23_53.938",
+    "west-large-long": "ADP.2016-09-29T09_38_09.977",
+    "west-large-short": "",
+    # smaller square cubes
+    "east-small-short": "ADP.2018-02-01T11_53_14.286",
 
-cube_filename_raw = "./muse/ADP.2018-02-01T11_53_14.286.fits"
-mask_filename_star = "./muse/ADP.2018-02-01T11_53_14.286.smsk.fits"
-mask_filename_absorption = "./muse/ADP.2018-02-01T11_53_14.286.amsk.fits"
-cube_filename_conv = "./muse/ADP.2018-02-01T11_53_14.286.conv.fits"
-cube_filename_resamp = "./muse/ADP.2018-02-01T11_53_14.286.resamp.fits"
-cube_filename_rsmperr = "./muse/ADP.2018-02-01T11_53_14.286.rsmperr.fits"
-NH_filename = "./muse/ADP.2018-02-01T11_53_14.286.NH.fits"
-Av_filename = "./muse/ADP.2018-02-01T11_53_14.286.Av.fits"
+}
+
+data_path = "../ancillary_data/vlt/muse/"
+
+def gen_filepath_stub(stub):
+    """
+    Add the data path to the stub
+    """
+    return data_path + filename_stubs[stub]
+
+def gen_filename_raw(stub):
+    return gen_filepath_stub(stub) + ".fits"
+
+def gen_filename_starmask(stub):
+    """
+    True if there is probably a star here
+    """
+    return gen_filepath_stub(stub) + "smsk.fits"
+
+def gen_filename_absorptionmask(stub):
+    """
+    MAY BE OBSOLETE
+    """
+    return gen_filepath_stub(stub) + "amsk.fits"
+
+def gen_filename_conv(stub):
+    return gen_filepath_stub(stub) + "conv.fits"
+
+def gen_filename_resampled(stub):
+    """
+    Convolved and resampled to a lower-res grid
+    """
+    return gen_filepath_stub(stub) + "resamp.fits"
+
+def gen_filename_rsmperr(stub):
+    """
+    An error map for the resampled image, based on how
+    may adjacent pixels were involved in the resample
+    """
+    return gen_filepath_stub(stub) + "smsk.fits"
+
+def gen_filename_NH(stub):
+    return gen_filepath_stub(stub) + "NH.fits"
+
+def gen_filename_Av(stub):
+    return gen_filepath_stub(stub) + "Av.fits"
+
+
+
+# cube_filename_raw = "./muse/ADP.2018-02-01T11_53_14.286.fits"
+# mask_filename_star = "./muse/ADP.2018-02-01T11_53_14.286.smsk.fits"
+# mask_filename_absorption = "./muse/ADP.2018-02-01T11_53_14.286.amsk.fits"
+# cube_filename_conv = "./muse/ADP.2018-02-01T11_53_14.286.conv.fits"
+# cube_filename_resamp = "./muse/ADP.2018-02-01T11_53_14.286.resamp.fits"
+# cube_filename_rsmperr = "./muse/ADP.2018-02-01T11_53_14.286.rsmperr.fits"
+# NH_filename = "./muse/ADP.2018-02-01T11_53_14.286.NH.fits"
+# Av_filename = "./muse/ADP.2018-02-01T11_53_14.286.Av.fits"
+
 
 def unpack_header(header_g, header_d):
     """
@@ -35,22 +98,23 @@ def unpack_header(header_g, header_d):
         "wavl": wlrange_A,
         "wavl_unit": cunit3,
         "flux_unit": bunit,
+        "wcs": WCS(header_d),
     }
     return result_dict
 
 
-def generate_masks(data_cube, wavl_array):
-    if False:
+def generate_masks(stub, data_cube, wavl_array):
+    try:
+        # Load them in from saved FITS (already ran/saved above code)
+        star_mask = fits.getdata(gen_filename_starmask(stub))
+        absorption_mask = fits.getdata(gen_filename_absorptionmask(stub))
+    except FileNotFoundError:
         # Get rudimentary star mask (True if star)
         flatimg_stars = np.nanmean(data_cube[(wavl_array > 9090) & (wavl_array < 9200)], axis=0)
         median_stars = np.nanmedian(flatimg_stars[flatimg_stars < 10])
         flatimg_stars -= median_stars
         star_mask = (flatimg_stars>25)
         absorption_mask = (flatimg < 0)
-    else:
-        # Load them in from saved FITS (already ran/saved above code)
-        star_mask = fits.getdata(mask_filename_star)
-        absorption_mask = fits.getdata(mask_filename_absorption)
     return star_mask, absorption_mask
 
 

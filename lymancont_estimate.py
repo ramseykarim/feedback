@@ -98,7 +98,7 @@ regions = {"Ring A": (110., np.nan), "Ring B": (34., 1.5e49),
     "Total": (210., 9.5e49)}
 
 # Directly from WU97: 7.3 and 4.1. I think Ring B is larger, ~5
-regions_ang_diam = {"Ring A": 7.3, "Ring B": 4.1, "Total": np.nan}
+regions_ang_diam = {"Ring A": 7.3, "Ring B": 5, "Total": np.nan}
 
 selected_region = "Ring B"
 
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     WU_dist = 2.3
     accepted_dist = 4.2
 
-    T_try = 7300.
+    T_try = 7600.
     print(f"In {selected_region}, Whiteoak and Uchida 1997 found {WUf:.2E} ({np.log10(WUf):.2f}) Lyman continuum photons s-1")
     tryD(WU_dist, T=T_try)
     tryD(accepted_dist, T=T_try)

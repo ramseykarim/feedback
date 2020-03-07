@@ -17,7 +17,8 @@ Tl = 3 * 2.6
 dV_regB = 8.2
 dV = 10.8
 nu_GHz = 5.
-line_of_sight_distance_pc = 6.1*2. # Paladini used 1 pc, but ~17 pc seems closer to reality
+bubble_radius = 5.
+line_of_sight_distance_pc = bubble_radius*2. # Paladini used 1 pc, but ~17 pc seems closer to reality
 # line_of_sight_distance_pc = 1.
 
 theta_beam = 7.3 # arcsec at 5 GHz, from Table 3 in Paladini (maj == min)
@@ -130,11 +131,27 @@ def calc_ne(EM):
     return np.sqrt(EM/line_of_sight_distance_pc)
 
 
-# def calc_ne_full(Te):
-#     tauC = calc_tauC(Te)
-#     EM = calc_EM(tauC, Te)
-#     return calc_ne(EM)
+def sphere_volume():
+    # returns cm3
+    return (4.*np.pi/3) * (bubble_radius*u.pc.to(u.cm))**3.
 
+
+def calc_P(T, n):
+    # returns in K cm-3
+    return T * n * 0.5
+
+
+def calc_E(P):
+    # returns ergs
+    return (3./2) * P*(cst.k * u.J.to(u.erg)) * sphere_volume()
+
+
+def calc_mass(n):
+    return 0.5 * u.M_p.to(u.solMass) * n * sphere_volume()
+
+
+print(f"Using distance = {line_of_sight_distance_pc:.2f} pc")
+print()
 print(f"Paladini et al 2015 used delta V = {dV_regB:.1f} km/s")
 Te_regB = calc_Te(dV_regB)
 tauC_regB = calc_tauC(Te_regB)
@@ -157,4 +174,11 @@ print(f"tauC = {tauC:.4f}")
 print(f"Gaunt = {calc_gFF(Te):.2f} (If Abitbol: {calc_gFF(Te, method='Abitbol'):.2f})")
 print(f"EM = {EM:.1E} pc cm-6")
 print(f"ne = {ne:.3f} cm-3")
+P = calc_P(Te, ne)
+E = calc_E(P)
+M = calc_mass(ne)
+print("assuming mean molecular weight per electron of 0.5")
+print(f"P = {P:.2E} K cm-3")
+print(f"E = {E:.2E} ergs")
+print(f"M = {M:.2f} solar masses")
 
