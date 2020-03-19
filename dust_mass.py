@@ -147,7 +147,7 @@ if __name__ == "__main__":
     pixel_scale_deg = get_pixel_scale(w).to_value()
 
     # mask to just the shell
-    half_shell_mask = geomodel.shell_mask_2d(tau, pixel_scale_deg, radius_deg, thickness_deg, estimated_center_pixel, ang=70)
+    half_shell_mask = geomodel.half_shell_mask_2d(tau, pixel_scale_deg, radius_deg, thickness_deg, estimated_center_pixel, ang=70)
     tau[~half_shell_mask] = np.nan
 
     N = convert_tautoN_C(tau, Cabs160)
