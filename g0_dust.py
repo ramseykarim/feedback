@@ -9,7 +9,7 @@ from parse_FIR_fits import open_FIR_pickle, open_FIR_fits, herschel_path
 
 
 # Laptop directory
-filename = "RCW49large_3p_secondCal_sysErr_jac.fits"
+filename = "RCW49large_3p.fits"
 
 """
 I need to implement this equation for G0:
