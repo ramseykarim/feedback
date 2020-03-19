@@ -32,16 +32,18 @@ if "350" in data_dir:
     width_i, width_j = 220, 280
 else:
     # 500 grid
-    i0, j0 = 519, 334
+    # i0, j0 = 519, 334 # OLD CUTOUT (retired as of March 9 2020)
     # width_i, width_j = 157, 200
-    width_i, width_j = 5, 5
+    i0, j0 = 543, 337
+    width_i, width_j = 294, 294 # NEW CUTOUT (as of March 9 2020, include extended stuff to the W)
+    # width_i, width_j = 5, 5
 # decide whether or not this is parallel
 n_processes = 10
 path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
 if not os.path.isdir(path):
     path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
-# write_fn = "RCW49large_3p_not70_500grid.fits"
-write_fn = "TEST_4p.fits"
+write_fn = "RCW49large_4p.fits"
+# write_fn = "TEST_4p.fits"
 mantipython.fit_entire_map(data_dictionary, [70,160,250,350,500],
     ('T', 'tau', 'T_bg', 'tau_bg'), initial_param_vals={'beta': 2.0},
     param_bounds={'T': (25, None), 'T_bg': (10, 25)},

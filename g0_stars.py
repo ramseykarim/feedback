@@ -499,22 +499,23 @@ def make_g0_starsVdust_figure(Tcut_kK=None, hotter=True):
 
 
 
-w = WCS(herschel_SED_fit()[1])
-plt.imshow(distance_from_point_pixelgrid(wd2_center_coord, w, 4.16*1000), origin='lower')
-plt.show()
-sys.exit()
+##### I don't remember what this was for
+# w = WCS(herschel_SED_fit()[1])
+# plt.imshow(distance_from_point_pixelgrid(wd2_center_coord, w, 4.16*1000), origin='lower')
+# plt.show()
+# sys.exit()
 
 # All stars, real simple
 # make_g0CII_figure()
 
 # O5 and earlier
-make_g0hotstars_figure(45, hotter=False)
+# make_g0hotstars_figure(45, hotter=False)
 
 # The swarm of ETs
 # make_g0hotstars_figure(36, hotter=False, fracmin=0.2, fracmax=0.45)
 
 # COMPARE TO DUST
-# make_g0_starsVdust_figure()
+make_g0_starsVdust_figure()
 
 # save_g0_fits()
 
