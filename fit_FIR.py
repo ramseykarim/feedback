@@ -42,12 +42,12 @@ n_processes = 10
 path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
 if not os.path.isdir(path):
     path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
-write_fn = "RCW49large_4p.fits"
+write_fn = "RCW49large_2p_2BAND_beta2.0.fits"
 # write_fn = "TEST_4p.fits"
-mantipython.fit_entire_map(data_dictionary, [70,160,250,350,500],
-    ('T', 'tau', 'T_bg', 'tau_bg'), initial_param_vals={'beta': 2.0},
-    param_bounds={'T': (25, None), 'T_bg': (10, 25)},
+mantipython.fit_entire_map(data_dictionary, [70,160],
+    ('T', 'tau'), initial_param_vals={'beta': 2.0},
+    param_bounds={'T': (0, None),},
     data_directory=data_dir, log_name_func=lambda s: f"{path}log{s}.log",
     n_procs=n_processes, destination_filename=path+write_fn,
-    cutout=((i0, j0), (width_i, width_j)), fitting_function='standard',
+    cutout=((i0, j0), (width_i, width_j)), fitting_function='jac',
 )
