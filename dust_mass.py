@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.constants as cst
 from scipy.interpolate import interp1d
+from scipy.special import erf
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
@@ -49,7 +50,7 @@ def get_C(data):
 
 H_mass_amu = 1.00794
 Hmass = cst.m_u * H_mass_amu * 1e3 # kg->g
-gastodust = 100. #123.6
+gastodust = 123.6
 
 def convert_ktoC(k):
     # (assuming gas == H)
@@ -126,7 +127,77 @@ def make_C_plots(d):
     plt.show()
 
 
-if __name__ == "__main__":
+def integrate_shell_by_hand():
+    """
+    This method relies heavily on ds9 "by eye" estimates.
+    See the 3/20/20 notes in my notebook for more details.
+
+    The idea is that I sampled a few pieces of the visible shell and modeled it
+    radially as a Gaussian, finding (by eye + by ds9 regions + line plotting)
+    its Gaussian FWHM->std, its peak, and the approximate background level.
+    Maitraiyee found the radius, which I verified looks like it lines up with
+    the physical structure in the tau160 map.
+    I integrate this radially-dispaced Gaussian around a semicircle and along
+    the FWHM radial length. I have made this calculation by hand (in my notes).
+
+    I assume that what I was seeing in the last step was, in reality, the limb
+    brightened portion of a half shell (oriented same way as semicircle).
+    What I integrated then was like a "cored sphere" with the core radius equal
+    to the inner radius of the shell and sphere radius equal to outer radius.
+    In the next step, I relate the volume within such a cored sphere to the
+    volume of the half shell by a multiplicative factor that I derived by
+    hand (in my notes).
+
+    With these two steps, I should be able to find the approximate gas density
+    within this structure, given a physical distance scale and assuming the
+    shell assumptions are correct.
+    """
+    # Given or "observed" input values
+    losD = 4.16*1000*u.pc # originally from Vargas-Alvarez 2013, used by Zeidler
+    r_avg_ang = 310. * u.arcsec # from Maitraiyee
+    fwhm_ang = 1.2 * u.arcmin # FWHM, from ds9 line region length + line plot
+    peak_plus_bg = 10. ** (-2.12) # tau160, from ds9 line plot
+    bg = 10. ** (-2.45) # same as above
+
+    # Calculate r_avg and FWHM in physical units
+    r_avg, fwhm = (r.to(u.rad).to_value() * losD for r in (r_avg_ang, fwhm_ang))
+    # Calculate r1 and r2 in physical units
+    r1, r2 = r_avg - (fwhm/2.), r_avg + (fwhm/2.)
+    # Calculate standard deviation of Gaussian approximation in physical units
+    sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
+
+    # Calculate peak value as (linear) optical depth
+    peak = peak_plus_bg - bg
+    # Calculate Gauss-approx 2D half shell integral using derived expression
+    half_2dshell_gauss_integral = peak * np.pi * sigma * np.sqrt(2 * np.pi) * r_avg * erf(np.sqrt(np.log(2)))
+    # Assume the above 2D area now equals
+    # Calculate factor to convert from limb-brightened volume (cored sphere) to shell volume
+    coredsph_to_shell = (r2**3. - r1**3.) / (r2**2. - r1**2.)**(3./2)
+    # Calculate the 3D shell volume
+    half_3dshell_integral = half_2dshell_gauss_integral * coredsph_to_shell
+    # Units right now are tau160 * <length^2>
+
+    # Convert to physical mass
+    # Load in Draine beta ~ 2.0 (Rv 3.1) model
+    Rv = 3.1
+    d = Draine_data(Rv)
+    wl = get_wl(d)
+    Cext = get_C(d)
+    kabs = get_k(d)
+    Cabs = convert_ktoC(kabs)
+    Cabs160 = get_val_at(160., wl, Cabs) * u.cm*u.cm
+    kabs160 = get_val_at(160., wl, kabs) * u.cm*u.cm / u.g
+    # Convert tau160 to mass/<length^2> (tau160*<length^2> to mass in this case)
+    mass = convert_tautomass_k(half_3dshell_integral.to(u.cm*u.cm), kabs160).to(u.solMass)
+    print(f"Assuming l.o.s. distance of {losD:.2f}, Rv={Rv:.1f}")
+    print(f"Shell of radius {r_avg:.2f} and average thickness {fwhm:.2f}")
+    print(f"Shell mass of {mass:.2E}")
+    # Convert the integral to total number of H atoms and get column density thru shell
+    totalNH = convert_tautoN_C(half_3dshell_integral.to(u.cm*u.cm), Cabs160)
+    NH = totalNH / (2 * np.pi * r_avg.to(u.cm)**2)
+    print(f"Total number of H atoms: {totalNH:.2E}, implying N(H) = {NH:.2E}")
+
+def integrate_shell_on_image():
     d = Draine_data(3.1)
     wl = get_wl(d)
     Cext = get_C(d)
@@ -164,3 +235,6 @@ if __name__ == "__main__":
     plt.title("column density N(H) (cm-2)")
     plt.colorbar()
     plt.show()
+
+if __name__ == "__main__":
+    integrate_shell_by_hand()
