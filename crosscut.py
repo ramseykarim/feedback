@@ -126,7 +126,7 @@ if __name__ == "__main__":
 
     }
 
-    selection = "WR20b_1"
+    selection = "Wd2_N_near"
     coord_start_xcut, coord_end_xcut = (SkyCoord(x, unit=(u.hourangle, u.deg)) for x in cross_cuts_coords[selection][:2])
     vlims = cross_cuts_coords[selection][2:]
 
