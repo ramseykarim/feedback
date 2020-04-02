@@ -133,7 +133,7 @@ if __name__ == "__main__":
     coords_xcut = (coord_start_xcut, coord_end_xcut)
     xcut_len = get_xcut_length(coords_xcut)
     n_points = 50
-    xcut_args = (coords_xcut, n_points)
+    xcut_args = (coords_xcut,)
 
     cuts_to_make = {
         # images just need filenames. cubes need velocity limits too.
@@ -171,12 +171,7 @@ if __name__ == "__main__":
         args = load_general(*load_args)
         # This separation gives me a chance to intercept the arguments if I want
         w = args[1]
-        print(f"<{cuts_to_plot_key}>")
-        print(find_n_samples(w, xcut_len))
-        print(f"</{cuts_to_plot_key}>")
-        print()
-"""
-        cuts_to_plot[cuts_to_plot_key] = cross_cut(*args)
+        cuts_to_plot[cuts_to_plot_key] = cross_cut(*args, find_n_samples(w, xcut_len))
 
     plt.figure(figsize=(16, 8))
     plt.subplot(121)
@@ -197,5 +192,4 @@ if __name__ == "__main__":
     plt.plot([coord_start_xcut.ra.to_value(), coord_end_xcut.ra.to_value()], [coord_start_xcut.dec.to_value(), coord_end_xcut.dec.to_value()],
         transform=plt.gca().get_transform('world'), color='r')
     # plt.show()
-    plt.savefig(f"/home/rkarim/Pictures/3-10-20-mtg/crosscut_{selection}.png")
-"""
+    plt.savefig(f"/home/rkarim/Pictures/4-01-20-work/crosscut_{selection}.png")
