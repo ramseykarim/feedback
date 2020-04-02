@@ -92,11 +92,11 @@ def load_general(filename, *args):
     # If different extension: 3 args, first arg is extension number,
     #   then coords and n_points.
     # Returns arguments for cross_cut
-    if len(args) == 4:
+    if len(args) == 3:
         load_args = args[:2] # vmin, vmax
-        args = args[2:] # coords, n_points
+        args = args[2:] # coords; THIS IS TOO HACKY
         img, wcs = load_cube(filename, *load_args)
-    elif len(args) == 3:
+    elif len(args) == 2:
         load_args = args[0]
         args = args[1:]
         img, wcs = load_image(filename, ext=load_args)
@@ -175,9 +175,9 @@ if __name__ == "__main__":
 
     plt.figure(figsize=(16, 8))
     plt.subplot(121)
-    angle_axis = get_angle_axis(*xcut_args)
     for label in cuts_to_plot:
         normed_cut = normalize_crosscut(cuts_to_plot[label])
+        angle_axis = get_angle_axis(*xcut_args, len(normed_cut))
         plt.plot(angle_axis, normed_cut, label=label, linestyle='-', marker='.')
 
 
