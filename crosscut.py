@@ -8,9 +8,23 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from scipy.interpolate import interpn
 
+from misc_utils import get_pixel_scale
+
 """
 Functions and script to make a cross-cut plot using several different data sources
 """
+
+def get_xcut_length(xcut_coords):
+    # Separation between the two coordinates, returned as Quantity
+    return xcut_coords[0].separation(xcut_coords[1])
+
+
+def find_n_samples(wcs, xcut_length):
+    # Given the WCS object for a FITS image, find the number of points along
+    # the xcut_length such that the original pixel scale is Nyquist sampled
+    pixel_scale = get_pixel_scale(wcs)
+    print(pixel_scale.to(u.arcsec))
+
 
 def cross_cut(image, wcs, xcut_coords, n_points):
     # Return the values along a linear cut across an 2D image
@@ -64,8 +78,8 @@ def load_cube(filename, vmin, vmax):
     return img, WCS(header, naxis=2)
 
 
-def load_and_cut(filename, *args):
-    # One-shot function for doing all the loading and cutting
+def load_general(filename, *args):
+    # General function for doing all the loading
     # FILENAME should be the complete path of a FITS file
     # Either 2, 3, or 4 additional args should be given, depending
     #   on whether filename points to a 2D image or a 3D cube
@@ -75,6 +89,7 @@ def load_and_cut(filename, *args):
     #   coords and n_points.
     # If different extension: 3 args, first arg is extension number,
     #   then coords and n_points.
+    # Returns arguments for cross_cut
     if len(args) == 4:
         load_args = args[:2] # vmin, vmax
         args = args[2:] # coords, n_points
@@ -85,8 +100,7 @@ def load_and_cut(filename, *args):
         img, wcs = load_image(filename, ext=load_args)
     else:
         img, wcs = load_image(filename)
-    return cross_cut(img, wcs, *args)
-
+    return (img, wcs, *args)
 
 def normalize_crosscut(xcut):
     # A few operations to comfortably line up all the cross cuts
@@ -113,7 +127,7 @@ if __name__ == "__main__":
     selection = "WR20b_1"
     coord_start_xcut, coord_end_xcut = (SkyCoord(x, unit=(u.hourangle, u.deg)) for x in cross_cuts_coords[selection][:2])
     vlims = cross_cuts_coords[selection][2:]
-    
+
     coords_xcut = (coord_start_xcut, coord_end_xcut)
     n_points = 50
     xcut_args = (coords_xcut, n_points)
@@ -138,15 +152,27 @@ if __name__ == "__main__":
     for data_name in cuts_to_make:
         if isinstance(cuts_to_make[data_name], str):
             # this is an image
-            cuts_to_plot[data_name] = load_and_cut(data_path + cuts_to_make[data_name], *xcut_args)
+            load_args = (data_path + cuts_to_make[data_name], *xcut_args)
+            cuts_to_plot_key = data_name
         elif len(cuts_to_make[data_name]) == 1: # so messy. need object if using this in future.
             # this is a cube
             label = f"{data_name} [{vlims[0]:.1f}, {vlims[1]:.1f}] km/s"
-            cuts_to_plot[label] = load_and_cut(data_path + cuts_to_make[data_name][0], *vlims, *xcut_args)
+            load_args = (data_path + cuts_to_make[data_name][0], *vlims, *xcut_args)
+            cuts_to_plot_key = label
         elif len(cuts_to_make[data_name]) == 2:
             # This is an image to be read from another extension
             # At this point, these should probably be objects.........
-            cuts_to_plot[data_name] = load_and_cut(data_path + cuts_to_make[data_name][0], cuts_to_make[data_name][1], *xcut_args)
+            load_args = (data_path + cuts_to_make[data_name][0], cuts_to_make[data_name][1], *xcut_args)
+            cuts_to_plot_key = data_name
+        # LoL this is so hacky
+        args = load_general(*load_args)
+        # This separation gives me a chance to intercept the arguments if I want
+        w = args[1]
+        print(f"<{cuts_to_plot_key}>")
+        print(w.pixel_scale_matrix)
+        print(f"</{cuts_to_plot_key}>")
+"""
+        cuts_to_plot[cuts_to_plot_key] = cross_cut(*args)
 
     plt.figure(figsize=(16, 8))
     plt.subplot(121)
@@ -168,3 +194,4 @@ if __name__ == "__main__":
         transform=plt.gca().get_transform('world'), color='r')
     # plt.show()
     plt.savefig(f"/home/rkarim/Pictures/3-10-20-mtg/crosscut_{selection}.png")
+"""

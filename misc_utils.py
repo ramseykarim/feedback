@@ -78,3 +78,11 @@ def flquantiles(x, q):
     return (first_quant, last_quant)
 
 
+def get_pixel_scale(wcs_obj):
+    """
+    Get the pixel scale, assuming same for X and Y.
+    :param wcs_obj: the WCS object for a FITS image
+    :return: angular pixel scale as Quantity
+    """
+    ps = np.mean(np.abs(np.diag(wcs_obj.pixel_scale_matrix))) * u.deg
+    return ps

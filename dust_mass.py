@@ -10,6 +10,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 
 from mantipython import physics
+from misc_utils import get_pixel_scale
 import geometric_model as geomodel
 
 
@@ -77,10 +78,6 @@ def get_wcs(filename=fit2p_filename):
         w = WCS(hdul[1].header)
     return w
 
-def get_pixel_scale(wcs_obj):
-    ps = np.mean(np.abs(np.diag(wcs_obj.pixel_scale_matrix))) * u.deg
-    print(f"pixel scale: {ps.to(u.arcsec):.2E}")
-    return ps
 
 def get_physical_scale(wcs_obj, los_distance_pc):
     ps = get_pixel_scale(wcs_obj)
