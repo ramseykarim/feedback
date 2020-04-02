@@ -111,7 +111,7 @@ def normalize_crosscut(xcut):
     # Get rid of stars (mostly for HST)
     subtracted[subtracted > np.nanstd(subtracted)*5] = np.nan ## TODO: make this star-proof for F814W. note that stars are several pixels wide. (fit gaussian?)
     # Add back a standard deviation to get it above 0, and normalize
-    return (subtracted + np.nanstd(subtracted)) / (5 * np.nanstd(subtracted[np.isfinite(subtracted)]))
+    return (subtracted + np.nanstd(subtracted)) / (3 * np.nanstd(subtracted[np.isfinite(subtracted)]))
 
 
 if __name__ == "__main__":
@@ -178,7 +178,8 @@ if __name__ == "__main__":
     for label in cuts_to_plot:
         normed_cut = normalize_crosscut(cuts_to_plot[label])
         angle_axis = get_angle_axis(*xcut_args, len(normed_cut))
-        plt.plot(angle_axis, normed_cut, label=label, linestyle='-', marker='.')
+        alpha = 0.3 if len(normed_cut) > 500 else 1.
+        plt.plot(angle_axis, normed_cut, label=label, linestyle='-', marker='.', alpha=alpha)
 
 
     plt.ylabel("Normalized intensity")
