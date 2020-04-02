@@ -7,6 +7,7 @@ from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from scipy.interpolate import interpn
+from math import ceil
 
 from misc_utils import get_pixel_scale
 
@@ -22,8 +23,9 @@ def get_xcut_length(xcut_coords):
 def find_n_samples(wcs, xcut_length):
     # Given the WCS object for a FITS image, find the number of points along
     # the xcut_length such that the original pixel scale is Nyquist sampled
+    # Uses ceiling rounding for integer number of samples
     pixel_scale = get_pixel_scale(wcs)
-    print(f"{pixel_scale.to(u.arcsec):.2f}")
+    return int(ceil(xcut_length.deg / pixel_scale.to(u.deg).to_value())) * 2
 
 
 def cross_cut(image, wcs, xcut_coords, n_points):
@@ -129,6 +131,7 @@ if __name__ == "__main__":
     vlims = cross_cuts_coords[selection][2:]
 
     coords_xcut = (coord_start_xcut, coord_end_xcut)
+    xcut_len = get_xcut_length(coords_xcut)
     n_points = 50
     xcut_args = (coords_xcut, n_points)
 
@@ -169,8 +172,9 @@ if __name__ == "__main__":
         # This separation gives me a chance to intercept the arguments if I want
         w = args[1]
         print(f"<{cuts_to_plot_key}>")
-        find_n_samples(w, None)
+        print(find_n_samples(w, xcut_len))
         print(f"</{cuts_to_plot_key}>")
+        print()
 """
         cuts_to_plot[cuts_to_plot_key] = cross_cut(*args)
 
