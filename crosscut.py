@@ -141,13 +141,14 @@ if __name__ == "__main__":
         "350 um": "herschel/helpssproc/processed/1342255009/SPIRE350um-image.fits",
         "70 um": "herschel/helpssproc/processed/1342255009/PACS70um-image.fits",
         "843 MHz": "most/J1024M56.FITS",
-        "12CO": ("apex/RCW49_12CO.fits",),
-        "13CO": ("apex/RCW49_13CO.fits",),
+        "12CO": ("apex/apexCO/RCW49_12CO.fits",),
+        "13CO": ("apex/apexCO/RCW49_13CO.fits",),
         "CII": ("sofia/rcw49-cii.fits",),
         "8 um": "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits",
         "F814W": "hst/F814W.fits",
         "$\\tau_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 2),
-        "$T_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 1),
+        "870 um": "apex/atlasgal/J102414-574658.fits",
+        # "$T_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 1),
     }
 
     cuts_to_plot = {}
