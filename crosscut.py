@@ -23,7 +23,7 @@ def find_n_samples(wcs, xcut_length):
     # Given the WCS object for a FITS image, find the number of points along
     # the xcut_length such that the original pixel scale is Nyquist sampled
     pixel_scale = get_pixel_scale(wcs)
-    print(pixel_scale.to(u.arcsec))
+    print(f"{pixel_scale.to(u.arcsec):.2f}")
 
 
 def cross_cut(image, wcs, xcut_coords, n_points):
@@ -169,7 +169,7 @@ if __name__ == "__main__":
         # This separation gives me a chance to intercept the arguments if I want
         w = args[1]
         print(f"<{cuts_to_plot_key}>")
-        print(w.pixel_scale_matrix)
+        find_n_samples(w, None)
         print(f"</{cuts_to_plot_key}>")
 """
         cuts_to_plot[cuts_to_plot_key] = cross_cut(*args)

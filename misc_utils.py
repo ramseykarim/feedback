@@ -1,5 +1,7 @@
 import numpy as np
 
+from astropy import units as u
+
 """
 General use utilitues for working with images or spectra
 Mostly math/physics based and not instrument specific
