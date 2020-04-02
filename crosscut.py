@@ -109,7 +109,7 @@ def normalize_crosscut(xcut):
     # Subtract median
     subtracted = xcut - np.nanmedian(xcut)
     # Get rid of stars (mostly for HST)
-    subtracted[subtracted > np.nanstd(subtracted)*5] = np.nan
+    subtracted[subtracted > np.nanstd(subtracted)*5] = np.nan ## TODO: make this star-proof for F814W. note that stars are several pixels wide. (fit gaussian?)
     # Add back a standard deviation to get it above 0, and normalize
     return (subtracted + np.nanstd(subtracted)) / np.ptp(subtracted[np.isfinite(subtracted)])
 
