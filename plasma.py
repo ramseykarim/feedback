@@ -102,7 +102,7 @@ if __name__ == "__main__":
     print("Since it's not unity, we use the SEM value.")
     print(f"Electron density = {electron_density_SEM(bubble_radius):.2f} cm-3")
     print()
-    
+
     print(f"Plasma temperature = {plasma_temperature() / 1e6 : .2f} MK")
     print()
 
@@ -110,7 +110,9 @@ if __name__ == "__main__":
     print()
 
     fullsph = "(full sphere)"
-    print(f"Thermal energy = {thermal_energy(bubble_radius):.2E} ergs {fullsph}")
+    therm_E = thermal_energy(bubble_radius)
+    print(f"Thermal energy = {therm_E:.2E} ergs {fullsph}")
+    print(f"Average wind power = {therm_E/(2.e6*u.year.to(u.s)):.2E} ergs s-1")
     print()
 
     print(f"Mass of plasma = {mass(bubble_radius):.2f} solar masses {fullsph}")
