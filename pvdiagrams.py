@@ -18,6 +18,7 @@ __author__ = "Ramsey Karim"
 
 
 fn = "../ancillary_data/sofia/rcw49-cii.fits"
+fn = "../ancillary_data/apex/apexCO/RCW49_12CO.fits"
 
 with fits.open(fn) as hdul:
     h = hdul[0].header
@@ -214,6 +215,28 @@ def overlay_cosine():
     )
     plt.show()
 
+def along_pillar_12CO():
+    pillar_top = "10:24:09.3382 -57:48:54.070"
+    pillar_base = "10:24:27.4320 -57:50:35.824"
+    pillar_coords = SkyCoord([pillar_top, pillar_base], unit=(u.hourangle, u.deg), frame=FK5)
+    p = pvextractor.Path(pillar_coords, width=4*u.arcsec)
+    c0, c1 = p._coords[0], p._coords[1]
 
+    sl = pvextractor.extract_pv_slice(subcube, p)
+    ax2 = plt.subplot(122, projection=WCS(sl.header))
+    plt.imshow(sl.data, origin='lower', aspect=.5)
+    plt.contour(sl.data, cmap='autumn_r', linewidths=0.5, levels=[10., 15., 20., 25., 30., 35.,])
 
-overlay_cosine()
+    ax1 = plt.subplot(121, projection=wflat)
+    plt.imshow(mom0.to_value(), origin='lower', cmap='plasma')
+    ax1.plot([wr20b.ra.to_value()], [wr20b.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
+    # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
+    ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
+        *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))),
+        color='green', transform=ax1.get_transform('world'), length_includes_head=True,
+        width=0.003,
+    )
+
+    plt.show()
+
+along_pillar_12CO()

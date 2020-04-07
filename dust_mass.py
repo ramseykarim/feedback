@@ -184,6 +184,7 @@ def integrate_shell_by_hand():
     Cabs = convert_ktoC(kabs)
     Cabs160 = get_val_at(160., wl, Cabs) * u.cm*u.cm
     kabs160 = get_val_at(160., wl, kabs) * u.cm*u.cm / u.g
+    print(f"kabs160 / lambda^2 {kabs160 * 160**2:.2E}")
     # Convert tau160 to mass/<length^2> (tau160*<length^2> to mass in this case)
     mass = convert_tautomass_k(half_3dshell_integral.to(u.cm*u.cm), kabs160).to(u.solMass)
     print(f"Assuming l.o.s. distance of {losD:.2f}, Rv={Rv:.1f}")
