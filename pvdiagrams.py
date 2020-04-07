@@ -6,6 +6,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
+from astropy.nddata.utils import Cutout2D
 from spectral_cube import SpectralCube
 import pvextractor
 
@@ -224,11 +225,14 @@ def along_pillar_12CO():
 
     sl = pvextractor.extract_pv_slice(subcube, p)
     ax2 = plt.subplot(122, projection=WCS(sl.header))
-    plt.imshow(sl.data, origin='lower', aspect=.5)
+    ax2.imshow(sl.data, origin='lower', aspect=.5)
+    ax2.coords[1].set_format_unit(u.km/u.s)
     plt.contour(sl.data, cmap='autumn_r', linewidths=0.5, levels=[10., 15., 20., 25., 30., 35.,])
+    plt.ylabel("Velocity (km/s)")
 
-    ax1 = plt.subplot(121, projection=wflat)
-    plt.imshow(mom0.to_value(), origin='lower', cmap='plasma')
+    mom0_cutout = Cutout2D(mom0.to_value(), wr20b, [10.*u.arcmin, 10.*u.arcmin], wcs=wflat)
+    ax1 = plt.subplot(121, projection=mom0_cutout.wcs)
+    plt.imshow(mom0_cutout.data, origin='lower', cmap='plasma')
     ax1.plot([wr20b.ra.to_value()], [wr20b.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
     # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
     ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),

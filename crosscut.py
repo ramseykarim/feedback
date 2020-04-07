@@ -6,6 +6,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+from astropy.nddata.utils import Cutout2D
 from scipy.interpolate import interpn
 from math import ceil
 
@@ -128,6 +129,7 @@ if __name__ == "__main__":
 
     selection = "Wd2_N_near"
     coord_start_xcut, coord_end_xcut = (SkyCoord(x, unit=(u.hourangle, u.deg)) for x in cross_cuts_coords[selection][:2])
+    approx_midpoint = SkyCoord((coord_start_xcut.ra + coord_end_xcut.ra)/2, (coord_start_xcut.dec + coord_end_xcut.dec)/2)
     vlims = cross_cuts_coords[selection][2:]
 
     coords_xcut = (coord_start_xcut, coord_end_xcut)
@@ -189,8 +191,9 @@ if __name__ == "__main__":
     plt.legend()
 
     img, w = load_image(data_path + cuts_to_make["8 um"])
-    plt.subplot(122, projection=w)
-    plt.imshow(np.arcsinh(img), origin='lower', vmin=np.arcsinh(11), vmax=np.arcsinh(900), cmap='Greys_r')
+    img_cutout = Cutout2D(img, approx_midpoint, [10.*u.arcmin, 10.*u.arcmin], wcs=w)
+    plt.subplot(122, projection=img_cutout.wcs)
+    plt.imshow(np.arcsinh(img_cutout.data), origin='lower', vmin=np.arcsinh(11), vmax=np.arcsinh(900), cmap='Greys')
     arrow = False # Looks a little better without arrow
     if arrow:
         x, y = coord_start_xcut.ra.deg, coord_start_xcut.dec.deg
