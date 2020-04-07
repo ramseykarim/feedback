@@ -191,7 +191,16 @@ if __name__ == "__main__":
     img, w = load_image(data_path + cuts_to_make["8 um"])
     plt.subplot(122, projection=w)
     plt.imshow(np.arcsinh(img), origin='lower', vmin=np.arcsinh(11), vmax=np.arcsinh(900), cmap='Greys_r')
-    plt.arrow([coord_start_xcut.ra.to_value(), coord_end_xcut.ra.to_value()], [coord_start_xcut.dec.to_value(), coord_end_xcut.dec.to_value()],
-        transform=plt.gca().get_transform('world'), color='r', length_includes_head=True, width=0.003)
+    arrow = False
+    if arrow:
+        x, y = coord_start_xcut.ra.deg, coord_start_xcut.dec.deg
+        dx = (coord_end_xcut.ra - coord_start_xcut.ra).deg
+        dy = (coord_end_xcut.dec - coord_start_xcut.dec).deg
+        plt.arrow(x, y, dx, dy,
+            transform=plt.gca().get_transform('world'), color='r', length_includes_head=True, width=0.003)
+    else:
+        plt.plot([coord_start_xcut.ra.deg, coord_end_xcut.ra.deg],
+            [coord_start_xcut.dec.deg, coord_end_xcut.dec.deg],
+            transform=plt.gca().get_transform('world'), color='r')
     # plt.show()
     plt.savefig(f"/home/rkarim/Pictures/4-07-20-work/crosscut_{selection}.png")

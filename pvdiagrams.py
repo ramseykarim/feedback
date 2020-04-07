@@ -232,7 +232,7 @@ def along_pillar_12CO():
     ax1.plot([wr20b.ra.to_value()], [wr20b.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
     # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
     ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
-        *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))),
+        *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))), # this is somehow correct; no cos(dec) term is necessary.
         color='green', transform=ax1.get_transform('world'), length_includes_head=True,
         width=0.003,
     )
