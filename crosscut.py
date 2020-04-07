@@ -191,7 +191,7 @@ if __name__ == "__main__":
     img, w = load_image(data_path + cuts_to_make["8 um"])
     plt.subplot(122, projection=w)
     plt.imshow(np.arcsinh(img), origin='lower', vmin=np.arcsinh(11), vmax=np.arcsinh(900), cmap='Greys_r')
-    arrow = False
+    arrow = False # Looks a little better without arrow
     if arrow:
         x, y = coord_start_xcut.ra.deg, coord_start_xcut.dec.deg
         dx = (coord_end_xcut.ra - coord_start_xcut.ra).deg
