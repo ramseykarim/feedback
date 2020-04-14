@@ -5,7 +5,7 @@ import mantipython
 data_dir = "/sgraraid/filaments/data/TEST4/pacs70_cal_test/RCW49/processed/1342255009/"
 if not os.path.isdir(data_dir):
     # Laptop path
-    data_dir = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/1342255009/"
+    data_dir = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/processed/1342255009/"
 data_fns = {
     70: "PACS70um-image-remapped-conv-plus000080.fits",
     160: "PACS160um-image-remapped-conv-plus000370.fits",
@@ -36,14 +36,14 @@ else:
     # width_i, width_j = 157, 200
     i0, j0 = 543, 337
     width_i, width_j = 294, 294 # NEW CUTOUT (as of March 9 2020, include extended stuff to the W)
-    # width_i, width_j = 5, 5
+    width_i, width_j = 15, 15
 # decide whether or not this is parallel
-n_processes = 10
+n_processes = 6
 path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
 if not os.path.isdir(path):
     path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
-write_fn = "RCW49large_2p_2BAND_beta2.0.fits"
-# write_fn = "TEST_4p.fits"
+# write_fn = "RCW49large_2p_2BAND_beta2.0.fits"
+write_fn = "TEST.fits"
 mantipython.fit_entire_map(data_dictionary, [70,160],
     ('T', 'tau'), initial_param_vals={'beta': 2.0},
     param_bounds={'T': (0, None),},
