@@ -28,8 +28,8 @@ RCW 49 parameters
 kT = 0.27 # keV
 logSEM = 55.9 # cm-3 pc-2
 logSBtc = 32.88 # erg s-1 pc-2
-A = 16.5 # pc2, but goes unused
-
+A_outer = 16.5 # pc2
+A_inner = 6.0 # pc2
 
 """
 Equations
@@ -85,12 +85,26 @@ if __name__ == "__main__":
 
     # FEEDBACK estimate of physical bubble radius
     bubble_radius = 8.5 # pc, based on ~7 min radius bubble at 4.21 kpc (Townsley's distance)
-
+    # Based on Maitraiyee's bubble estimates
     bubble_radius_ang = 300 * u.arcsec
-    bubble_radius = 4.21e3 * bubble_radius_ang.to(u.rad).to_value()
+    bubble_radius = 4.21e3 * u.pc * bubble_radius_ang.to(u.rad).to_value()
+    """
+    Updated 4/13/20: new-and-improved assumptions
+    Wd2-outer is 16.5 pc2, inner is 6.0 pc2. Townsley used contours to make these regions,
+    so the outline of Wd2-outer should indicate the region of peak intensity.
+    Thus, this region should be 16.5+6.0=22.5 pc2 in total.
+    It's roughly circular, though not exactly (one moderate bump). We can
+    approximate it as a circle.
+    Using the projected circular area pi r^2 = 22.5 pc2, we will find r.
+    This r will provide the volume. Assume full bubble and we can cut it down later.
+    """
+    # New method described above.
+    A_total = (A_outer + A_inner) * u.pc*u.pc
+    print(f"Total Wd2 peak emission region area: {A_total:.2f}")
+    bubble_radius = np.sqrt(A_total / np.pi)
 
-    print(f"Assuming {bubble_radius:.1f} pc radius bubble of constant density,\n fully ionized, cosmic abundance plasma.\n Assumes nH = ne for electron density.")
-
+    print(f"Assuming {bubble_radius:.1f} radius bubble of constant density,\n fully ionized, cosmic abundance plasma.\n Assumes nH = ne for electron density.")
+    bubble_radius = bubble_radius.to_value()
     print()
 
     print("Electron density:")
@@ -112,7 +126,8 @@ if __name__ == "__main__":
     fullsph = "(full sphere)"
     therm_E = thermal_energy(bubble_radius)
     print(f"Thermal energy = {therm_E:.2E} ergs {fullsph}")
-    print(f"Average wind power = {therm_E/(2.e6*u.year.to(u.s)):.2E} ergs s-1")
+    age = 2.e6*u.year
+    print(f"Average wind power over {age:.1E} = {therm_E/(age.to(u.s).to_value()):.2E} ergs s-1")
     print()
 
     print(f"Mass of plasma = {mass(bubble_radius):.2f} solar masses {fullsph}")
