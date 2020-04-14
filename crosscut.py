@@ -193,7 +193,7 @@ if __name__ == "__main__":
     img, w = load_image(data_path + cuts_to_make["8 um"])
     img_cutout = Cutout2D(img, approx_midpoint, [10.*u.arcmin, 10.*u.arcmin], wcs=w)
     plt.subplot(122, projection=img_cutout.wcs)
-    plt.imshow(np.arcsinh(img_cutout.data), origin='lower', vmin=np.arcsinh(11), vmax=np.arcsinh(900), cmap='Greys')
+    plt.imshow(np.arcsinh(img_cutout.data), origin='lower', vmin=np.arcsinh(11), vmax=np.arcsinh(900), cmap='Greys_r')
     arrow = False # Looks a little better without arrow
     if arrow:
         x, y = coord_start_xcut.ra.deg, coord_start_xcut.dec.deg
