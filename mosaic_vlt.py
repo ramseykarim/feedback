@@ -203,14 +203,14 @@ def list_of_chips(filename_list):
 
 
 # I want the reference WCS to have roughly the same footprint as the IRAC data
-irac_fn = glob.glob("../ancillary_data/spitzer/irac/*").pop()
+irac_fn = glob.glob("../ancillary_data/spitzer/irac/300*").pop()
 # IRAC pixel_scale_matrix is diagonal (0s on off-diag), so we can copy this style
 irac_w = WCS(fits.getdata(irac_fn, header=True)[1])
 # The pixel scale in the VLT image has RA increasing towards the RIGHT, which ultimately
 # doesn't matter, but I'll have it going towards the left like IRAC and others.
 vlt_w = WCS(fits.getdata(vlt_fns[0], 1, header=True)[1])
 
-new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=32)
+new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=1)
 # This comes out to nearly the same size as one of these VLT images, but I checked and this makes sense. IRAC is big.
 # I checked the new footprint against the IRAC footprint, it's good to within 0.5 arcseconds!
 
