@@ -138,7 +138,8 @@ def image_overlap(wcs_obj1, wcs_obj2):
     return is_overlap
 
 
-def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1):
+def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1,
+    shrink_height_factor=1, shrink_width_factor=1):
     """
     Create a WCS object with a simliar footprint to one existing WCS object and
         a similar pixel scale to another WCS object.
@@ -154,6 +155,10 @@ def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1
         scale. The new pixel scale will be the wcs_for_pixels scale divided by
         this factor. Use a large number here to save memory and make a
         very coarse image. Defaults to 1 for no rescaling.
+    :param shrink_height_factor: factor by which to shrink the height of the new
+        image. Larger factor leads to a shorter Dec span.
+    :param shrink_width_factor: factor by which to shrink the width of the new
+        image. Larger factor leads to shorter RA span.
     :returns: astropy WCS object
     """
     # Figure out the general location of the image.
@@ -161,7 +166,8 @@ def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1
     fp_cr_coord = wcs_for_footprint.array_index_to_world(*(wcs_for_footprint.array_shape[x]//2 for x in range(2)))
     # Use the reference footprint to find the approximate height (RA) and width (Dec)
     # of the footprint in angular units
-    fp_width_height = angular_size_from_wcs(wcs_for_footprint) # RA, Dec order
+    fp_width, fp_height = angular_size_from_wcs(wcs_for_footprint) # RA, Dec order
+    fp_width_height = (fp_width / float(shrink_width_factor), fp_height / float(shrink_height_factor))
     # Get the pixel scale from the pixel scale WCS (THIS ASSUMES PIXEL SCALE IS GIVEN IN DEGREES)
     # Modify with the degrade_pixelscale_factor
     pixel_scale = np.mean(np.abs(np.diag(wcs_for_pixels.pixel_scale_matrix))) * u.deg * float(degrade_pixelscale_factor)
@@ -193,13 +199,21 @@ def iterate_over_chips(filename_list):
             data, header = fits.getdata(vlt_fns[i], j, header=True)
             yield data, WCS(header)
 
+
 def list_of_chips(filename_list):
     """
     Ruins the whole point of saving memory using a generator expression
+    At least checks to see if we need each chip before returning it
     :param filename_list: argument to iterate_over_chips
+    :param wcs_reference: WCS object that must have some overlap with the
+        CCD chip in order for the CCD chip to be returned
     :returns: list of (data, WCS) tuples
     """
-    return [x for x in iterate_over_chips(filename_list)]
+    list_to_return = []
+    for data, w in iterate_over_chips():
+        if image_overlap(w, wcs_reference):
+            list_to_return.append((data, w))
+    return list_to_return
 
 
 # I want the reference WCS to have roughly the same footprint as the IRAC data
@@ -210,7 +224,7 @@ irac_w = WCS(fits.getdata(irac_fn, header=True)[1])
 # doesn't matter, but I'll have it going towards the left like IRAC and others.
 vlt_w = WCS(fits.getdata(vlt_fns[0], 1, header=True)[1])
 
-new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=1)
+new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=256)
 # This comes out to nearly the same size as one of these VLT images, but I checked and this makes sense. IRAC is big.
 # I checked the new footprint against the IRAC footprint, it's good to within 0.5 arcseconds!
 
@@ -223,41 +237,46 @@ def we_have_mosaic_at_home():
     footprint = np.zeros(new_w.array_shape)
     for j in range(len(vlt_fns)):
         component_images.append(np.full(new_w.array_shape, np.nan))
-        print(f"Opening {vlt_fns[j].split('/')[-1]} and cycling through chips.")
+        sys.stdout.write(f"Opening {vlt_fns[j].split('/')[-1]} and cycling through chips.")
         with fits.open(vlt_fns[j]) as hdul:
             for i in range(len(hdul)):
                 if not i:
+                    sys.stdout.flush()
                     continue
                 data = hdul[i].data
                 header = hdul[i].header
                 w = WCS(header)
                 there_is_overlap = image_overlap(new_w, w)
-                print(i, header['EXTNAME'], "overlap: ", there_is_overlap, end="; ")
+                sys.stdout.write(f"{i}: {header['EXTNAME']}, overlap: {there_is_overlap}; ")
                 if there_is_overlap:
-                    print("reprojecting...", end="")
+                    sys.stdout.write("reprojecting...")
+                    sys.stdout.flush()
                     new_img, rp_fp = reproject_interp((data, w), new_w, shape_out=new_w.array_shape)
                     footprint += rp_fp
                     rp_fp = rp_fp.astype(bool)
                     component_images[j][rp_fp] = new_img[rp_fp]
-                    print(f"filled in {np.sum(rp_fp)} / {rp_fp.size} pixels")
+                    sys.stdout.write(f"filled in {np.sum(rp_fp)} / {rp_fp.size} pixels\n")
                 else:
-                    print()
+                    sys.stdout.write("\n")
+                sys.stdout.flush()
         # Get rid of most of that low-value strip in one of the CCD chips
         component_images[j][component_images[j] < np.nanmedian(component_images[j])/5.] = np.nan
-    print("Compiling image...", end="")
+    sys.stdout.write("Compiling image...")
+    sys.stdout.flush()
     final_new_image = np.nanmedian(component_images, axis=0)
-    print("done.")
+    sys.stdout.write("done.\n")
+    sys.stdout.flush()
     return final_new_image, footprint
 
 
-# final_new_image, mosaic_footprint = reproject_and_coadd(
-#     list_of_chips(vlt_fns), new_w, shape_out=new_w.array_shape,
-#     reproject_function=reproject_interp, combine_function='median',
-#     match_background=False,
-# )
+final_new_image, mosaic_footprint = reproject_and_coadd(
+    list_of_chips(vlt_fns), new_w, shape_out=new_w.array_shape,
+    reproject_function=reproject_interp, combine_function='median',
+    match_background=True,
+)
 
 
-final_new_image, mosaic_footprint = we_have_mosaic_at_home()
+# final_new_image, mosaic_footprint = we_have_mosaic_at_home()
 
 new_header = fits.Header()
 new_header.update(new_w.to_header())
