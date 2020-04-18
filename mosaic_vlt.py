@@ -250,17 +250,24 @@ def we_have_mosaic_at_home():
     return final_new_image, footprint
 
 
-final_new_image, mosaic_footprint = reproject_and_coadd(
-    list_of_chips(vlt_fns), new_w, shape_out=new_w.array_shape,
-    reproject_function=reproject_interp, combine_function='median',
-    match_background=False,
-)
+# final_new_image, mosaic_footprint = reproject_and_coadd(
+#     list_of_chips(vlt_fns), new_w, shape_out=new_w.array_shape,
+#     reproject_function=reproject_interp, combine_function='median',
+#     match_background=False,
+# )
 
 
-# final_new_image, mosaic_footprint = we_have_mosaic_at_home()
+final_new_image, mosaic_footprint = we_have_mosaic_at_home()
 
-plt.subplot(121, projection=new_w)
-plt.imshow(final_new_image, origin='lower', vmin=0.5, vmax=500)
-plt.subplot(122, projection=new_w)
-plt.imshow(mosaic_footprint, origin='lower')
-plt.show()
+new_header = fits.Header()
+new_header.update(new_w.to_header())
+new_header['COMMENT'] = "Mosiac from VLT Halpha images"
+
+fits.writeto("../ancillary_data/vlt/omegacam/Halpa_mosaic.fits",
+    final_new_image, new_header, overwrite=True)
+
+# plt.subplot(121, projection=new_w)
+# plt.imshow(final_new_image, origin='lower', vmin=0.5, vmax=500)
+# plt.subplot(122, projection=new_w)
+# plt.imshow(mosaic_footprint, origin='lower')
+# plt.show()
