@@ -3,7 +3,7 @@ script to read/create star catalogs with pandas
 created: October 21, 2019
 
 Added some tables from different authors and standardized coordinates into
-SkyCoords earlier in the process.
+SkyCoords earlier in the process. Added a lot of documentation.
 updated: April 14, 2020
 """
 __author__ = "Ramsey Karim"
@@ -12,7 +12,7 @@ import numpy as np
 from astropy.io import ascii, fits
 from astropy.wcs import WCS
 from astropy import units as u
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, FK5, ICRS
 import matplotlib.pyplot as plt
 import glob
 import sys
@@ -60,6 +60,18 @@ def convert_hhmmss(hhmmss_hhmmss):
         ra.pop(0)
     return "".join(ra), "".join(dec)
 
+
+def coords_from_hhmmss(df, frame=FK5):
+    """
+    Cobble together the HMS coordinates into RAdeg, DEdeg
+    This is from the original catalog reduction, made for the Ascenso catalog,
+        and I edited it to be more general and stop at the SkyCoord step
+        (4/16/2020)
+    """
+    RAstr = df.apply(lambda row: ":".join(row[x] for x in ('RAh', 'RAm', 'RAs')), axis=1)
+    DEstr = df.apply(lambda row: row['DE-'] + ":".join(row[x] for x in ('DEd', 'DEm', 'DEs')), axis=1)
+    RADEstr = RAstr + " " + DEstr
+    df['SkyCoord'] = RADEstr.apply(lambda radec_string: SkyCoord(radec_string, unit=(u.hourangle, u.deg), frame=frame))
 
 
 def read_table_format(file_handle, n_cols):
@@ -116,9 +128,17 @@ def skiplines(file_handle, n_lines):
         file_handle.readline()
 
 
+"""
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&% Tsujimoto %&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+"""
+
 def openTFT_single(filenumber):
     """
-    open a Tsujimoto table (there are 3)
+    Open a Tsujimoto 2007 table (there are 3)
+    Helper function for openTFT_complete
+    :param filenumber: integer 1, 2 or 3 indicating table number
     """
     filename = catalog_directory+"Tsujimoto2007/tbl{:d}".format(filenumber)
     TFT_tblinfo = {1: (9, 22, 24), 2: (9, 20, 20), 3: (9, 14, 14)}
@@ -134,7 +154,23 @@ def openTFT_single(filenumber):
 def openTFT_complete():
     """
     Open all 3 TFT tables and combine them
+    Tables are from Tsujimoto et al. 2007 (ApJ 665:719-735)
     Go in here and print df.columns if you want to know what's in there
+    TFT Specifics:
+        Includes original SIRIUS NIR data from this project.
+            Tsujimoto states that the SIRIUS data is a larger FOV than the
+            similar Ascenso et al. 2007 data.
+            Both this SIRIUS data and Ascenso are J,H,Ks bands.
+        Cross-matches to NOMAD, 2MASS, (SIRIUS,) and GLIMPSE
+        NOMAD: Naval Observatory Merged Astrometric Dataset, "simple merge of data from the Hipparcos, Tycho-2, UCAC-2 and USNO-B1 catalogues,
+            supplemented by photometric information from the 2MASS final release point source catalogue"
+        SIRIUS: IR instrument on the IRSF, a 55in reflector telescope at the
+            SAAO, the South African Astronomical Observatory
+        The flag in the "NIR" column is blank if no NIR data, T if data from 2MASS,
+            and S if data from SIRIUS
+        IDs in the NOMAD, 2MASS, and GLIMPSE catalogs are given.
+        For the RAdeg, DEdeg given in table 1, separations compared to the IAU
+        name (ICRS frame, presumably) suggest that these are FK5
     :returns: pandas dataframe
     """
     # The first is like RA,Dec and stuff (mostly unimportant)
@@ -148,19 +184,81 @@ def openTFT_complete():
     for colname in df_TFT_X:
         df_TFT[colname] = df_TFT_X[colname]
     del df_TFT_cross, df_TFT_X
+    # Convert RAdeg and DEdeg to SkyCoords
+    def make_skycoords(row):
+        return SkyCoord(row['RAdeg'], row['DEdeg'], unit=u.deg, frame=FK5)
+    df_TFT['SkyCoord'] = df_TFT.apply(make_skycoords, axis=1)
     return df_TFT
 
 
-def openVPHAS():
-    with open(catalog_directory+"VPHAS/table5.dat") as f:
+"""
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&% VPHAS+ &%&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+"""
+
+
+def openVPHAS_single(tablenumber):
+    """
+    Open one of the two VPHAS+ tables
+    Helper function for openVPHAS_complete
+    :param tablenumber: integer, either 5 or 6, for Table 5 or 6
+    :returns: pandas dataframe
+    """
+    with open(catalog_directory+f"VPHAS/table{tablenumber}.dat") as f:
         # VPHAS .dat tables
         header = f.readline().strip('#').split()
         df_VPHAS = pd.read_table(f, comment='#', names=header, delim_whitespace=True,
-            dtype={x:str for x in ('ID', 'VA_ID', 'MSP_ID', 'TFT_ID', 'SIMBAD_ID')},
-            index_col='ID')
+            dtype={**{x:int for x in ('ID', 'VPHAS_ID')}, **{x:str for x in ('VA_ID', 'MSP_ID', 'TFT_ID', 'SIMBAD_ID', 'notes')}},
+            index_col=('ID' if tablenumber == 5 else 'VPHAS_ID'))
     return df_VPHAS
 
-def openVA_full():
+
+def openVPHAS_complete():
+    """
+    Open both VPHAS+ tables and return a combined table
+    Both tables from Mohr-Smith et al. 2015 (MNRAS 450,3855–3873).
+    This is an optical study done with the VST.
+    The full table is 1073 items and is much more than we need
+    The estimates for parameters Teff and DM are poorly constrained, according
+        to the authors. A0 and Rv are well constrained and informative.
+        Teff could still be useful if no other information is available for that
+        source.
+    They did some cross-matching with Tsujimoto et al. 2007 and
+        Vargas Alvarez et al. 2013, though this notably will not catch cross-
+        matches between VA13 and TFT if there was no VPHAS detection.
+    They include JHKs NIR photometry from Ascenso et al. 2007 when possible,
+        and 2MASS when not. There could still be cross-matches between Ascenso
+        and Tsuimoto (though these would be NIR-redundant...)
+    :returns: pandas dataframe
+    """
+    # General info, photometry, cross-matching with TFT and VA
+    df_VPHAS_info = openVPHAS_single(5)
+    df_VPHAS_info.index.name = 'VPHAS_ID'
+    # Fitted parameters, including effective temperature and reddening
+    df_VPHAS_params = openVPHAS_single(6)
+    for colname in df_VPHAS_params:
+        df_VPHAS_info[colname] = df_VPHAS_params[colname]
+    del df_VPHAS_params
+    # Make SkyCoords
+    def make_skycoords(row):
+        return SkyCoord(row['RA'], row['DEC'], unit=u.deg, frame=FK5)
+    df_VPHAS_info['SkyCoord'] = df_VPHAS_info.apply(make_skycoords, axis=1)
+    return df_VPHAS_info
+
+
+"""
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&% Vargas Alvarez &%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+"""
+
+
+def openVA_simplecatalog():
+    """
+    Open the main catalog table, Table 2, from the HST survey
+    :returns: pandas dataframe
+    """
     with open(catalog_directory+"VargasAlvarez2013/tbl2") as f:
         skiplines(f, 10)
         col_intervals, col_labels = read_table_format(f, 18)
@@ -169,7 +267,14 @@ def openVA_full():
             index_col='ID')
     return df_VA
 
+
 def openVA_ET():
+    """
+    Open the spectral type table, Table 6, from the HST survey
+    This table has spectroscopically derived types as well as some distance
+        estimates (that probably shouldn't be trusted)
+    :returns: pandas dataframe
+    """
     with open(catalog_directory+"VargasAlvarez2013/tbl6") as f:
         skiplines(f, 3)
         header = f.readline().split()[:3]
@@ -179,38 +284,109 @@ def openVA_ET():
             skipfooter=2, engine='python', usecols=[0, 1, 2, 3], index_col='ID')
     return df_VA_ET
 
+
+def openVA_complete():
+    """
+    Opens the full catalog from the HST survey and adds in spectral types
+        from the spectroscopically analyzed subset of the catalog
+    Catalog from Vargas Alvarez et al 2013 (AJ 145:125)
+    :returns: pandas dataframe
+    """
+    # Get Table 5, the full catalog
+    df_VA = openVA_simplecatalog()
+    # Get Table 6, with spectroscopically determined types
+    df_VA_ET = openVA_ET()
+    for colname in ['Spectral', 'subtype']:
+        df_VA[colname] = df_VA_ET[colname]
+    del df_VA_ET
+    # Make SkyCoords
+    def make_skycoords(row):
+        return SkyCoord(row['RAdeg'], row['DEdeg'], unit=u.deg, frame=FK5)
+    df_VA['SkyCoord'] = df_VA.apply(make_skycoords, axis=1)
+    return df_VA
+
+
+
+"""
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&% Ascenso %&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+"""
+
+
 # OPEN ASCENSO
-def openAscenso():
+def openAscenso_simplecatalog():
+    """
+    Open the Ascenso catalog, Table 2
+    :returns: pandas dataframe
+    """
     # Column names and data are in 2 different files
     with open(catalog_directory+"Ascenso2007/ReadMe") as f:
         skiplines(f, 32)
         col_intervals, col_labels = read_table_format(f, 14)
-    print(col_labels)
     with open(catalog_directory+"Ascenso2007/w2phot.dat") as f:
         df_Ascenso = pd.read_fwf(f, colspecs=col_intervals, names=col_labels,
             na_values=("99.99", "9.999"), index_col='Seq',
             dtype={x:str for x in ('RAh', 'RAm', 'RAs', 'DE-', 'DEd', 'DEm', 'DEs')})
     return df_Ascenso
 
-def coords_from_Ascenso(df_Ascenso):
-    # Cobble together the HMS coordinates into RAdeg, DEdeg
-    RAstr = df_Ascenso.apply(lambda row: ":".join(row[x] for x in ('RAh', 'RAm', 'RAs')), axis=1)
-    DEstr = df_Ascenso.apply(lambda row: row['DE-'] + ":".join(row[x] for x in ('DEd', 'DEm', 'DEs')), axis=1)
-    RADEstr = RAstr + " " + DEstr
-    coords = RADEstr.apply(lambda radec_string: SkyCoord(radec_string, unit=(u.hourangle, u.deg)))
-    df_Ascenso['RAdeg'] = coords.apply(lambda coord: coord.ra.deg)
-    df_Ascenso['DEdeg'] = coords.apply(lambda coord: coord.dec.deg)
+
+def openAscenso_complete():
+    """
+    Open the NIR catalog from Ascenso et al. 2007 (A&A 466, 137–149)
+    The catalog contains J,H,Ks band photometry from SOFI instrument on the
+        ESO New Technology Telescope (NTT) in Chile.
+    Vargas Alvarez et al. 2013 and Mohr-Smith et al. 2015 (VPHAS+) both use
+        Ascenso's JHKs photometry. VPHAS+ gives JHKs from Ascenso where
+        possible, and 2MASS otherwise, though they don't specify which (like
+        Tsujimoto does with SIRIUS vs 2MASS).
+        VPHAS+ including Ascenso photometry, again, does not preclude
+        cross-matches between Ascenso and Tsujimoto, or Ascenso and VA (which
+        where not given in the paper), or Ascenso and Rauw(?)
+    :returns: pandas dataframe
+    """
+    df_Ascenso = openAscenso_simplecatalog()
+    coords_from_hhmmss(df_Ascenso)
+    return df_Ascenso
+
+
+"""
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&% Rauw &%&%&%&%&%&%&%&%&%&%&%%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%%&
+"""
+
 
 def openRauw():
+    """
+    Open the BV catalog from Rauw et al. 2007 (A&A 463, 981–991) made using
+        ANDICAM on CTIO
+    The catalog only gives BV photometry.
+    Rauw et al. 2007 and 2011 both give some spectral types, but need to be
+        put in manually since they never made good tables. There are Rauw 2011
+        Objects A B C D .. etc whose coordinates are only given in text, not
+        a table.
+    """
     with open(catalog_directory+"/Rauw/ReadMe") as f:
         skiplines(f, 92)
         col_intervals, col_labels = read_table_format(f, 11)
     with open(catalog_directory+"/Rauw/table4.dat") as f:
         df_Rauw = pd.read_fwf(f, colspecs=col_intervals, names=col_labels,
             dtype={x:str for x in ('RAh', 'RAm', 'RAs', 'DE-', 'DEd', 'DEm', 'DEs')})
-    # Re-index
+    # Re-index to 1-indexed
     df_Rauw.index = list(x+1 for x in range(len(df_Rauw)))
+    coords_from_hhmmss(df_Rauw)
     return df_Rauw
+
+
+"""
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&% Main function %&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+"""
+
 
 
 def main():
@@ -222,8 +398,8 @@ def catalog_reduction_v2():
     Updated on 4/14/20
     """
     print("All is well so far")
-    df_Rauw = openRauw()
-    print(df_Rauw)
+    df = openRauw()
+    df.to_html("~/Downloads/test.html", na_rep="")
 
 
 
