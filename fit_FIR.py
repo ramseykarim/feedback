@@ -2,7 +2,7 @@ import os
 
 import mantipython
 
-data_dir = "/sgraraid/filaments/data/TEST4/pacs70_cal_test/RCW49/processed/1342255009/"
+data_dir = "/sgraraid/filaments/data/TEST4/pacs70_cal_test/RCW49/processed/1342255009_reproc160/"
 if not os.path.isdir(data_dir):
     # Laptop path
     data_dir = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/processed/1342255009/"
@@ -30,13 +30,17 @@ for k in data_fns:
 if "350" in data_dir:
     i0, j0 = 726, 466
     width_i, width_j = 220, 280
+elif "160" in data_dir:
+    i0, j0 = 2314, 1035
+    width_i, width_j = 1286, 1286
+    width_i, width_j = 15, 15 # just the test region
 else:
     # 500 grid
     # i0, j0 = 519, 334 # OLD CUTOUT (retired as of March 9 2020)
     # width_i, width_j = 157, 200
     i0, j0 = 543, 337
     width_i, width_j = 294, 294 # NEW CUTOUT (as of March 9 2020, include extended stuff to the W)
-    width_i, width_j = 15, 15
+    width_i, width_j = 15, 15 # just the test region
 # decide whether or not this is parallel
 n_processes = 6
 path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
