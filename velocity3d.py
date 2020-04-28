@@ -247,5 +247,6 @@ def anim():
         mlab.savefig(f"figures/vel3d/anim_CO_{img_num:04d}.png") # dpi~300
         img_num += 1
         yield
+# Saving "a" makes sense! The object needs to exist!!
 a = anim()
 mlab.show()
