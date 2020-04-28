@@ -200,7 +200,7 @@ def iterate_over_chips(filename_list):
             yield data, WCS(header)
 
 
-def list_of_chips(filename_list):
+def list_of_chips(filename_list, wcs_reference):
     """
     Ruins the whole point of saving memory using a generator expression
     At least checks to see if we need each chip before returning it
@@ -210,7 +210,7 @@ def list_of_chips(filename_list):
     :returns: list of (data, WCS) tuples
     """
     list_to_return = []
-    for data, w in iterate_over_chips():
+    for data, w in iterate_over_chips(filename_list):
         if image_overlap(w, wcs_reference):
             list_to_return.append((data, w))
     return list_to_return
@@ -224,7 +224,7 @@ irac_w = WCS(fits.getdata(irac_fn, header=True)[1])
 # doesn't matter, but I'll have it going towards the left like IRAC and others.
 vlt_w = WCS(fits.getdata(vlt_fns[0], 1, header=True)[1])
 
-new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=256)
+new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=1)
 # This comes out to nearly the same size as one of these VLT images, but I checked and this makes sense. IRAC is big.
 # I checked the new footprint against the IRAC footprint, it's good to within 0.5 arcseconds!
 
@@ -270,11 +270,11 @@ def we_have_mosaic_at_home():
 
 
 final_new_image, mosaic_footprint = reproject_and_coadd(
-    list_of_chips(vlt_fns), new_w, shape_out=new_w.array_shape,
-    reproject_function=reproject_interp, combine_function='median',
+    list_of_chips(vlt_fns, new_w), new_w, shape_out=new_w.array_shape,
+    reproject_function=reproject_interp, combine_function='mean',
     match_background=True,
 )
-
+print("THIS FINISHED RUNNING")
 
 # final_new_image, mosaic_footprint = we_have_mosaic_at_home()
 
@@ -284,6 +284,7 @@ new_header['COMMENT'] = "Mosiac from VLT Halpha images"
 
 fits.writeto("../ancillary_data/vlt/omegacam/Halpa_mosaic.fits",
     final_new_image, new_header, overwrite=True)
+print("WROTE FILE")
 
 # plt.subplot(121, projection=new_w)
 # plt.imshow(final_new_image, origin='lower', vmin=0.5, vmax=500)
