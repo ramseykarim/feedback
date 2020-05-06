@@ -1,3 +1,7 @@
+"""
+This was to join the 3d animations of CII and CO
+Created: unsure... could check when I uploaded that GIF to my website
+"""
 import numpy as np
 import imageio
 import glob

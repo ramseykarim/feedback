@@ -1,3 +1,9 @@
+"""
+Calculating the galactocentric distance to RCW 49
+Maitraiyee needed this number to make some other calculations
+Created: unsure, can check emails
+"""
+
 import numpy as np
 
 from astropy.coordinates import SkyCoord
