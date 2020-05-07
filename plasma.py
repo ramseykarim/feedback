@@ -130,4 +130,6 @@ if __name__ == "__main__":
     print(f"Average wind power over {age:.1E} = {therm_E/(age.to(u.s).to_value()):.2E} ergs s-1")
     print()
 
-    print(f"Mass of plasma = {mass(bubble_radius):.2f} solar masses {fullsph}")
+    mass = mass(bubble_radius)
+    print(f"Mass of plasma = {mass:.2f} solar masses {fullsph}")
+    print(f"Average mass loss rate over {age:.1E} = {mass/(age.to(u.yr).to_value()):.2E} solMass / yr")

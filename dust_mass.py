@@ -14,7 +14,7 @@ from spectral_cube import SpectralCube
 from reproject import reproject_interp
 
 from mantipython import physics
-from misc_utils import get_pixel_scale
+import misc_utils, catalog_utils
 import geometric_model as geomodel
 
 # For 3D plots
@@ -22,12 +22,9 @@ from mayavi import mlab
 
 
 
-ancillary_data_path = "/home/rkarim/Research/Feedback/ancillary_data/"
-if not os.path.isdir(ancillary_data_path):
-    ancillary_data_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/"
 dust_path = f"{ancillary_data_path}dust/"
 herschel_path = f"{ancillary_data_path}herschel/"
-cii_path = f"{ancillary_data_path}sofia/"
+cii_path = catalog_utils.cii_path
 cii_cube = f"{cii_path}rcw49-cii.fits"
 
 def Draine_fn(Rv):
@@ -90,7 +87,7 @@ def get_wcs(filename=fit2p_filename):
 
 
 def get_physical_scale(wcs_obj, los_distance_pc):
-    ps = get_pixel_scale(wcs_obj)
+    ps = misc_utils.get_pixel_scale(wcs_obj)
     return ps.to(u.rad).to_value() * los_distance_pc * u.pc
 
 wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg))
@@ -223,7 +220,7 @@ def integrate_shell_on_image():
     estimated_center_pixel = (103, 138)
     radius_deg = 0.09
     thickness_deg = 0.05
-    pixel_scale_deg = get_pixel_scale(w).to_value()
+    pixel_scale_deg = misc_utils.get_pixel_scale(w).to_value()
 
     # mask to just the shell
     half_shell_mask = geomodel.half_shell_mask_2d(tau, pixel_scale_deg, radius_deg, thickness_deg, estimated_center_pixel, ang=70)
@@ -253,20 +250,6 @@ def integrate_shell_on_image():
 %&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
 """
 
-
-def load_cii(n):
-    """
-    Easily load in a [CII] moment 0 image
-    n is 0 for the full-range, 1 for [-12, -8], and 2 for [-8, -4]
-    """
-    if n == 0:
-        stub = "fullrange"
-    elif n == 1:
-        stub = "-12to-8"
-    elif n == 2:
-        stub = "-8to-4"
-    img, h = fits.getdata(f"{cii_path}mom0_{stub}.fits", header=True)
-    return img, h
 
 
 def load_tau():
@@ -561,7 +544,7 @@ sys.exit()
 
 # plotting below here
 
-cii, cii_h = load_cii(2)
+cii, cii_w = catalog_utils.load_cii(2)
 cii = smooth_image(cii, kernel_length=10, std=1.5)
 tau160, tau160_h = load_tau()
 tau160 = 10.**tau160
@@ -569,7 +552,7 @@ w = WCS(tau160_h)
 
 
 # Project the CII data onto the tau_160 grid
-cii_new, fp = reproject_interp((cii, WCS(cii_h)), w, tau160.shape)
+cii_new, fp = reproject_interp((cii, cii_w, w, tau160.shape)
 cii_new[np.isnan(cii_new)] = 0
 
 # plt.subplot(221, projection=w)

@@ -803,7 +803,7 @@ class STResolver:
             # as well as 'grid' which contains the PoWR grid object
             # Isn't that nifty ;)
             if model_info is None:
-                return np.nan * u.solLum # Do we need this????????????????????????????????????????????????????????????
+                return np.nan * u.solLum
             wlflux = model_info['grid'].get_model(model_info)
             return PoWRGrid.integrate_flux(wlflux)
         component_fluxes = STResolver.map_to_components(find_FUV_flux, (self.powr_models,))
@@ -928,23 +928,32 @@ class STResolver:
             # Convert to Quantity arrays and get rid of NaNs
             # If there aren't units, it's dimensionless. This works, np.array() doesn't
             values = u.Quantity(value_dictionary[component])
+            value_unit = values.unit
             values_finite = values[np.isfinite(values)]
-            # Skip this component if there aren't any values to use
+            # Append unit-adjusted NaNs if there aren't any values to use
             if values_finite.size == 0:
-                continue
-            # Use the median to get the value, min and max to get bounds
-            component_values.append(np.median(values_finite))
-            component_lo_bounds.append(np.min(values_finite))
-            component_hi_bounds.append(np.max(values_finite))
+                # This helps the units feel better about themselves
+                component_values.append(np.nan * value_unit)
+                component_lo_bounds.append(np.nan * value_unit)
+                component_hi_bounds.append(np.nan * value_unit)
+            else:
+                # Use the median to get the value, min and max to get bounds
+                component_values.append(np.median(values_finite))
+                component_lo_bounds.append(np.min(values_finite))
+                component_hi_bounds.append(np.max(values_finite))
         # Combine the upper and lower bounds; there should be no NaNs now
         # Empty arrays will sum to 0... which is probably fine TBH, it'll be obvious
-        reduce_func = mean_or_0 if dont_add else np.sum
-        final_value = reduce_func(u.Quantity(component_values))
-        final_lo_bound = reduce_func(u.Quantity(component_lo_bounds))
-        final_hi_bound = reduce_func(u.Quantity(component_hi_bounds))
+        # This was also updated to keep the right units
+        reduce_func = mean_or_0 if dont_add else np.nansum
+        component_values = u.Quantity(component_values)
+        component_lo_bounds = u.Quantity(component_lo_bounds)
+        component_hi_bounds = u.Quantity(component_hi_bounds)
+        final_value = reduce_func(component_values)
+        final_lo_bound = reduce_func(component_lo_bounds)
+        final_hi_bound = reduce_func(component_hi_bounds)
         # Adjust hi_bound to be + 1x final_value if binary and one component is unknown
         # Only do this if we're adding binary properties
-        if not dont_add and (len(value_dictionary) == 2) and (len(component_values) < 2):
+        if not dont_add and (len(value_dictionary) == 2) and np.any(np.isnan(component_values)):
             final_hi_bound += final_value
         return final_value, (final_lo_bound, final_hi_bound)
 
@@ -993,7 +1002,7 @@ def mean_or_0(arg):
     result = np.mean(arg)
     if np.isnan(result):
         # Keeps correct units and returns 0.
-        return np.sum(arg)
+        return np.nansum(arg)
     else:
         return result
 
@@ -1078,27 +1087,30 @@ def test_STResolver():
             return "[NO MODEL]"
     tbls = {x: PoWRGrid(x) for x in ('OB', "WNE", "WNL")}
     sb_tables = S03_OBTables()
-    cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
-    tests = [cat.SpectralType[19], cat.SpectralType[5], cat.SpectralType[7], 'B5/6.5III', 'O4II/III', cat.SpectralType[26], cat.SpectralType[27]]
+    # cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
+    tests = ['B5/6.5III', 'O4I/III', 'WN', 'C*']
     count = 0
-    for t in cat.SpectralType:
+    for t in tests:
         if t == "ET":
             t = "O7.5/B1"
         s = STResolver(t)
         # print(t, '\n\t', s)
         # print('\t', s.__repr__())
         s.link_powr_grids(tbls)
-        v, lu = s.get_terminal_wind_velocity(sb_tables)
+        v, lu = s.get_mass_loss_rate(sb_tables)
         l, u = lu
         dl, du = v-l, u-v
-        vtxt = "---N/A---" if ((v == 0.) or np.isnan(v)) else f"{v:.2E}"
-        etxt = "" if ((dl == 0.) and (du == 0.)) else f" (-{dl:.2E}, +{du:.2E})"
+        # vtxt = "---N/A---" if ((v == 0.) or np.isnan(v)) else f"{v:.2E}"
+        # etxt = "" if ((dl == 0.) and (du == 0.)) else f" (-{dl:.2E}, +{du:.2E})"
+        vtxt = str(v) + " +/- "
+        etxt = str(dl) + "," + str(du)
         print(f"{s.__repr__():.<30s}: {vtxt}{etxt}")
         count += 1
         if count > 95:
             break
+    return s
 
 
 
 if __name__ == "__main__":
-    test_STResolver()
+    args = test_STResolver()

@@ -25,6 +25,7 @@ import g0_dust
 
 data_directory = "../ancillary_data/"
 
+rcw_dist = 4.16*u.kpc
 
 
 """
@@ -36,7 +37,18 @@ def main():
     catalog_df = convert_ST_to_properties(catalog_df)
     catalog_utils.save_df_html(catalog_df)
     catalog_df = filter_by_within_range(catalog_df)
-    
+    catalog_df = filter_by_within_range(catalog_df, radius_arcmin=3.)
+    catalog_df = filter_by_within_range(catalog_df, radius_arcmin=12.)
+    # Option here to copy the improved make_wcs and make_wcs_like functions from mosaic_vlt.py
+    # We can just use CII's WCS in the meantime
+    print(len(catalog_df.loc[catalog_df['is_within_12.0_arcmin']]))
+    print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin']]))
+    print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin']]))
+
+    # cii_mom0, cii_w = catalog_utils.load_cii(2)
+    # calc_and_plot_g0(catalog_df, cii_mom0, cii_w)
+    # calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
+    return
 
 
 def convert_ST_to_properties(catalog_df):
@@ -58,7 +70,7 @@ def convert_ST_to_properties(catalog_df):
         Modifies catalog_df in place
         """
         tmp = catalog_df['ST_obj'].apply(fn_to_apply_to_STobj)
-        catalog_df[name_of_property+'_val'] = tmp.apply(lambda x: x[0])
+        catalog_df[name_of_property+'_med'] = tmp.apply(lambda x: x[0])
         catalog_df[name_of_property+'_lo'] = tmp.apply(lambda x: x[1][0])
         catalog_df[name_of_property+'_hi'] = tmp.apply(lambda x: x[1][1])
     # Get FUV flux
@@ -72,17 +84,182 @@ def convert_ST_to_properties(catalog_df):
 
 def filter_by_within_range(catalog_df, radius_arcmin=6.):
     """
-    Add a boolean column to the catalog DataFrame, True if the object is
-        within radius_arcmin of the center of the cluster
+    Creates boolean column, true if object is within radius_arcmin
+        of the center of the cluster
     I think the center coordinate was taken from SIMBAD.
-    Modifies in place, but also returns the catalog
+    Returns the catalog, but modifies in place
     """
+    if not isinstance(radius_arcmin, u.Quantity):
+        radius_arcmin = radius_arcmin * u.arcmin
     def within_range(coord):
-        return coord.separation(catalog_utils.wd2_center_coord).arcmin < radius_arcmin
-    catalog_df['is_within_range'] = catalog_df['SkyCoord'].apply(within_range)
+        return coord.separation(catalog_utils.wd2_center_coord) < radius_arcmin
+    catalog_df[f'is_within_{radius_arcmin.to(u.arcmin).to_value():.1f}_arcmin'] = catalog_df['SkyCoord'].apply(within_range)
     return catalog_df
 
 
+def calc_g0(catalog_df, wcs_obj, distance_los):
+    """
+    Create an array of G0 in Habing units (average 1-D IRF) given the catalog
+        with FUV fluxes and a WCS object for the array
+    Also returns lower, upper limits
+    :param catalog_df: needs to have "FUV_med", "FUV_lo", "FUV_hi",
+        and "SkyCoord" columns
+    :param wcs_obj: a WCS object that describes a region around these stars
+    :param distance_los: a Quantity or float distance. If float, assumed to
+        be in parsecs
+    :returns: val, lo, hi as arrays
+    """
+    # Habing unit
+    radfield1d = 1.6e-3 * u.erg / (u.cm*u.cm * u.s)
+    # Make distance array function
+    def inv_dist_f(coord):
+        return 1./(4*np.pi * catalog_utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
+    # Get inverse distance array AND INCLUDE 4PI (I think)
+    # If I rewrote distance_from_point_, I could maybe do this with SkyCoord arrays.
+    # As it's written now, this needs to be done as DataFrame.apply to each SkyCoord
+    # inv_dist will be a 3D array
+    inv_dist = u.Quantity(list(catalog_df['SkyCoord'].apply(inv_dist_f).values))
+    """
+    This could be a good place to look at the effects of distance uncertainties too
+    """
+    # Make fuv function to do this quickly
+    def sum_fuv(fuv_flux_array):
+        """
+        :param fuv_flux_array: some kind of Quantity in power units,
+            should be the same shape as the inv_dist.shape[0]
+        """
+        fuv_flux_array = u.Quantity(list(fuv_flux_array.values))
+        return (np.sum(inv_dist * fuv_flux_array[:, np.newaxis, np.newaxis], axis=0) / radfield1d).decompose()
+    # Get the (median) radiation field value
+    fuv_med = sum_fuv(catalog_df['FUV_med'])
+    # Get the lower and upper limits based on FUV uncertainty
+    fuv_lo = sum_fuv(catalog_df['FUV_lo'])
+    fuv_hi = sum_fuv(catalog_df['FUV_hi'])
+    # Returns val, (lo, hi)
+    return fuv_med, fuv_lo, fuv_hi
+
+
+def calc_mdot(catalog_df):
+    """
+    Sum up the mass loss rates of all the objects
+    :returns: val, lo, hi
+    """
+    # Make mdot function to do this quickly
+    def sum_mdot(mdot_array):
+        return np.sum(u.Quantity(list(mdot_array.values)))
+    # Get the (median) value
+    mdot_med = sum_mdot(catalog_df['Mdot_med'])
+    # Get the lower and upper bounds
+    mdot_lo = sum_mdot(catalog_df['Mdot_lo'])
+    mdot_hi = sum_mdot(catalog_df['Mdot_hi'])
+    return mdot_med, mdot_lo, mdot_hi
+
+
+def calc_KE(catalog_df):
+    """
+    Sum up mechanical luminosity, calculated by multiplying 0.5 * mdot * vinf**2
+    :returns: val, lo, hi
+    """
+    # Make function to do this quickly
+    def sum_ke(suffix):
+        mdot = u.Quantity(list(catalog_df['Mdot'+suffix]))
+        vinf = u.Quantity(list(catalog_df['vinf'+suffix]))
+        ke_over_time = (mdot * vinf**2 / 2.)
+        return np.sum(ke_over_time).to(u.erg / u.s)
+    suffixes = ('_med', '_lo', '_hi')
+    ke_med, ke_lo, ke_hi = (sum_ke(s) for s in suffixes)
+    return ke_med, ke_lo, ke_hi
+
+
+def calc_and_plot_mdot(catalog_df, cii_mom0, cii_w, plotting=False):
+    mdot_med, mdot_lo, mdot_hi = calc_mdot(catalog_df.loc[catalog_df['is_within_3.0_arcmin']])
+    ke_med, ke_lo, ke_hi = calc_KE(catalog_df.loc[catalog_df['is_within_3.0_arcmin']])
+    dl, du = mdot_med - mdot_lo, mdot_hi - mdot_med
+    print(f"MDOT: {mdot_med:.1E}, [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
+    dl, du = ke_med - ke_lo, ke_hi - ke_med
+    print(f"MECH LUM: {ke_med:.1E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
+    age = 2.e6*u.year
+    dl, du = (mdot_med - mdot_lo)*age, (mdot_hi - mdot_med)*age
+    print(f"Mass ejected over {age:.1}: {mdot_med*age:.2f} [-{dl.to_value():.2f}, +{du.to_value():.2f}]")
+    dl, du = ((ke_med - ke_lo)*age).to(u.erg), ((ke_hi - ke_med)*age).to(u.erg)
+    print(f"Thermal energy over {age:.1}: {(ke_med*age).to(u.erg):.2E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
+    print(f"{(ke_lo*age).to(u.erg):.2E}, {(ke_hi*age).to(u.erg):.2E}")
+
+    if plotting:
+        plt.figure(figsize=(11, 8))
+        plt.subplot(111, projection=cii_w)
+        plt.title(f"[CII] Moment 0 (-8 to -4 km/s); Mdot = {mdot_med:.1E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
+        plt.imshow(cii_mom0, origin='lower')
+        catalog_utils.plot_coordinates(None, SkyCoord(catalog_df.loc[catalog_df['is_within_3.0_arcmin'], 'SkyCoord'].values), setup=False, show=False)
+        plt.savefig("figures/mdot_may7-2020.png")
+
+
+def calc_and_plot_g0(catalog_df, cii_mom0, cii_w):
+    fuv_med, fuv_lo, fuv_hi = calc_g0(catalog_df.loc[catalog_df['is_within_6.0_arcmin']], cii_w, rcw_dist)
+    coords = SkyCoord(catalog_df.loc[catalog_df['is_within_6.0_arcmin'], 'SkyCoord'].values)
+
+    plt.figure(figsize=(13, 15))
+
+    # CII
+    plt.subplot(221, projection=cii_w)
+    plt.title(f"[CII] Moment 0 map (-8 to -4 km/s)")
+    plt.imshow(cii_mom0, origin='lower')
+    plt.colorbar()
+    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+
+    # Median value
+    plt.subplot(222, projection=cii_w)
+    plt.title("log(G0) in Habing units (median)")
+    plt.imshow(np.log10(fuv_med.value), origin='lower', vmin=2.8, vmax=4.7)
+    plt.colorbar()
+    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+
+    # Low value
+    dl = (fuv_med - fuv_lo).value
+    plt.subplot(223, projection=cii_w)
+    plt.title("log(G0) in Habing units (lower uncertainty)")
+    plt.imshow(np.log10(dl), origin='lower', vmin=1.8, vmax=3.7)
+    plt.colorbar()
+    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+
+    # High value
+    du = (fuv_hi - fuv_med).value
+    plt.subplot(224, projection=cii_w)
+    plt.title("log(G0) in Habing units (upper uncertainty)")
+    plt.imshow(np.log10(du), origin='lower', vmin=1.8, vmax=3.7)
+    plt.colorbar()
+    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    # plt.show()
+    plt.tight_layout()
+    plt.savefig("figures/g0_may7-2020.png")
+
+
+def prepare_and_save_catalog(catalog_df):
+    """
+    Operates on a copy of the catalog, making python objects into more general
+        values (SkyCoords to RA,Dec, Quantities to floats)
+    """
+    catalog_df = catalog_df.copy()
+    columns_to_keep = []
+    def convert_to_values(prefix, unit_suffix):
+        for suffix in ('_lo', '_med', '_hi'):
+            new_colname = prefix+suffix+"_"+unit_suffix
+            catalog_df[new_colname] = catalog_df[prefix+suffix].apply(lambda x: x.to_value())
+            columns_to_keep.append(new_colname)
+    # FUV flux
+    convert_to_values('FUV', "solLum")
+    # Mdot
+    convert_to_values('Mdot', "solMass_yr")
+    # v_inf
+    convert_to_values('vinf', 'km_s')
+    # RA, Dec
+    catalog_df['RAdeg'] = catalog_df['SkyCoord'].apply(lambda x: x.ra.deg)
+    catalog_df['DEdeg'] = catalog_df['SkyCoord'].apply(lambda x: x.dec.deg)
+    columns_to_keep = ['RAdeg', 'DEdeg', 'VPHAS_ID', 'VA_ID', 'TFT_ID', 'Spectral'] + columns_to_keep
+    cat_path = f"{data_directory}catalogs/Ramsey/"
+    catalog_df[columns_to_keep].to_csv(cat_path+"Wd2_OB_catalog_May-7-2020.csv")
+    catalog_df.loc[catalog_df['is_within_6.0_arcmin'], columns_to_keep].to_csv(cat_path+"Wd2_within6arcmin_OB_catalog_May-7-2020.csv")
+    catalog_df.loc[catalog_df['is_within_3.0_arcmin'], columns_to_keep].to_csv(cat_path+"Wd2_within3arcmin_OB_catalog_May-7-2020.csv")
 
 
 """
@@ -268,57 +445,6 @@ def original_g0_calculation():
         header.update(kws)
         return WCS(header)
 
-    """
-    TWO METHODS FOR CALCULATING SEPARATION FROM A SINGLE POINT
-    pixelgrid is faster (not sure about scaling difference but it's better than linear)
-    wcssep is more accurate across larger areas, since it deals in great circles instead of planes
-    Depending on the approximation being made, it may not matter so much
-    """
-
-    def distance_from_center_pixelgrid(center_coord, distance_los_pc, grid_shape=None, ref_pixel=None, pixel_scale=None):
-        w = make_wcs(center_coord, grid_shape, ref_pixel, pixel_scale)
-        grid = np.sqrt((np.arange(grid_shape[0]) - ref_pixel[0])[:, np.newaxis]**2 + (np.arange(grid_shape[1]) - ref_pixel[1])[np.newaxis, :]**2)
-        grid = np.radians(grid * pixel_scale.to('deg').to_value()) * distance_los_pc
-        return grid, w
-
-    def distance_from_center_wcssep(center_coord, distance_los_pc, grid_shape=None, ref_pixel=None, pixel_scale=None):
-        """
-        grid_shape and ref_pixel should be in i,j order (row, col), NOT x,y
-        Returns grid with physical distances in pc from center_coord, as well as WCS object for this grid
-        """
-        w = make_wcs(center_coord, grid_shape, ref_pixel, pixel_scale)
-        grid = np.full(grid_shape, np.nan)
-        ij_arrays = tuple(idx_grid.ravel() for idx_grid in np.mgrid[tuple(slice(0, shape_i) for shape_i in grid_shape)])
-        grid[ij_arrays] = w.array_index_to_world(*ij_arrays).separation(center_coord).to('rad').to_value() * distance_los_pc
-        return grid, w
-
-    """
-    Now need to make arrays for distances from an arbitrary SkyCoord given an existing WCS
-    """
-
-    def distance_from_point_pixelgrid(point_coord, w, distance_los_pc):
-        """
-        point_coord is a SkyCoord object
-        w is a WCS object
-        """
-        # grid_shape from w.array_shape
-        grid_shape = w.array_shape
-        ref_pixel = w.world_to_array_index(point_coord)
-        # Get physical separation per pixel along each axis at 0,0 (assume they do not change -- this should be ok for small regions)
-        ds_di = w.array_index_to_world(*ref_pixel).separation(w.array_index_to_world(ref_pixel[0]+1, ref_pixel[1])).to('rad').to_value() * distance_los_pc
-        ds_dj = w.array_index_to_world(*ref_pixel).separation(w.array_index_to_world(ref_pixel[0], ref_pixel[1]+1)).to('rad').to_value() * distance_los_pc
-        grid = np.sqrt((ds_di*(np.arange(grid_shape[0]) - ref_pixel[0]))[:, np.newaxis]**2 + (ds_dj*(np.arange(grid_shape[1]) - ref_pixel[1]))[np.newaxis, :]**2)
-        return grid
-
-    def distance_from_point_wcssep(point_coord, w, distance_los_pc):
-        """
-        Again, this is way slower (probably grid.size**2)
-        """
-        grid = np.full(w.array_shape, np.nan)
-        ij_arrays = tuple(idx_grid.ravel() for idx_grid in np.mgrid[tuple(slice(0, shape_i) for shape_i in w.array_shape)])
-        grid[ij_arrays] = w.array_index_to_world(*ij_arrays).separation(point_coord).to('rad').to_value() * distance_los_pc
-        return grid
-
     args, kwargs = (4.16*1000,), {'pixel_scale': 1*u.arcsec, 'grid_shape':(1500, 1500), 'ref_pixel':(500, 500)}
 
 
@@ -326,7 +452,7 @@ def original_g0_calculation():
         img_data, img_header, wl = herschel_data(500)
         w = WCS(img_header)
         t0 = datetime.datetime.now()
-        grid = distance_from_point_pixelgrid(test_point, w, *args)
+        grid = catalog_utils.distance_from_point_pixelgrid(test_point, w, *args)
         t1 = datetime.datetime.now()
         grid2 = distance_from_point_wcssep(test_point, w, *args)
         t2 = datetime.datetime.now()
@@ -341,13 +467,14 @@ def original_g0_calculation():
 
 
     def distance_from_all_points(point_coords, w, distance_los_pc):
-        return np.sum(point_coords.apply(lambda x: (.1/distance_from_point_pixelgrid(x, w, distance_los_pc)**2)), axis=0)
+        return np.sum(point_coords.apply(lambda x: (.1/catalog_utils.distance_from_point_pixelgrid(x, w, distance_los_pc)**2)), axis=0)
 
     def calc_g0(cat, w, distance_los_pc):
         radfield1d = 1.6e-3 # erg cm-2 s-1
         cm2_to_pc2 = (u.cm.to(u.pc))**2
         # gives inverse distance in cm-2
-        inv_dist = cat.coords.apply(lambda x: cm2_to_pc2/(distance_from_point_pixelgrid(x, w, distance_los_pc)**2))
+        # SHOULD THERE BE A 4PI HERE???
+        inv_dist = cat.coords.apply(lambda x: cm2_to_pc2/(catalog_utils.distance_from_point_pixelgrid(x, w, distance_los_pc)**2))
         # gives luminosity in erg s-1
         lum = cat.luminosity.apply(lambda x: x.to(u.erg/u.s).to_value())
         # returns luminosity expressed in terms of avg 1d IRF
@@ -584,7 +711,7 @@ def original_g0_calculation():
 
     ##### I don't remember what this was for
     # w = WCS(herschel_SED_fit()[1])
-    # plt.imshow(distance_from_point_pixelgrid(wd2_center_coord, w, 4.16*1000), origin='lower')
+    # plt.imshow(catalog_utils.distance_from_point_pixelgrid(wd2_center_coord, w, 4.16*1000), origin='lower')
     # plt.show()
     # sys.exit()
 
