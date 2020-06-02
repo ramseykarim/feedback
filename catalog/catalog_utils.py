@@ -17,21 +17,38 @@ from astropy.coordinates import SkyCoord
 
 wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg))
 
-ancillary_data_path = "/home/rkarim/Research/Feedback/ancillary_data/"
-if not os.path.isdir(ancillary_data_path):
-    ancillary_data_path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/"
+feedback_path = "/home/rkarim/Research/Feedback/"
+if not os.path.isdir(feedback_path):
+    feedback_path = "/home/ramsey/Documents/Research/Feedback/"
 
+ancillary_data_path = f"{feedback_path}rcw49_data/"
 cii_path = f"{ancillary_data_path}sofia/"
+irac_path = f"{ancillary_data_path}spitzer/irac/"
+
+misc_data_path = f"{feedback_path}misc_data/"
+
+
+def load_irac(n=1, header=True):
+    """
+    Loads whatever IRAC band I have on my laptop
+    Used to be called "irac_data", but that was not descriptive so I renamed
+        this to load_irac on May 22, 2020
+    If header keyword, returns image, header. If not, returns image, WCS
+    """
+    fn = f"30002561.30002561-28687.IRAC.{n}.median_mosaic.fits"
+    img, hdr = fits.getdata(irac_path+fn, header=True)
+    if header:
+        return img, hdr
+    else:
+        return img, WCS(hdr)
 
 
 def irac_data():
     """
-    Loads whatever IRAC band I have on my laptop
+    For backwards compatibility; I renamed the function on May 22, 2020
     """
-    p = "/home/ramsey/Documents/Research/Feedback/ancillary_data/spitzer/irac/"
-    fn = "30002561.30002561-28687.IRAC.1.median_mosaic.fits"
-    img, hdr = fits.getdata(p+fn, header=True)
-    return img, WCS(hdr)
+    print("==\n\tWARNING: irac_data is deprecated; rename this function call to load_irac(n: 1-4)\n==")
+    return load_irac()
 
 
 def load_cii(n=0):
@@ -45,6 +62,8 @@ def load_cii(n=0):
         stub = "-12to-8"
     elif n == 2:
         stub = "-8to-4"
+    elif n == 3:
+        stub = "-25to0"
     img, hdr = fits.getdata(f"{cii_path}mom0_{stub}.fits", header=True)
     return img, WCS(hdr)
 

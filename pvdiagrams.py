@@ -10,6 +10,8 @@ from astropy.nddata.utils import Cutout2D
 from spectral_cube import SpectralCube
 import pvextractor
 
+import catalog_utils
+
 
 """
 Testing SpectralCube and pvextractor and making PV diagrams
@@ -18,8 +20,8 @@ Created: March 24th, 2020 (in the midst of the quarantine)
 __author__ = "Ramsey Karim"
 
 
-fn = "../ancillary_data/sofia/rcw49-cii.fits"
-fn = "../ancillary_data/apex/apexCO/RCW49_12CO.fits"
+fn = f"{catalog_utils.ancillary_data_path}sofia/rcw49-cii.fits"
+fn = f"{catalog_utils.ancillary_data_path}apex/apexCO/RCW49_12CO.fits"
 
 with fits.open(fn) as hdul:
     h = hdul[0].header
@@ -216,11 +218,13 @@ def overlay_cosine():
     )
     plt.show()
 
+
+
 def along_pillar_12CO():
     pillar_top = "10:24:09.3382 -57:48:54.070"
     pillar_base = "10:24:27.4320 -57:50:35.824"
     pillar_coords = SkyCoord([pillar_top, pillar_base], unit=(u.hourangle, u.deg), frame=FK5)
-    p = pvextractor.Path(pillar_coords, width=4*u.arcsec)
+    p = pvextractor.Path(pillar_coords, width=50*u.arcsec)
     c0, c1 = p._coords[0], p._coords[1]
 
     sl = pvextractor.extract_pv_slice(subcube, p)

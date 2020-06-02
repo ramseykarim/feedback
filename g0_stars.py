@@ -23,7 +23,7 @@ import catalog_spectral
 import catalog_utils
 import g0_dust
 
-data_directory = "../ancillary_data/"
+data_directory = catalog_utils.ancillary_data_path
 
 rcw_dist = 4.16*u.kpc
 
@@ -35,19 +35,31 @@ This step uses catalog_spectral.py functions
 def main():
     catalog_df = load_final_catalog_df()
     catalog_df = convert_ST_to_properties(catalog_df)
-    catalog_utils.save_df_html(catalog_df)
-    catalog_df = filter_by_within_range(catalog_df)
+
+    # catalog_df = filter_by_within_range(catalog_df)
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=3.)
+    catalog_df = filter_by_within_range(catalog_df, radius_arcmin=6.)
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=12.)
+
+
+    # catalog_utils.save_df_html(catalog_df)
+
     # Option here to copy the improved make_wcs and make_wcs_like functions from mosaic_vlt.py
     # We can just use CII's WCS in the meantime
-    print(len(catalog_df.loc[catalog_df['is_within_12.0_arcmin']]))
-    print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin']]))
-    print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin']]))
 
-    # cii_mom0, cii_w = catalog_utils.load_cii(2)
+    # print(len(catalog_df.loc[catalog_df['is_within_12.0_arcmin']]))
+    # print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin']]))
+    # print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin']]))
+
+    cii_mom0, cii_w = catalog_utils.load_cii(2)
     # calc_and_plot_g0(catalog_df, cii_mom0, cii_w)
     # calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
+
+    ## Experiment to see what WR stars mass loss looks like (May 22, 2020)
+    catalog_df = filter_by_only_WR(catalog_df)
+    catalog_df = catalog_df.loc[~catalog_df['is_WR']]
+    # calc_and_plot_and_save_WR_wind_power(catalog_df, cii_w, rcw_dist, saving=True, radius_arcmin=6.)
+    calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
     return
 
 
@@ -94,6 +106,19 @@ def filter_by_within_range(catalog_df, radius_arcmin=6.):
     def within_range(coord):
         return coord.separation(catalog_utils.wd2_center_coord) < radius_arcmin
     catalog_df[f'is_within_{radius_arcmin.to(u.arcmin).to_value():.1f}_arcmin'] = catalog_df['SkyCoord'].apply(within_range)
+    return catalog_df
+
+
+def filter_by_only_WR(catalog_df):
+    """
+    Creates boolean column, true if object is a WR star
+    Designed for testing some stellar wind ideas; WRs should domiante stellar
+        wind production
+    Returns the catatalog, but modifies in place
+    """
+    def is_WR(spectral_type_string):
+        return 'W' in spectral_type_string
+    catalog_df['is_WR'] = catalog_df['Spectral'].apply(is_WR)
     return catalog_df
 
 
@@ -191,7 +216,36 @@ def calc_and_plot_mdot(catalog_df, cii_mom0, cii_w, plotting=False):
         plt.title(f"[CII] Moment 0 (-8 to -4 km/s); Mdot = {mdot_med:.1E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
         plt.imshow(cii_mom0, origin='lower')
         catalog_utils.plot_coordinates(None, SkyCoord(catalog_df.loc[catalog_df['is_within_3.0_arcmin'], 'SkyCoord'].values), setup=False, show=False)
-        plt.savefig("figures/mdot_may7-2020.png")
+        plt.savefig("figures/mdot_may29-2020.png")
+
+
+def calc_and_plot_and_save_WR_wind_power(catalog_df, wcs_obj, distance_los, plotting=False, saving=False, radius_arcmin=12.0):
+    """
+    This is a very hardcoded function serving a very specific purpose
+    I want to see what the wind power from only the WR stars looks like across
+        the region
+    Created: May 22, 2020
+    """
+    standard_unit = 1e-38 * 1e-6 * (u.solMass / u.yr) / (u.cm*u.cm)
+    catalog_df = catalog_df.loc[~catalog_df['is_WR'] & catalog_df[f'is_within_{radius_arcmin:.1f}_arcmin']]
+    # Make distance array function (copied from calc_g0)
+    def inv_dist_f(coord):
+        return 1./(4*np.pi * catalog_utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
+    inv_dist = u.Quantity(list(catalog_df['SkyCoord'].apply(inv_dist_f).values))
+    mdot_array = u.Quantity(list(catalog_df['Mdot_hi'].values))
+    mdot_total_grid = (np.sum(inv_dist * mdot_array[:, np.newaxis, np.newaxis], axis=0) / standard_unit).decompose()
+    header = {"BUNIT": "10^-6 solMass/yr / cm2", "HISTORY": "all stars, mdot_hi"}
+    header = fits.Header(header)
+    header.update(wcs_obj.to_header())
+    if plotting:
+        plt.figure()
+        plt.imshow(np.log10(mdot_total_grid), origin='lower', vmin=-2, vmax=2)
+        plt.title("WR20a and WR20b mass transfer / area")
+        plt.colorbar()
+        plt.show()
+    if saving:
+        fits.writeto(f"{data_directory}catalogs/Ramsey/OB_stars_mdot_within_{radius_arcmin:.1f}arcmin.fits", mdot_total_grid.to_value(), header=header, overwrite=True)
+
 
 
 def calc_and_plot_g0(catalog_df, cii_mom0, cii_w):

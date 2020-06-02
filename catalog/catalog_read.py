@@ -26,7 +26,7 @@ import catalog_utils
 from misc_utils import flquantiles
 
 
-catalog_directory = "../ancillary_data/catalogs/"
+catalog_directory = catalog_utils.ancillary_data_path + "catalogs/"
 
 def convert_hhmmss(hhmmss_hhmmss):
     """
@@ -817,7 +817,9 @@ def catalog_reduction_v2():
 
     df = new_catalog
     # Saves a DataFrame with important "SkyCoord" and "Spectral" fields
-    df.to_pickle(catalog_directory+"Ramsey/catalog_may5_2020.pkl")
+    # df.to_pickle(catalog_directory+"Ramsey/catalog_may5_2020.pkl")
+    df.to_html("/home/ramsey/Downloads/test.html")
+    return
 
 
     # return df

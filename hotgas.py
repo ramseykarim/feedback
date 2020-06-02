@@ -18,8 +18,10 @@ dV_regB = 8.2
 dV = 10.8
 nu_GHz = 5.
 bubble_radius = 5.
-line_of_sight_distance_pc = bubble_radius*2. # Paladini used 1 pc, but ~17 pc seems closer to reality
-# line_of_sight_distance_pc = 1.
+plasma_bubble_radius = 2.7 # From plasma.py
+# Paladini used 1 pc, but ~17 pc seems closer to reality
+# I'm going to use a hollow sphere approximation now
+line_of_sight_distance_pc = bubble_radius*2. - plasma_bubble_radius*2.
 
 theta_beam = 7.3 # arcsec at 5 GHz, from Table 3 in Paladini (maj == min)
 
@@ -131,9 +133,11 @@ def calc_ne(EM):
     return np.sqrt(EM/line_of_sight_distance_pc)
 
 
-def sphere_volume():
+def ionized_volume():
+    # Hollow sphere (May 12, 2020)
     # returns cm3
-    return (4.*np.pi/3) * (bubble_radius*u.pc.to(u.cm))**3.
+    cube_f = lambda r: (r*u.pc.to(u.cm))**3.
+    return (4.*np.pi/3) * (cube_f(bubble_radius) - cube_f(plasma_bubble_radius))
 
 
 def calc_P(T, n):
@@ -143,14 +147,16 @@ def calc_P(T, n):
 
 def calc_E(P):
     # returns ergs
-    return (3./2) * P*(cst.k * u.J.to(u.erg)) * sphere_volume()
+    return (3./2) * P*(cst.k * u.J.to(u.erg)) * ionized_volume()
 
 
 def calc_mass(n):
-    return 0.5 * u.M_p.to(u.solMass) * n * sphere_volume()
+    return 0.5 * u.M_p.to(u.solMass) * n * ionized_volume()
 
 
-print(f"Using distance = {line_of_sight_distance_pc:.2f} pc")
+print(f"Radius = {bubble_radius:.2f} pc")
+print(f"Distance thru ionized gas = {line_of_sight_distance_pc:.2f} pc")
+print(f"Hollow sphere (plasma in center), inner radius = {plasma_bubble_radius:.2f} pc")
 print()
 print(f"Paladini et al 2015 used delta V = {dV_regB:.1f} km/s")
 Te_regB = calc_Te(dV_regB)
@@ -181,4 +187,3 @@ print("assuming mean molecular weight per electron of 0.5")
 print(f"P = {P:.2E} K cm-3")
 print(f"E = {E:.2E} ergs")
 print(f"M = {M:.2f} solar masses")
-

@@ -7,6 +7,13 @@ created: November 11, 2019
 I am returning to this code to treat uncertainties and binaries properly
 Wow there's a lot of regex in here, good job past Ramsey
 revisited: April 29-30, 2020
+
+Returning once again to update mass loss rates with models from
+Leitherer et al 2010, who uses WM-basic (Pauldrach et al 2001).
+The Sternberg models don't take clumping into account, so their mass loss rates
+are likely overestimated (Puls et al 2008).
+Leitherer et al are responsible for Starburst 99.
+revisited: June 1, 2020
 """
 __author__ = "Ramsey Karim"
 
@@ -21,15 +28,19 @@ from scipy.interpolate import interp1d
 from astropy import units as u
 
 import misc_utils
+import catalog_utils
 
 
 luminosity_classes = ('V', 'III', 'I')
 
-catalogs_directory = "../ancillary_data/catalogs/"
-spectypes_directory = f"{catalogs_directory}SpecTypes/"
-spectypes_table = f"{spectypes_directory}spectypes.txt"
-column_name_table = f"{spectypes_directory}colnames.txt"
-powr_directory = f"{catalogs_directory}SpecTypes/PoWR/"
+catalogs_directory = f"{catalog_utils.ancillary_data_path}catalogs/"
+spectypes_directory = f"{catalog_utils.misc_data_path}SpectralTypes/"
+
+powr_directory = f"{spectypes_directory}PoWR/"
+
+sternberg_path = f"{spectypes_directory}Sternberg/"
+spectypes_table = f"{sternberg_path}spectypes.txt"
+column_name_table = f"{sternberg_path}colnames.txt"
 
 # search for: standard types, WR, Herbig Ae/Be (type of PMS), and pre main sequence
 nonstandard_types_re = '(W(N|C))|(HAeBe)|(PMS)|(C)'
