@@ -43,9 +43,9 @@ else:
     width_i, width_j = 15, 15 # just the test region
 # decide whether or not this is parallel
 n_processes = 6
-path = "/home/rkarim/Research/Feedback/ancillary_data/herschel/"
+path = "/home/rkarim/Research/Feedback/rcw49_data/herschel/"
 if not os.path.isdir(path):
-    path = "/home/ramsey/Documents/Research/Feedback/ancillary_data/herschel/"
+    path = "/home/ramsey/Documents/Research/Feedback/rcw49_data/herschel/"
 # write_fn = "RCW49large_2p_2BAND_beta2.0.fits"
 write_fn = "TEST.fits"
 mantipython.fit_entire_map(data_dictionary, [70,160],

@@ -10,7 +10,7 @@ from astropy.nddata.utils import Cutout2D
 from spectral_cube import SpectralCube
 import pvextractor
 
-import catalog_utils
+import catalog
 
 
 """
@@ -20,8 +20,8 @@ Created: March 24th, 2020 (in the midst of the quarantine)
 __author__ = "Ramsey Karim"
 
 
-fn = f"{catalog_utils.ancillary_data_path}sofia/rcw49-cii.fits"
-fn = f"{catalog_utils.ancillary_data_path}apex/apexCO/RCW49_12CO.fits"
+fn = f"{catalog.utils.ancillary_data_path}apex/apexCO/RCW49_12CO.fits"
+fn = f"{catalog.utils.ancillary_data_path}sofia/rcw49-cii.fits"
 
 with fits.open(fn) as hdul:
     h = hdul[0].header
@@ -29,12 +29,13 @@ with fits.open(fn) as hdul:
     wflat = WCS(h, naxis=2)
     data = hdul[0].data * u.K / (u.m / u.s)
 cube = SpectralCube(data=data, wcs=w)
-subcube = cube.spectral_slab(-20*u.km/u.s, +20*u.km/u.s)
+subcube = cube.spectral_slab(-30*u.km/u.s, +30*u.km/u.s)
 del data
 mom0 = subcube.moment(order=0)
 
 wr20b = SkyCoord(156.07666638433972*u.deg, -57.80826909707589*u.deg)
 wr20b_bubble = SkyCoord("10:24:18.7061 -57:48:14.937", unit=(u.hourangle, u.deg), frame=FK5)
+wr20a = SkyCoord("10:23:58.0545 -57:45:48.862", unit=(u.hourangle, u.deg), frame=FK5) # approx from ds9, not SIMBAD or anything
 wr20b_bubble_radius = 1.35967*u.deg
 
 # coords = SkyCoord([p0, p1], unit=(u.hourangle, u.deg))
@@ -79,12 +80,12 @@ def cosine_pv(displacement_along_path, radius, expansion_velocity,
     return x_array, y_array * expansion_velocity + base_velocity
 
 
-def rotate_around(center):
+def rotate_around(center, length=5, width=0.1):
     angle = 0.
     count = 0
-    plt.figure(figsize=(6, 4.5))
-    while angle < 360.:
-        p = pvextractor.PathFromCenter(center=center, length=5*u.arcmin, angle=angle*u.deg, width=2*u.arcsec)
+    plt.figure(figsize=(12, 9))
+    while angle < 180.:
+        p = pvextractor.PathFromCenter(center=center, length=length*u.arcmin, angle=angle*u.deg, width=width*u.arcmin)
 
         sl = pvextractor.extract_pv_slice(subcube, p)
         ax2 = plt.subplot(122, projection=WCS(sl.header))
@@ -92,16 +93,17 @@ def rotate_around(center):
         # ax.set_aspect(.1)
         ax1 = plt.subplot(121, projection=wflat)
         plt.imshow(mom0.to_value(), origin='lower', cmap='plasma')
+        plt.colorbar()
         # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
         c0, c1 = p._coords[0], p._coords[1]
         ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
             *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))),
             color='green', transform=ax1.get_transform('world'), length_includes_head=True,
-            width=0.003,
+            width=linewidth_from_data_units((width*u.arcmin).to(u.deg).to_value(), ax1, reference='y'),
         )
         sys.stdout.write(f"\r{count:04d}")
         sys.stdout.flush()
-        plt.savefig(f"./figures/pv_anim/wr20b_incoming/im{count:04d}.png")
+        plt.savefig(f"./figures/pv_anim/rcw49_rot/im{count:04d}.png")
         plt.clf()
         count += 1
         angle += 10.
@@ -247,4 +249,120 @@ def along_pillar_12CO():
 
     plt.show()
 
-along_pillar_12CO()
+
+def vertical_cut_thru_entire_structure(pct):
+    # Pct is the percentage of the full path that this cut will be at
+    # Start here (center of horizontal/constant-Dec line)
+    top_position = SkyCoord("10:24:09.7327 -57:39:14.350", unit=(u.hourangle, u.deg), frame=FK5)
+    # End here (center of horizontal line)
+    bottom_position = SkyCoord("10:24:09.7327 -57:55:05.338", unit=(u.hourangle, u.deg), frame=FK5)
+
+    stepwidth = 0.25*u.arcmin
+    start_dec = top_position.dec
+    # Moving down (south) in declination
+    end_dec = bottom_position.dec
+    stop_dec = start_dec + (end_dec - start_dec)*pct/100.
+    current_position = top_position
+    angle = 270.
+    count = 0
+    plt.figure(figsize=(12, 9))
+    while current_position.dec > stop_dec:
+        count += 1
+        current_position = SkyCoord(current_position.ra, current_position.dec - stepwidth)
+
+    p = pvextractor.PathFromCenter(center=current_position, length=14*u.arcmin, angle=angle*u.deg, width=10*u.arcmin)
+    sl = pvextractor.extract_pv_slice(subcube, p)
+    ax2 = plt.subplot(122, projection=WCS(sl.header))
+    plt.imshow(sl.data, origin='lower')
+    # ax.set_aspect(.1)
+    ax1 = plt.subplot(121, projection=wflat)
+    plt.imshow(mom0.to_value(), origin='lower', cmap='plasma')
+    # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
+    c0, c1 = p._coords[0], p._coords[1]
+    ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
+        *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))),
+        color='green', transform=ax1.get_transform('world'), length_includes_head=True,
+        width=linewidth_from_data_units((0.25*u.arcmin).to(u.deg).to_value(), ax1, reference='y'),
+    )
+    plt.show()
+
+
+
+
+def vertical_series_thru_entire_structure():
+    # Start here (center of horizontal/constant-Dec line)
+    top_position = SkyCoord("10:24:09.7327 -57:39:14.350", unit=(u.hourangle, u.deg), frame=FK5)
+    # End here (center of horizontal line)
+    bottom_position = SkyCoord("10:24:09.7327 -57:55:05.338", unit=(u.hourangle, u.deg), frame=FK5)
+
+    stepwidth = 0.25*u.arcmin
+    start_dec = top_position.dec
+    # Moving down (south) in declination
+    end_dec = bottom_position.dec
+    current_position = top_position
+    angle = 270.
+    count = 0
+    plt.figure(figsize=(12, 9))
+    while current_position.dec > end_dec:
+        p = pvextractor.PathFromCenter(center=current_position, length=14*u.arcmin, angle=angle*u.deg, width=0.5*u.arcmin)
+        sl = pvextractor.extract_pv_slice(subcube, p)
+        ax2 = plt.subplot(122, projection=WCS(sl.header))
+        plt.imshow(sl.data, origin='lower')
+        # ax.set_aspect(.1)
+        ax1 = plt.subplot(121, projection=wflat)
+        plt.imshow(mom0.to_value(), origin='lower', cmap='plasma')
+        # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
+        c0, c1 = p._coords[0], p._coords[1]
+        ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
+            *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))),
+            color='green', transform=ax1.get_transform('world'), length_includes_head=True,
+            width=linewidth_from_data_units((0.25*u.arcmin).to(u.deg).to_value(), ax1, reference='y'),
+        )
+        sys.stdout.write(f"\r{count:04d}")
+        sys.stdout.flush()
+        plt.savefig(f"./figures/pv_anim/rcw49_vert/im_cii_{count:04d}.png")
+        plt.clf()
+        count += 1
+        current_position = SkyCoord(current_position.ra, current_position.dec - stepwidth)
+    print()
+
+
+"""
+Some code I stole directly from StackOverflow
+"""
+
+def linewidth_from_data_units(linewidth, axis, reference='y'):
+    """
+    (SO user Felix, https://stackoverflow.com/a/35501485)
+    Convert a linewidth in data units to linewidth in points.
+
+    Parameters
+    ----------
+    linewidth: float
+        Linewidth in data units of the respective reference-axis
+    axis: matplotlib axis
+        The axis which is used to extract the relevant transformation
+        data (data limits and size must not change afterwards)
+    reference: string
+        The axis that is taken as a reference for the data width.
+        Possible values: 'x' and 'y'. Defaults to 'y'.
+
+    Returns
+    -------
+    linewidth: float
+        Linewidth in points
+    """
+    fig = axis.get_figure()
+    if reference == 'x':
+        length = fig.bbox_inches.width * axis.get_position().width
+        value_range = np.diff(axis.get_xlim())
+    elif reference == 'y':
+        length = fig.bbox_inches.height * axis.get_position().height
+        value_range = np.diff(axis.get_ylim())
+    # Convert length to points
+    length *= 72
+    # Scale linewidth to value range
+    return linewidth * (length / value_range)
+
+
+rotate_around(wr20a, length=16, width=0.5)

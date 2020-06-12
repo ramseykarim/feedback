@@ -1,11 +1,14 @@
+import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.cm as cmx
 import pickle
+
 from astropy.io import fits
 
-from mantipython.v3.physics import greybody, dust, instrument
+from mantipython.physics import greybody, dust, instrument
 
 """
 Generating a grid of measurements for a fixed optical depth.
@@ -13,12 +16,28 @@ Grid varies by beta and temperature
 Purpose is to look at a color/color diagram
 """
 
-filename = "/home/rkarim/Research/Filaments/tb_grid_tau.pkl"
-filename = "/home/rkarim/Research/Filaments/tb_grid_kappa1Av.pkl"
-# filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.001.pkl"
-# filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.01.pkl"
-# filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.1.pkl"
-filename = "/home/rkarim/Research/Filaments/tb_grid_t160-0.3.pkl"
+fila_dir = "/home/ramsey/Documents/Research/Filaments/"
+if not os.path.isdir(fila_dir):
+    fila_dir = "/home/rkarim/Research/Filaments/"
+
+readme = """## README ##
+This is a 3D grid of tau(160micron), T [K], beta
+## END ##
+"""
+print(readme)
+
+
+
+filename = "tb_grid_tau.pkl"
+filename = "tb_grid_kappa1Av.pkl"
+# filename = "tb_grid_t160-0.001.pkl"
+# filename = "tb_grid_t160-0.01.pkl"
+# filename = "tb_grid_t160-0.1.pkl"
+# filename = "tb_grid_t160-0.3.pkl"
+filename = "tb_grid_3D.pkl"
+
+filename = fila_dir + filename
+
 WINDOW_TITLE = filename.split('t160-')[-1]
 
 datasets = {
@@ -33,28 +52,42 @@ def make_grid():
 
     # set up parameter grid
 
+    # Tau160 in logarithmic steps of 0.5%
+    tau_range = np.exp(np.arange(np.log(0.002), np.log(0.4), np.log(1.005)))
     # Temperature from 5 to 150 in geometric steps of 3%
-    T_range = np.exp(np.arange(np.log(5), np.log(150), np.log(1.02)))
+    T_range = np.arange(5, 60, 0.05)
     # Beta in arithmetic steps of 0.1
-    b_range = np.arange(1., 2.51, 0.05)
+    b_range = np.arange(1.2, 2.4, 0.05)
+    """
+    a 28 million element grid will take
+    """
+    print("Grid shape: (tau, T, beta)", tau_range.shape, T_range.shape, b_range.shape)
 
+    #### If setting tau160 to a single value (2D grid)
     # N1Av = np.log10(1.1) + 21
     # kappa2 = dust.Dust(beta=2.0, k0=0.05625, nu0=750*1e9)
     # tau160 = np.log10(kappa2(dust.nu0_160)*(10**N1Av))
     # print("Tau160: {:.3E}".format(10**tau160))
     # print("Tau350: {:.3E}".format(kappa2(dust.cst.c/(350*1e-6))*(10**N1Av)))
-    tau160 = np.log10(0.3)
-    print(f"Tau160 = {tau160:.3f}")
+    # tau160 = np.log10(0.3)
+    # print(f"Tau160 = {tau160:.3f}")
 
-    TT, bb = np.meshgrid(T_range, b_range, indexing='xy')
+    tt, TT, bb = np.meshgrid(tau_range, T_range, b_range, indexing='xy')
     result = {d.name: np.full(TT.shape, np.nan).ravel() for d in herschel}
 
-    for i, T, b in zip(range(TT.size), TT.flat, bb.flat):
+    total_i = TT.size
+
+    for i, t160, T, b in zip(range(TT.size), tt.flat, TT.flat, bb.flat):
         for d in herschel:
             # result[d.name][i] = d.detect(greybody.Greybody(T, N1Av, dust.Dust(beta=b, k0=0.05625, nu0=750*1e9)))
-            result[d.name][i] = d.detect(greybody.Greybody(T, tau160, dust.TauOpacity(b)))
+            result[d.name][i] = d.detect(greybody.Greybody(T, t160, dust.TauOpacity(b)))
+            if (i % 5000 == 0):
+                sys.stdout.write(f"{float(i+1)*100/float(total_i):6.2f}\r")
+                sys.stdout.flush()
+    print()
     for d in herschel:
         result[d.name] = result[d.name].reshape(TT.shape)
+    result['tau160'] = tt
     result['T'] = TT
     result['beta'] = bb
     print("grid shape:", TT.shape)
@@ -156,7 +189,7 @@ def color_color(dataset_name=None, force160250=0, SNR_MINIMUM=10, additional_mas
     cbar = plt.gcf().colorbar(scalarMap)
     cbar.set_label("beta")
 
-    
+
 
     plt.gcf().canvas.set_window_title(WINDOW_TITLE)
     if dataset_name is not None:
@@ -169,15 +202,15 @@ def color_color(dataset_name=None, force160250=0, SNR_MINIMUM=10, additional_mas
 
     # print(f"plt.xlim({plt.xlim()}), plt.ylim({plt.ylim()})")
     plt.xlim((0.1561884485339575, 4.895977203736461)), plt.ylim((-0.3239731111304286, 7.395308040999753))
-    
+
     plt.show()
 
 
 
 if __name__ == "__main__":
-    # make_grid()
+    make_grid()
     # def additional_mask(imgs):
     #     s500 = imgs['SPIRE500um']
     #     return s500 > 20
     # color_color("Perseus", SNR_MINIMUM=0, additional_mask=additional_mask, extra_title=", 500um > 20")
-    color_color("Perseus", SNR_MINIMUM=10)
+    # color_color("Perseus", SNR_MINIMUM=10)
