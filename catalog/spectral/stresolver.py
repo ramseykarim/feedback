@@ -25,6 +25,10 @@ from . import powr
 from . import parse_sptype
 from . import vacca
 
+# Globally set the quantile number we will use in this module.
+# 6 gives 17th and 83th percentiles, which is close to the +/- 34% of
+#  standard 1 sigma error on a normal distribution
+n_quantile = 6
 
 class STResolver:
     """
@@ -489,6 +493,12 @@ class STResolver:
                     # If there are any remaining negatives, set them to the base value
                     param_samples[param_samples <= 0] = p
                 samples_list.append(list(param_samples))
+        # Modify the mass loss rates by the filling factor
+        # This should really drive the mass loss rate uncertainty
+        nominal_D = base_parameters[4]
+        mdot_list, D_list = samples_list[2], samples_list[4]
+        modified_mdot_list = [mdot * np.sqrt(nominal_D / D) for mdot, D in zip(mdot_list, D_list)]
+        samples_list[2] = modified_mdot_list
         # Reshape to be nsamples-len list of tuples of the ~5 parameters
         samples_list = list(zip(*samples_list))
         # Memoize
@@ -725,54 +735,17 @@ class STResolver:
                 zero = 0. * value_unit
                 return zero, (zero, zero)
             else:
-                # Calculate median, lo, hi, and return those
+                # Calculate median and uncertainty and return those
                 final_value = np.median(samples_array)
-                lo, hi = misc_utils.flquantiles(samples_array, 4)
+                # Use first/last quantiles to mock up lower/upper bounds
+                lower, upper = misc_utils.flquantiles(samples_array, n_quantile)
+                # Correct for missing binary component
+                # THIS IS NOT DONE IN CatalogResolver; probably doesn't matter
                 if not dont_add and (len(value_dictionary) == 2) and one_star_with_values:
-                    hi += final_value
-                return final_value, (lo, hi)
-
-
-        """
-        TODO: LEFT OFF HERE.
-        June 15, 2020:
-        I edited this function a little bit to allow it to return the samples
-        array. I need to implement the CatalogResolver class below to use this
-        behavior to sample across the entire cluster.
-
-        I should also look into sampling more uncertainty in spectral types:
-            for each possibility, go a half step up and down and add those to
-            possibilities. re-add the original possibility as weight towards
-            the center. (3 -> 2 3 3 4)
-            For WR: hardcode uncertainty in input parameters, sample from
-            normal distributions. For FUV flux, sample from T and Rtrans and
-            get a number of different models? Need to think more on this
-
-        Earlier:
-        I need to continue reviewing this to make sure it looks legal.
-        I have tested it, and it looks like it works.
-
-        Couple things to consider:
-        1) should I return final, (lo, hi) or final, (d_lo, d_hi) ?
-        2) this doesn't take into account uncertainty in the characteristics
-            themselves. Could I have dicts like self.mdot_err and use those
-            to not just sample from the component possibilities (in case there's
-            just one), but also the (Gaussian) uncertainty distribution of each
-            characteristic?
-            Where do I even find errors for the Martins/Leitherer stuff?
-            Something with curve fitting? Assert 5 or 10%?
-            This would help with WR characteristics which (should) have errors
-            in Rauw 2005
-                On this topic, mdot from Rauw doesn't have error, but they
-                discuss scaling with sqrt(f), so I could invent my own.
-            Also, geometric mean with mdot? Very logarithmic
-
-        Also, I should use a quantile-like function to see what the 1-std error
-        on an asymmetrical distribution is. Like, find the fractional coverage
-        (34%?) of one standard deviation (on one side of the median) and then
-        apply that to the distribution found here, on each side separately so
-        I capture asymmetry
-        """
+                    upper += final_value
+                # Convert to error bars (lower bar is negative)
+                lo_err, hi_err = lower - final_value, upper - final_value
+                return final_value, (lo_err, hi_err)
 
     """
     Stuff for printing
@@ -852,6 +825,27 @@ class CatalogResolver:
             s.populate_all()
 
     def __getattr__(self, name):
+        """
+        Overloading __getattr__ to try to find a property.
+        Relies on STResolver to check if it's a valid property.
+        Methods prefixed with "get_" will get a single value and uncertainty
+            combined+sampled from values across the entire cluster.
+        Methods prefixed with "get_array_" will get the values and uncertainties
+            for each cluster member and will not combine them.
+
+        Note about this and STResolver's __getattr__:
+            In STResolver, the "get_array_" prefix means "return an array of
+            samples for this star". Using the "get_" prefix in CatalogResolver
+            causes calls to the "get_array_" methods in STResolver, since we
+            need to sample across all stars to get the single cluster value and
+            uncertainty.
+            In STResolver, the "get_" prefix means "return the value and
+            uncertainty directly, already calculated from samples".
+            Using the "get_array_" prefix in CatalogResolver causes calls to the
+            "get_" methods in STResolver, since we do not need to sample across
+            the cluster. We can let STResolver do the work it already knows
+            how to do.
+        """
         try:
             # See if the method exists
             getattr(self.star_list[0], name)(nsamples=1)
@@ -859,27 +853,48 @@ class CatalogResolver:
             attrib_e = AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
             # Use the "from" statement to assign blame (cause)
             raise attrib_e from e
-        # Make a property getter function to return
+        # Check what kind of call this is
+        if "array" in name:
+            # We want a list of individual star values and uncertainties
+            call_to_star = name.replace('get_array_', 'get_')
+            reduce_cluster = False
+        else:
+            # We want a single value and uncertainty combined across cluster
+            call_to_star = name.replace('get_', 'get_array_')
+            reduce_cluster = True
+        # Make a property getter function to be called upon return
         def property_getter_method(**kwargs):
             # kwargs can have "nsamples" argument
             # Prepare to collect quantity arrays
-            all_star_samples = []
+            all_star_results = []
             for s in self.star_list:
                 # Pass off the bulk of the work to STResolver, using
                 # the "get_array_" prefix to signal returning sample arrays
-                samples_array = getattr(s, name.replace('get_', 'get_array_'))(**kwargs)
-                if samples_array is not None:
-                    all_star_samples.append(samples_array)
-            # Make 2D Quantity
-            all_star_samples = u.Quantity(all_star_samples)
-            # Don't add if velocity; average instead
-            reduce_func = np.mean if ('velocity' in name) else np.sum
-            # Reduce all star stamples into full cluster samples
-            cluster_samples = reduce_func(all_star_samples, axis=0)
-            # Return median of cluster samples
-            print('remove this')
-            return cluster_samples
-            return np.median(cluster_samples)
+                # or the "get_" prefix to return values & uncertainties
+                star_result = getattr(s, call_to_star)(**kwargs)
+                # In the case that we're reducing the cluster AND there aren't
+                # samples, DON'T add the results to the list
+                # The "not" of this entire phrase is the following 'or':
+                if (star_result is not None) or (not reduce_cluster):
+                    all_star_results.append(star_result)
+            if reduce_cluster:
+                # We are reducing the cluster to one value & uncertainty
+                # Make 2D Quantity
+                all_star_results = u.Quantity(all_star_results)
+                # Don't add if velocity; average instead
+                reduce_func = np.mean if ('velocity' in name) else np.sum
+                # Reduce all star stamples into full cluster samples
+                cluster_samples = reduce_func(all_star_results, axis=0)
+                # Get the median value
+                value = np.median(cluster_samples)
+                # Get upper and lower bounds, convert to uncertainties
+                lower, upper = misc_utils.flquantiles(cluster_samples, n_quantile)
+                lo_err, hi_err = lower - value, upper - value # lower bound < 0
+                # Return median, (lower_bound, upper_bound) of cluster samples
+                return value, (lo_err, hi_err)
+            else:
+                # We are returning the results as is
+                return all_star_results
         return property_getter_method
 
     def __str__(self):

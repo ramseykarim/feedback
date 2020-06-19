@@ -60,45 +60,17 @@ def main():
     return
 
 
-def convert_ST_to_properties(catalog_df):
-    """
-    Applies catalog_spectral.STResolver to the catalog created in catalog_read
-    :param df: the final catalog from catalog_read
-    """
-    # Make STResolver objects
-    catalog_df['ST_obj'] = catalog_df['Spectral'].apply(catalog.spectral.stresolver.STResolver)
+def convert_catalog_to_CatalogResolver(catalog_df):
     # Make the PoWR objects
     powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNE', 'WNL')}
     # Make the Martins tables object
     cal_tables = catalog.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
     # Make Leitherer tables object
     ltables = catalog.spectral.leitherer.LeithererTable()
-    def link_everything(s):
-        s.link_calibration_table(cal_tables)
-        s.link_leitherer_table(ltables)
-        s.link_powr_grids(powr_tables)
-    catalog_df['ST_obj'].apply(link_everything)
-    # Use a helper function to do this quickly
-    def apply_and_unpack(fn_to_apply_to_STobj, name_of_property):
-        """
-        Helper function to unpack values and uncertainties
-        Modifies catalog_df in place
-        """
-        tmp = catalog_df['ST_obj'].apply(fn_to_apply_to_STobj)
-        catalog_df[name_of_property+'_med'] = tmp.apply(lambda x: x[0])
-        catalog_df[name_of_property+'_lo'] = tmp.apply(lambda x: x[1][0])
-        catalog_df[name_of_property+'_hi'] = tmp.apply(lambda x: x[1][1])
-    # Get FUV flux
-    apply_and_unpack(lambda s: s.get_FUV_flux(), 'FUV')
-    # Get stellar wind mass loss rate
-    apply_and_unpack(lambda s: s.get_mass_loss_rate(), 'Mdot')
-    # Get stellar wind terminal velocity
-    apply_and_unpack(lambda s: s.get_terminal_wind_velocity(), 'vinf')
-    # Get momentum flux
-    apply_and_unpack(lambda s: s.get_momentum_flux(), 'mv_flux')
-    # Get mechanical luminosity
-    apply_and_unpack(lambda s: s.get_mechanical_luminosity(), 'L_mech')
-    return catalog_df
+    # Create CatalogResolver instance
+    catr = catalog.spectral.stresolver.CatalogResolver(catalog_df['Spectral'].values,
+        calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
+    return catr
 
 
 def filter_by_within_range(catalog_df, radius_arcmin=6.):
@@ -129,13 +101,30 @@ def filter_by_only_WR(catalog_df):
     return catalog_df
 
 
-def calc_g0(catalog_df, wcs_obj, distance_los):
+def calc_g0(catr, wcs_obj, distance_los):
     """
+    ########################################################
+    ########################################################
+    ########################################################
+    ########################################################
+                I left off editing this!!!!!!!
+        I should go back, check my work on CatalogResolver,
+        update the "finished this" dates eventually (git push)
+
+        On this function, I need to figure out how to do the
+        uncertainty. Though not a priority; can just do what
+        was doing before since the values are more time
+        sensitive than the uncertainties.
+        go go go go go!
+    ########################################################
+    ########################################################
+    ########################################################
+    ########################################################
     Create an array of G0 in Habing units (average 1-D IRF) given the catalog
         with FUV fluxes and a WCS object for the array
-    Also returns lower, upper limits
-    :param catalog_df: needs to have "FUV_med", "FUV_lo", "FUV_hi",
-        and "SkyCoord" columns
+    Also returns uncertainty (lower_bar, upper_bar)
+    :param catalog_df: needs to have "SkyCoord" column
+    :param catr: CatalogResolver object
     :param wcs_obj: a WCS object that describes a region around these stars
     :param distance_los: a Quantity or float distance. If float, assumed to
         be in parsecs

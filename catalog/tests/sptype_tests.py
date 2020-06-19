@@ -24,7 +24,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_STResolver_WR()
+    return test_STResolver()
 
 
 def plot_sptype_calibration_stuff():
@@ -295,6 +295,9 @@ def test_STResolver_WR():
     print(st)
     print("Rtrans: ", np.log10(spectral.powr.PoWRGrid.calculate_Rt(*st[5:])))
     s.populate_all()
+    # for pm in s.powr_models['WN6ha']:
+    #     print(pm)
+    print(s.get_mass_loss_rate())
 
 
 
@@ -320,7 +323,12 @@ def test_STResolver():
         calibration_table=cal_tables, leitherer_table=ltables,
         powr_dict=powr_grids)
     print(catr)
-    mdot = catr.get_FUV_flux(nsamples=10)
+    mdot, mdot_e = catr.get_mass_loss_rate(nsamples=10)
+    print(mdot)
+    print(mdot_e)
+    fluxes = catr.get_array_FUV_flux()
+    for f in fluxes:
+        print(f)
 
     # count = 0
     # for t in tests:

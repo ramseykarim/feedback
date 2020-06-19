@@ -176,7 +176,7 @@ class PoWRGrid:
                 Teff = np.log10(Teff)
             if Rt > 1.7:
                 # logRt and Rt overlap between 1.2 and 1.7. Assume log.
-                Rt = np.log10(Teff)
+                Rt = np.log10(Rt)
             Teff = trim_logTeff(Teff)
             Rt = trim_logRt(Rt)
             return Teff, Rt
