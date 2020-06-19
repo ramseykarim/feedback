@@ -73,6 +73,12 @@ class PoWRGrid:
         self.paramx_name, self.paramy_name = None, None
         self.get_params()
 
+    def __str__(self):
+        return f"<PoWR.{self.grid_name}>"
+
+    def __repr__(self):
+        return f"<PoWR.{self.grid_name}grid({len(self.grid_info)} models)>"
+
     def get_model_info(self, *args):
         """
         What does this function do? See below: (April 29, 2020)
@@ -104,14 +110,14 @@ class PoWRGrid:
         else:
             model = args[0]
         suffix = '-i' if self.grid_name == 'OB' else ''
-        # getattr(obj, "attr", default) returns obj.attr if possible, or default
+        # command getattr(obj, "attr", default) returns obj.attr if possible, or default
         model_id = getattr(model, "MODEL", None)
         # "default" gets evaluated so I cannot put model['MODEL'] there.
         if model_id is None:
-            return model["MODEL"]
+            model_id = model["MODEL"]
         return f'{powr_directory}{self.grid_name}/{self.grid_name.lower()}{suffix}_{model_id}_sed.txt'
 
-    def get_model(self, *args):
+    def get_model_spectrum(self, *args):
         """
         Passes args to self.get_model_filename, which either passes them to
         self.get_model_info (which passes to self.parse_query_params) or
@@ -147,7 +153,10 @@ class PoWRGrid:
             # input is Teff, log_g
             Teff, log_g = args
             # Give Teff in K, log_g in dex
-            return trim_Teff(Teff), trim_logg(log_g)
+            try:
+                return trim_Teff(Teff), trim_logg(log_g)
+            except:
+                raise RuntimeError(Teff.ndim, log_g.ndim, Teff)
         else:
             # if input is 2 elements, Teff and Rt
             # input is Teff, Rstar, Mdot (LINEAR not log)

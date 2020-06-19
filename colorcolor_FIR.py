@@ -59,7 +59,8 @@ def make_grid():
     # Beta in arithmetic steps of 0.1
     b_range = np.arange(1.2, 2.4, 0.05)
     """
-    a 28 million element grid will take
+    a 28 million element grid will take ~1.5-3 hours on one core
+    I looked into this on June 12, 2020
     """
     print("Grid shape: (tau, T, beta)", tau_range.shape, T_range.shape, b_range.shape)
 

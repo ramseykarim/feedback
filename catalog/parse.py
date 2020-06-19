@@ -22,11 +22,10 @@ from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5, ICRS
 
-import catalog_utils
-from misc_utils import flquantiles
+from . import utils
 
 
-catalog_directory = catalog_utils.ancillary_data_path + "catalogs/"
+catalog_directory = utils.ancillary_data_path + "catalogs/"
 
 def convert_hhmmss(hhmmss_hhmmss):
     """
