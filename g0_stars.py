@@ -30,15 +30,24 @@ Finish preparing the catalog with physical properties
 This step uses catalog_spectral.py functions
 """
 def main():
+    # Seed random number generators
+    catalog.spectral.stresolver.random.seed(1312)
+    np.random.seed(1312)
+
     catalog_df = catalog.parse.load_final_catalog_df()
-    catalog_df = convert_ST_to_properties(catalog_df)
 
     # catalog_df = filter_by_within_range(catalog_df)
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=3.)
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=6.)
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=12.)
+    catr = convert_catalog_to_CatalogResolver(catalog_df)
 
+    cii_mom0, cii_w = catalog.utils.load_cii(2)
 
+    # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False)
+
+    return
     catalog.utils.save_df_html(catalog_df)
 
     # Option here to copy the improved make_wcs and make_wcs_like functions from mosaic_vlt.py
@@ -48,8 +57,6 @@ def main():
     # print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin']]))
     # print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin']]))
 
-    cii_mom0, cii_w = catalog.utils.load_cii(2)
-    # calc_and_plot_g0(catalog_df, cii_mom0, cii_w)
     # calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
 
     ## Experiment to see what WR stars mass loss looks like (May 22, 2020)
@@ -61,6 +68,12 @@ def main():
 
 
 def convert_catalog_to_CatalogResolver(catalog_df):
+    """
+    Generate a CatalogResolver object from a catalog DataFrame
+    :param catalog_df: pandas DataFrame with 'Spectral' column whose values
+        are individually readable by STResolver
+    :returns: CatalogResolver
+    """
     # Make the PoWR objects
     powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNE', 'WNL')}
     # Make the Martins tables object
@@ -101,26 +114,9 @@ def filter_by_only_WR(catalog_df):
     return catalog_df
 
 
-def calc_g0(catr, wcs_obj, distance_los):
+def calc_g0(catalog_df, catr, wcs_obj, distance_los, catalog_mask=None):
     """
-    ########################################################
-    ########################################################
-    ########################################################
-    ########################################################
-                I left off editing this!!!!!!!
-        I should go back, check my work on CatalogResolver,
-        update the "finished this" dates eventually (git push)
-
-        On this function, I need to figure out how to do the
-        uncertainty. Though not a priority; can just do what
-        was doing before since the values are more time
-        sensitive than the uncertainties.
-        go go go go go!
-    ########################################################
-    ########################################################
-    ########################################################
-    ########################################################
-    Create an array of G0 in Habing units (average 1-D IRF) given the catalog
+    Create an array of G0 in Habing units (average 1-D ISRF) given the catalog
         with FUV fluxes and a WCS object for the array
     Also returns uncertainty (lower_bar, upper_bar)
     :param catalog_df: needs to have "SkyCoord" column
@@ -128,10 +124,18 @@ def calc_g0(catr, wcs_obj, distance_los):
     :param wcs_obj: a WCS object that describes a region around these stars
     :param distance_los: a Quantity or float distance. If float, assumed to
         be in parsecs
+    :param catalog_mask: pandas Series or something that can get passed right
+        into catalog_df.loc[catalog_mask]
     :returns: val, lo, hi as arrays
     """
     # Habing unit
     radfield1d = 1.6e-3 * u.erg / (u.cm*u.cm * u.s)
+    # Mask the catalog_df and prepare a star_mask for the CatalogResolver
+    if catalog_mask is not None:
+        star_mask = list(catalog_mask.values)
+        catalog_df = catalog_df.loc[catalog_mask]
+    else:
+        star_mask = None
     # Make distance array function
     def inv_dist_f(coord):
         return 1./(4*np.pi * catalog.utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
@@ -143,79 +147,53 @@ def calc_g0(catr, wcs_obj, distance_los):
     """
     This could be a good place to look at the effects of distance uncertainties too
     """
-    # Make fuv function to do this quickly
-    def sum_fuv(fuv_flux_array):
+    # Make fuv function to send to CatalogResolver.map_and_reduce_cluster
+    def illumination_distance(fuv_flux_array):
         """
-        :param fuv_flux_array: some kind of Quantity in power units,
+        :param fuv_flux_array: Quantity array in power units,
             should be the same shape as the inv_dist.shape[0]
         """
-        fuv_flux_array = u.Quantity(list(fuv_flux_array.values))
-        return (np.sum(inv_dist * fuv_flux_array[:, np.newaxis, np.newaxis], axis=0) / radfield1d).decompose()
-    # Get the (median) radiation field value
-    fuv_med = sum_fuv(catalog_df['FUV_med'])
-    # Get the lower and upper limits based on FUV uncertainty
-    fuv_lo = sum_fuv(catalog_df['FUV_lo'])
-    fuv_hi = sum_fuv(catalog_df['FUV_hi'])
-    # Returns val, (lo, hi)
-    return fuv_med, fuv_lo, fuv_hi
+        return inv_dist * fuv_flux_array[:, np.newaxis, np.newaxis]
+    # Get the median radiation field value and uncertainty
+    val, uncertainty = catr.get_FUV_flux(map_function=illumination_distance, star_mask=star_mask)
+    lo, hi = uncertainty
+    # Fix the units: divide by 1D radiation field and decompose units
+    quick_fix_units = lambda x: (x / radfield1d).decompose()
+    val = quick_fix_units(val)
+    lo, hi = quick_fix_units(lo), quick_fix_units(hi)
+    # Returns val, (lo_bar, hi_bar)
+    return val, (lo, hi)
 
 
-def calc_mdot(catalog_df):
+def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False):
     """
-    Sum up the mass loss rates of all the objects
-    :returns: val, lo, hi
+    Calculate mass loss rate and kinetic energy and the 2 Myr mass and energy
+        totals.
+    :param catalog_df: needs to have "SkyCoord" column
+    :param catr: CatalogResolver object
+    :param cii_mom0: CII moment0 map, numpy array
+    :param cii_w: CII map WCS object
+    :param plotting: True if we want plots
     """
-    # Make mdot function to do this quickly
-    def sum_mdot(mdot_array):
-        return np.sum(u.Quantity(list(mdot_array.values)))
-    # Get the (median) value
-    mdot_med = sum_mdot(catalog_df['Mdot_med'])
-    # Get the lower and upper bounds
-    mdot_lo = sum_mdot(catalog_df['Mdot_lo'])
-    mdot_hi = sum_mdot(catalog_df['Mdot_hi'])
-    return mdot_med, mdot_lo, mdot_hi
-
-
-def calc_KE(catalog_df):
-    """
-    Sum up mechanical luminosity, calculated by multiplying 0.5 * mdot * vinf**2
-    :returns: val, lo, hi
-    """
-    # Make function to do this quickly
-    def sum_ke(suffix):
-        mdot = u.Quantity(list(catalog_df['Mdot'+suffix]))
-        vinf = u.Quantity(list(catalog_df['vinf'+suffix]))
-        ke_over_time = (mdot * vinf**2 / 2.)
-        return np.sum(ke_over_time).to(u.erg / u.s)
-    suffixes = ('_med', '_lo', '_hi')
-    ke_med, ke_lo, ke_hi = (sum_ke(s) for s in suffixes)
-    return ke_med, ke_lo, ke_hi
-
-
-def calc_and_plot_mdot(catalog_df, cii_mom0, cii_w, plotting=False):
-    mdot_med, mdot_lo, mdot_hi = calc_mdot(catalog_df.loc[catalog_df['is_within_3.0_arcmin']])
-    ke_med, ke_lo, ke_hi = calc_KE(catalog_df.loc[catalog_df['is_within_3.0_arcmin']])
-    dl, du = mdot_med - mdot_lo, mdot_hi - mdot_med
-    print(f"MDOT: {mdot_med:.1E}, [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
-    dl, du = ke_med - ke_lo, ke_hi - ke_med
-    print(f"MECH LUM: {ke_med:.1E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
+    star_mask = catalog_df['is_within_3.0_arcmin'].values
+    mdot_med, mdot_err = catr.get_mass_loss_rate(star_mask=star_mask)
+    ke_med, ke_err = catr.get_mechanical_luminosity(star_mask=star_mask)
+    print(f"MDOT: {mdot_med:.1E} [{mdot_err[0].to_value():+.2E}, {mdot_err[1].to_value():+.2E}]")
+    print(f"MECH LUM: {ke_med:.1E} [{ke_err[0].to_value():+.2E}, {ke_err[1].to_value():+.2E}]")
     age = 2.e6*u.year
-    dl, du = (mdot_med - mdot_lo)*age, (mdot_hi - mdot_med)*age
-    print(f"Mass ejected over {age:.1}: {mdot_med*age:.2f} [-{dl.to_value():.2f}, +{du.to_value():.2f}]")
-    dl, du = ((ke_med - ke_lo)*age).to(u.erg), ((ke_hi - ke_med)*age).to(u.erg)
-    print(f"Thermal energy over {age:.1}: {(ke_med*age).to(u.erg):.2E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
-    print(f"{(ke_lo*age).to(u.erg):.2E}, {(ke_hi*age).to(u.erg):.2E}")
-
+    print(f"Mass ejected over {age:.1}: {mdot_med*age:.2f} [{(mdot_err[0]*age).to_value():+.2f}, {(mdot_err[1]*age).to_value():+.2f}]")
+    print(f"Thermal energy over {age:.1}: {(ke_med*age).to(u.erg):.2E} [{(ke_err[0]*age).to(u.erg).to_value():+.2E}, {(ke_err[1]*age).to(u.erg).to_value():+.2E}]")
     if plotting:
         plt.figure(figsize=(11, 8))
         plt.subplot(111, projection=cii_w)
-        plt.title(f"[CII] Moment 0 (-8 to -4 km/s); Mdot = {mdot_med:.1E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
+        plt.title(f"[CII] Moment 0 (-8 to -4 km/s); Mdot = {mdot_med:.1E} [{mdot_err[0].to_value():+.2E}, {mdot_err[1].to_value():+.2E}]")
         plt.imshow(cii_mom0, origin='lower')
-        catalog_utils.plot_coordinates(None, SkyCoord(catalog_df.loc[catalog_df['is_within_3.0_arcmin'], 'SkyCoord'].values), setup=False, show=False)
-        plt.savefig("figures/mdot_may29-2020.png")
+        catalog.utils.plot_coordinates(None, SkyCoord(catalog_df.loc[catalog_df['is_within_3.0_arcmin'], 'SkyCoord'].values), setup=False, show=False)
+        plt.savefig(f"{catalog.utils.figures_path}mdot_june19-2020.png")
 
 
 def calc_and_plot_and_save_WR_wind_power(catalog_df, wcs_obj, distance_los, plotting=False, saving=False, radius_arcmin=12.0):
+    raise NotImplementedError
     """
     This is a very hardcoded function serving a very specific purpose
     I want to see what the wind power from only the WR stars looks like across
@@ -244,8 +222,9 @@ def calc_and_plot_and_save_WR_wind_power(catalog_df, wcs_obj, distance_los, plot
 
 
 
-def calc_and_plot_g0(catalog_df, cii_mom0, cii_w):
-    fuv_med, fuv_lo, fuv_hi = calc_g0(catalog_df.loc[catalog_df['is_within_6.0_arcmin']], cii_w, rcw_dist)
+def calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w):
+    fuv_med, fuv_error = calc_g0(catalog_df, catr, cii_w, rcw_dist, catalog_mask=catalog_df['is_within_6.0_arcmin'])
+    fuv_lo, fuv_hi = fuv_error
     coords = SkyCoord(catalog_df.loc[catalog_df['is_within_6.0_arcmin'], 'SkyCoord'].values)
 
     plt.figure(figsize=(13, 15))
@@ -255,39 +234,39 @@ def calc_and_plot_g0(catalog_df, cii_mom0, cii_w):
     plt.title(f"[CII] Moment 0 map (-8 to -4 km/s)")
     plt.imshow(cii_mom0, origin='lower')
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
 
     # Median value
     plt.subplot(222, projection=cii_w)
     plt.title("log(G0) in Habing units (median)")
     plt.imshow(np.log10(fuv_med.value), origin='lower', vmin=2.8, vmax=4.7)
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
 
     # Low value
-    dl = (fuv_med - fuv_lo).value
     plt.subplot(223, projection=cii_w)
     plt.title("log(G0) in Habing units (lower uncertainty)")
-    plt.imshow(np.log10(dl), origin='lower', vmin=1.8, vmax=3.7)
+    plt.imshow(np.log10((-fuv_lo).value), origin='lower', vmin=1.8, vmax=3.7)
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
 
     # High value
-    du = (fuv_hi - fuv_med).value
     plt.subplot(224, projection=cii_w)
     plt.title("log(G0) in Habing units (upper uncertainty)")
-    plt.imshow(np.log10(du), origin='lower', vmin=1.8, vmax=3.7)
+    plt.imshow(np.log10(fuv_hi.value), origin='lower', vmin=1.8, vmax=3.7)
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
     # plt.show()
     plt.tight_layout()
-    plt.savefig("figures/g0_may7-2020.png")
+    plt.savefig(f"{catalog.utils.figures_path}g0_june19-2020.png")
 
 
-def prepare_and_save_catalog(catalog_df):
+def prepare_and_save_catalog(catalog_df, catr):
+    raise NotImplementedError
     """
     Operates on a copy of the catalog, making python objects into more general
         values (SkyCoords to RA,Dec, Quantities to floats)
+    Takes the CatalogResolver object and populates some useful columns
     """
     catalog_df = catalog_df.copy()
     columns_to_keep = []

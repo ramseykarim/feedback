@@ -28,7 +28,7 @@ from . import vacca
 # Globally set the quantile number we will use in this module.
 # 6 gives 17th and 83th percentiles, which is close to the +/- 34% of
 #  standard 1 sigma error on a normal distribution
-n_quantile = 6
+N_QUANTILE = 6
 
 class STResolver:
     """
@@ -447,7 +447,7 @@ class STResolver:
     """
 
     @staticmethod
-    def sample_WR(st_tuple, nsamples=100):
+    def sample_WR(st_tuple, nsamples=150):
         """
         Get a list of samples of parameters for a given WR spectral type.
         This function handles some memoization since these samples
@@ -465,7 +465,13 @@ class STResolver:
         """
         # First, check if we already have it and return it if so
         if st_tuple[:2] in STResolver.wr_samples:
+            # We have it memoized
             return STResolver.wr_samples[st_tuple[:2]]
+        # Check if we have any info on this spectral type at all
+        elif st_tuple[:2] not in STResolver.wr_params:
+            # We don't have it; return list of single empty tuple
+            # This will play nicely with everything else
+            return [()]
         # If not, calculate it
         base_parameters = STResolver.wr_params[st_tuple[:2]]
         uncertainties = STResolver.wr_uncertainties[st_tuple[:2]]
@@ -534,9 +540,15 @@ class STResolver:
             for WR stars. 9 elements total.
         :returns: tuple(paramx, paramy), with float params
         """
-        paramx = st_tuple[4]
-        paramy = powr.PoWRGrid.calculate_Rt(*st_tuple[5:])
-        return paramx, paramy
+        # Check if this WR tuple has parameters
+        if len(st_tuple) > 4:
+            # Calculate and return the parameters
+            paramx = st_tuple[4]
+            paramy = powr.PoWRGrid.calculate_Rt(*st_tuple[5:])
+            return paramx, paramy
+        else:
+            # No parameters; we must not have values for this type
+            return np.nan, np.nan
 
     @staticmethod
     def get_WR_mdot(st_tuple):
@@ -547,7 +559,10 @@ class STResolver:
             for WR stars.
         :returns: float mass loss rate (solMass / yr)
         """
-        return st_tuple[6]
+        if len(st_tuple) > 4:
+            return st_tuple[6]
+        else:
+            return np.nan
 
     @staticmethod
     def get_WR_vinf(st_tuple):
@@ -558,7 +573,10 @@ class STResolver:
             for WR stars.
         :returns: float terminal velocity (km /s)
         """
-        return st_tuple[7]
+        if len(st_tuple) > 4:
+            return st_tuple[7]
+        else:
+            return np.nan
 
     @staticmethod
     def select_powr_grid(st_tuple):
@@ -659,7 +677,7 @@ class STResolver:
 
 
     @staticmethod
-    def resolve_uncertainty(value_dictionary, nsamples=200, dont_add=False,
+    def resolve_uncertainty(value_dictionary, nsamples=300, dont_add=False,
         return_samples=False):
         """
         Need to rewrite description because this isn't accurate anymore.
@@ -724,9 +742,9 @@ class STResolver:
                 samples_array = np.mean(samples_array, axis=0)
 
         if return_samples:
-            # Return the full sample arrays (if possible)
+            # Return the full sample arrays if possible, zeros if not
             if no_samples:
-                return None
+                return np.zeros(nsamples) * value_unit
             else:
                 return samples_array
         else:
@@ -736,16 +754,10 @@ class STResolver:
                 return zero, (zero, zero)
             else:
                 # Calculate median and uncertainty and return those
-                final_value = np.median(samples_array)
-                # Use first/last quantiles to mock up lower/upper bounds
-                lower, upper = misc_utils.flquantiles(samples_array, n_quantile)
-                # Correct for missing binary component
-                # THIS IS NOT DONE IN CatalogResolver; probably doesn't matter
-                if not dont_add and (len(value_dictionary) == 2) and one_star_with_values:
-                    upper += final_value
-                # Convert to error bars (lower bar is negative)
-                lo_err, hi_err = lower - final_value, upper - final_value
-                return final_value, (lo_err, hi_err)
+                return median_and_uncertainty(samples_array)
+                # I used to correct for missing binary component,
+                #   but I don't think it helps or matters
+                return final_value, (lo_err, hi_err) # Lower bar is negative
 
     """
     Stuff for printing
@@ -864,34 +876,37 @@ class CatalogResolver:
             reduce_cluster = True
         # Make a property getter function to be called upon return
         def property_getter_method(**kwargs):
-            # kwargs can have "nsamples" argument
+            # kwargs can have "nsamples", "star_mask", or "map_function" arguments
+            # Get the star mask (this way we can select which stars to include
+            # in calculations)
+            star_mask = kwargs.pop('star_mask', None)
+            if star_mask is None:
+                # Use all stars by default
+                star_mask = [True]*len(self.star_list) # Lazy "else" list creation
+            # Check if we are mapping a function onto cluster realizations
+            map_function = kwargs.pop('map_function', None)
             # Prepare to collect quantity arrays
             all_star_results = []
-            for s in self.star_list:
+            for msk, s in zip(star_mask, self.star_list):
+                if not msk:
+                    # Star mask is False; skip
+                    continue
                 # Pass off the bulk of the work to STResolver, using
                 # the "get_array_" prefix to signal returning sample arrays
                 # or the "get_" prefix to return values & uncertainties
                 star_result = getattr(s, call_to_star)(**kwargs)
-                # In the case that we're reducing the cluster AND there aren't
-                # samples, DON'T add the results to the list
-                # The "not" of this entire phrase is the following 'or':
-                if (star_result is not None) or (not reduce_cluster):
-                    all_star_results.append(star_result)
+                all_star_results.append(star_result)
             if reduce_cluster:
-                # We are reducing the cluster to one value & uncertainty
-                # Make 2D Quantity
+                # We are reducing the cluster to value & uncertainty
+                # Make 2D Quantity, 0th dimension is stars, 1st is realizations
                 all_star_results = u.Quantity(all_star_results)
-                # Don't add if velocity; average instead
+                # Get the desired reduction function
                 reduce_func = np.mean if ('velocity' in name) else np.sum
-                # Reduce all star stamples into full cluster samples
-                cluster_samples = reduce_func(all_star_results, axis=0)
-                # Get the median value
-                value = np.median(cluster_samples)
-                # Get upper and lower bounds, convert to uncertainties
-                lower, upper = misc_utils.flquantiles(cluster_samples, n_quantile)
-                lo_err, hi_err = lower - value, upper - value # lower bound < 0
-                # Return median, (lower_bound, upper_bound) of cluster samples
-                return value, (lo_err, hi_err)
+                # Check map_function argument and decide which function to use
+                if map_function is not None:
+                    return CatalogResolver.map_and_reduce_cluster(all_star_results, map_function, reduce_func=reduce_func)
+                else:
+                    return CatalogResolver.reduce_cluster(all_star_results, reduce_func=reduce_func)
             else:
                 # We are returning the results as is
                 return all_star_results
@@ -905,6 +920,91 @@ class CatalogResolver:
         text = f"<CatalogResolver({len(self.star_list)})>"
         return text
 
+    def reduce_cluster(star_samples, reduce_func=np.sum):
+        """
+        Reduce a set of cluster realizations.
+        :param star_samples: 2D Quantity array.
+            Must be star_samples.shape[0] == len(self.star_list).
+            shape[1] is the realization dimension.
+        :param reduce_func: function used to reduce cluster. Default is sum.
+            Needs to be a numpy function that can operate on arrays
+        :returns: value or array of shape u.Quantity(star_samples).shape[2:]
+            Almost certainly a float, in the case of this function.
+        """
+        # 2D Quantity array; 0th dimension is stars, 1st is realizations
+        # Reduce all the star samples into full cluster samples
+        cluster_samples = reduce_func(star_samples, axis=0)
+        # Return the median value and error bars
+        return median_and_uncertainty(cluster_samples)
+
+
+    def map_and_reduce_cluster(star_samples, func_to_map, reduce_func=np.sum):
+        """
+        Map a function onto each cluster realization before reducing it and
+        sampling from those cluster realizations. This function expects (though
+        does not assume) that the func_to_map will increase the dimensionality
+        of the realization array, so we take steps to save memory at the expense
+        of time. Rather than creating a single 2+D Quantity array and running
+        the reduce and median/ uncertainty functions on that single array, this
+        will loop through individual cluster realizations, reduce them one by
+        one, and append the reduction to a list. When this is complete, the
+        reduced list will be (turned into a Quantity and) passed to the
+        median/uncertainty functions.
+
+        :param star_samples: list of Quantity arrays
+            Must be len(star_samples) == len(self.star_list)
+            The Quantity arrays must all be the same shape.
+        :param func_to_map: a function designed to operate on the Quantity
+            arrays that make up the star_samples list.
+            It should expect Quantity arrays of length len(self.star_list) and
+            ordered as such.
+            It should return arrays whose 0th dimension is the same size as the
+            Quantity array.
+            In other words, the 0th dimension of the return array should be the
+            realization axis. Other dimensions, if they exist, are not touched,
+            and will be passed through the reduction and median/uncertainty
+            processes.
+        :param reduce_func: function used to reduce cluster. Default is sum.
+            Needs to be a numpy function that can operate on arrays
+        :returns: value or array of shape u.Quantity(star_samples).shape[2:]
+            In other words, shape of the "other dimensions" if they exist.
+        """
+        # Prepare cluster_samples list
+        cluster_samples = []
+        # Loop through realizations (j dimension)
+        for j in range(star_samples.shape[1]):
+            # Extract a single cluster realization, len == number of stars
+            single_realization = star_samples[:, j] # 1D array
+            # Apply function to the realization array
+            single_realization = func_to_map(single_realization) # (n+1)D
+            # Reduce the realization and add to the list
+            single_realization = reduce_func(single_realization, axis=0) # nD
+            cluster_samples.append(single_realization)
+        # Cast to a 1+D Quantity array (more manageable than 2+D)
+        cluster_samples = u.Quantity(cluster_samples)
+        # Return the median value and error bars
+        return median_and_uncertainty(cluster_samples)
+
+
+"""
+Functions used by both STResolver and CatalogResolver
+"""
+
+def median_and_uncertainty(realizations_array):
     """
-    Fill the rest of this in. Use random_possibility
+    Find the median value and error bars.
+    Error bars use first and last quantiles.
+    See code description of "N_QUANTILE" global variable.
+    :param realizations_array: Quantity array, collection of cluster values.
+        The shape doesn't matter as long as the 0th axis is the realization
+        axis.
+    :returns: value, (lower_error_bar, upper_error_bar)
+        Each of these has the shape realizations_array.shape[1:]
     """
+    value = np.median(realizations_array, axis=0)
+    # Get upper and lower bounds, convert to uncertainties
+    # flquantiles is built for 0th sample axis
+    lower, upper = misc_utils.flquantiles(realizations_array, N_QUANTILE)
+    lo_err, hi_err = lower - value, upper - value # lower bound < 0
+    # Return median, (lower_bound, upper_bound) of samples
+    return value, (lo_err, hi_err)

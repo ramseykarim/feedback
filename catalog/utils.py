@@ -27,6 +27,7 @@ irac_path = f"{ancillary_data_path}spitzer/irac/"
 
 misc_data_path = f"{feedback_path}misc_data/"
 
+figures_path = f"{feedback_path}feedback_code/figures/"
 
 def load_irac(n=1, header=True):
     """
