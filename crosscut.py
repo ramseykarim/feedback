@@ -135,10 +135,10 @@ if __name__ == "__main__":
         "WR20b_2": ("10:24:19.0298 -57:48:54.625", "10:24:15.1469 -57:50:00.728", 8., 10.4),
         "Wd2_N": ("10:23:55.2786 -57:42:33.456", "10:23:54.8181 -57:41:20.952", -6.6, -5.2),
         "Wd2_N_near": ("10:24:01.4203 -57:43:56.432", "10:24:01.4203 -57:42:43.929", -9.6, -8.2),
-
+        "clear-across-1": ("10:23:29.8019 -57:46:56.589", "10:24:43.2086 -57:41:05.669", -25, 0), # To accompany the cartoon
     }
 
-    selection = "Wd2_N_near"
+    selection = "clear-across-1"
     coord_start_xcut, coord_end_xcut = (SkyCoord(x, unit=(u.hourangle, u.deg)) for x in cross_cuts_coords[selection][:2])
     approx_midpoint = SkyCoord((coord_start_xcut.ra + coord_end_xcut.ra)/2, (coord_start_xcut.dec + coord_end_xcut.dec)/2)
     vlims = cross_cuts_coords[selection][2:]
@@ -152,16 +152,17 @@ if __name__ == "__main__":
         # images just need filenames. cubes need velocity limits too.
         # "500 um": "herschel/helpssproc/processed/1342255009/SPIRE500um-image.fits",
         # "350 um": "herschel/helpssproc/processed/1342255009/SPIRE350um-image.fits",
-        "70 um": "herschel/helpssproc/processed/1342255009/PACS70um-image.fits",
-        # "843 MHz": "most/J1024M56.FITS",
-        "12CO": ("apex/apexCO/RCW49_12CO.fits",),
+        # "70 um": "herschel/helpssproc/processed/1342255009/PACS70um-image.fits", # GOOD
+        "843 MHz": "most/J1024M56.FITS",
+        # "12CO": ("apex/apexCO/RCW49_12CO.fits",), # GOOD
         # "13CO": ("apex/apexCO/RCW49_13CO.fits",),
-        "CII": ("sofia/rcw49-cii.fits",),
-        "8 um": "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits",
-        "F814W": "hst/F814W.fits",
+        "CII": ("sofia/rcw49-cii.fits",), # GOOD
+        "8 um": "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits", # GOOD
+        # "F814W": "hst/F814W.fits", # GOOD
         # "$\\tau_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 2),
-        "870 um": "apex/atlasgal/J102414-574658.fits",
+        "870 um": "apex/atlasgal/J102414-574658.fits", # GOOD
         # "$T_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 1),
+        "0.5-7 keV": "chandra/full_band.fullfield.diffuse_filled.flux",
     }
 
     cuts_to_plot = {}
