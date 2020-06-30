@@ -56,13 +56,16 @@ class STResolver:
     wr_params = {
         # Rauw 2005 parameters.
         # T, Rstar, Mdot, vinf, D (1/f)
-        ("WN", "6"): (43000., 19.3, 8.5e-6, 2800., 10.),
+        #  (linear) L, M (averaging M, increasing error to 6)
+        ("WN", "6"): (43000., 19.3, 8.5e-6, 2800., 10.,
+            1.15e6, 82.3),
     }
 
     wr_uncertainties = {
         # Floats are 1-sigma uncertainties, tuples are bounds between which
         # the distribution will be assumed ot be uniform
-        ("WN", "6"): (2000., 0.5, 8.5e-7, (1000., 3000.), (4., 10.)),
+        ("WN", "6"): (2000., 0.5, 8.5e-7, (1000., 3000.), (4., 10.),
+            0.15e6, 6.),
     }
 
     """
@@ -74,6 +77,8 @@ class STResolver:
         'momentum_flux': 'mv_flux',
         'mechanical_luminosity': 'lmech',
         'FUV_flux': 'fuv',
+        'stellar_mass': 'mass',
+        'bolometric_luminosity': 'lum',
     }
 
     """
@@ -131,7 +136,7 @@ class STResolver:
             full_possibilities_list = []
             for st_tuple in st_bc_possibilities_t:
                 if STResolver.isWR(st_tuple):
-                    # WR star case; add possibilites from wr_samples
+                    # WR star case; add possibilities from wr_samples
                     param_samples = STResolver.sample_WR(st_tuple)
                     # Prepend the spectral type tuple to the parameter tuples
                     full_possibilities_list.extend([st_tuple + ps for ps in param_samples])
@@ -323,7 +328,7 @@ class STResolver:
                 paramy = self.calibration_table.lookup_characteristic('log_L', st_tuple)
                 mdot = 10.**self.leitherer_table.lookup_characteristic('log_Mdot', paramx, paramy)
                 if np.isnan(mdot):
-                    # Not found in Sternberg tables; default to PoWR
+                    # Not found in tables; default to PoWR
                     mdot = 10.**(model_info['LOG_MDOT'])
             return mdot * mdot_unit
         self.mdot = STResolver.map_to_components(find_mass_loss_rate, (self.spectral_types, self.powr_models), f_list=u.Quantity)
@@ -355,7 +360,7 @@ class STResolver:
                 paramy = self.calibration_table.lookup_characteristic('log_L', st_tuple)
                 vinf = self.leitherer_table.lookup_characteristic('v_inf', paramx, paramy)
                 if np.isnan(vinf):
-                    # Not found in Sternberg tables; default to PoWR
+                    # Not found in tables; default to PoWR
                     vinf = model_info['V_INF']
             return vinf * vinf_unit
         self.vinf = STResolver.map_to_components(find_vinf, (self.spectral_types, self.powr_models), f_list=u.Quantity)
@@ -387,10 +392,6 @@ class STResolver:
         If one of the possible spectral types cannot be looked up in PoWR,
             ignore it and only use the other(s).
         If one of the binary components cannot be looked up at all, ignore it
-
-        :param powr_dict: dictionary mapping grid_name to the grid object,
-            represented by PoWRGrid instance. Grid name is PoWRGrid.grid_name
-        :returns: value, (lower limit, upper limit), as astropy Quantities
         """
         # Make a FUV flux-finding function
         def find_FUV_flux(model_info):
@@ -412,6 +413,54 @@ class STResolver:
                 STResolver.fuv_memoization[model_identifier] = integrated_flux
                 return integrated_flux
         self.fuv = STResolver.map_to_components(find_FUV_flux, (self.powr_models,), f_list=u.Quantity)
+
+    def populate_stellar_mass(self):
+        """
+        Get the stellar mass of this star.
+        Populate self.mass with possibilities.
+        Uses WR params for WRs, or Martins for OB
+        """
+        # Make mass-finding function
+        def find_stellar_mass(st_tuple):
+            # Takes spectral type
+            # Set up the mass unit
+            mass_unit = u.solMass
+            if STResolver.isWR(st_tuple):
+                # WR star; get WR hardcoded param
+                mass = STResolver.get_WR_mass(st_tuple)
+            elif STResolver.isMS(st_tuple):
+                # OB star; use Martins calibration
+                mass = self.calibration_table.lookup_characteristic('M', st_tuple)
+            else:
+                # Nonstandard star; nothing we can do
+                mass = np.nan
+            return mass * mass_unit
+        self.mass = STResolver.map_to_components(find_stellar_mass, (self.spectral_types,), f_list=u.Quantity)
+
+    def populate_bolometric_luminosity(self):
+        """
+        Get the bolometric luminosity of the star.
+        Populate self.lum with possibilities
+        Use WR params for WRs, or Martins for OB
+        """
+        # Make luminosity-finding function
+        def find_luminosity(st_tuple):
+            # Takes spectral type
+            # Set up luminosity unit
+            lum_unit = u.solLum
+            if STResolver.isWR(st_tuple):
+                # WR star; get WR hardcoded param
+                luminosity = STResolver.get_WR_luminosity(st_tuple)
+            elif STResolver.isMS(st_tuple):
+                # OB star; use Martins calibration
+                luminosity = self.calibration_table.lookup_characteristic('log_L', st_tuple)
+                luminosity = 10.**luminosity
+            else:
+                # Nonstandard star; nothing we can do
+                luminosity = np.nan
+            return luminosity * lum_unit
+        self.lum = STResolver.map_to_components(find_luminosity, (self.spectral_types,), f_list=u.Quantity)
+
 
 
     """
@@ -544,7 +593,7 @@ class STResolver:
         if len(st_tuple) > 4:
             # Calculate and return the parameters
             paramx = st_tuple[4]
-            paramy = powr.PoWRGrid.calculate_Rt(*st_tuple[5:])
+            paramy = powr.PoWRGrid.calculate_Rt(*st_tuple[5:9])
             return paramx, paramy
         else:
             # No parameters; we must not have values for this type
@@ -575,6 +624,34 @@ class STResolver:
         """
         if len(st_tuple) > 4:
             return st_tuple[7]
+        else:
+            return np.nan
+
+    @staticmethod
+    def get_WR_luminosity(st_tuple):
+        """
+        Quick way to get the bolometric luminosity for the WR stars supported in
+        this class.
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars.
+        :returns: float terminal velocity (km /s)
+        """
+        if len(st_tuple) > 4:
+            return st_tuple[9]
+        else:
+            return np.nan
+
+    @staticmethod
+    def get_WR_mass(st_tuple):
+        """
+        Quick way to get the stellar mass for the WR stars supported in
+        this class.
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars.
+        :returns: float terminal velocity (km /s)
+        """
+        if len(st_tuple) > 4:
+            return st_tuple[10]
         else:
             return np.nan
 

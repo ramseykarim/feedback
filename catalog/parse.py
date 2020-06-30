@@ -800,6 +800,7 @@ def catalog_reduction_v2():
     Updated on 4/14/20
     Indexing finished on 5/5/2020
     """
+    df_VPHAS, df_TFT, df_VA, new_catalog = build_catalog()
     raise RuntimeError("I've already run this on May 5, 2020 and saved the pkl")
     df_VPHAS, df_TFT, df_VA, new_catalog = load_indexed_dfs()
 

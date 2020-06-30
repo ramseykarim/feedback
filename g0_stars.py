@@ -38,13 +38,30 @@ def main():
 
     # catalog_df = filter_by_within_range(catalog_df)
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=3.)
+    # print(3, end=": ")
+    # print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=6.)
+    # print(6, end=": ")
+    # print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=12.)
+    # print(12, end=": ")
+    # print(len(catalog_df.loc[catalog_df['is_within_12.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
+    catalog_df = filter_by_only_WR(catalog_df) # ['is_WR']
     catr = convert_catalog_to_CatalogResolver(catalog_df)
+    # prepare_and_save_catalog(catalog_df, catr)
+    # return
 
     cii_mom0, cii_w = catalog.utils.load_cii(2)
 
     # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
+    print("all calculations below limited to 3 arcmin radius from Wd2")
+    print("OB STARS")
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(~catalog_df['is_WR']))
+    print()
+    print("WR STARS")
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(catalog_df['is_WR']))
+    print()
+    print("ALL STARS")
     calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False)
 
     return
@@ -60,7 +77,6 @@ def main():
     # calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
 
     ## Experiment to see what WR stars mass loss looks like (May 22, 2020)
-    catalog_df = filter_by_only_WR(catalog_df)
     catalog_df = catalog_df.loc[~catalog_df['is_WR']]
     # calc_and_plot_and_save_WR_wind_power(catalog_df, cii_w, rcw_dist, saving=True, radius_arcmin=6.)
     calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
@@ -165,7 +181,8 @@ def calc_g0(catalog_df, catr, wcs_obj, distance_los, catalog_mask=None):
     return val, (lo, hi)
 
 
-def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False):
+def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False,
+    additional_condition=None, age=2.e6):
     """
     Calculate mass loss rate and kinetic energy and the 2 Myr mass and energy
         totals.
@@ -174,21 +191,41 @@ def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False):
     :param cii_mom0: CII moment0 map, numpy array
     :param cii_w: CII map WCS object
     :param plotting: True if we want plots
+    :param additional_condition: pandas series (or equivalent) boolean True
+        if star should be included. Gets &-ed with 'is_within_3.0_arcmin',
+        so cannot use this to include stars outside this radius
     """
-    star_mask = catalog_df['is_within_3.0_arcmin'].values
+    star_mask_series = catalog_df['is_within_3.0_arcmin']
+    if additional_condition is not None:
+        star_mask_series = star_mask_series & additional_condition
+    star_mask = star_mask_series.values
     mdot_med, mdot_err = catr.get_mass_loss_rate(star_mask=star_mask)
+    mvflux_med, mvflux_err = catr.get_momentum_flux(star_mask=star_mask)
     ke_med, ke_err = catr.get_mechanical_luminosity(star_mask=star_mask)
-    print(f"MDOT: {mdot_med:.1E} [{mdot_err[0].to_value():+.2E}, {mdot_err[1].to_value():+.2E}]")
-    print(f"MECH LUM: {ke_med:.1E} [{ke_err[0].to_value():+.2E}, {ke_err[1].to_value():+.2E}]")
-    age = 2.e6*u.year
-    print(f"Mass ejected over {age:.1}: {mdot_med*age:.2f} [{(mdot_err[0]*age).to_value():+.2f}, {(mdot_err[1]*age).to_value():+.2f}]")
-    print(f"Thermal energy over {age:.1}: {(ke_med*age).to(u.erg):.2E} [{(ke_err[0]*age).to(u.erg).to_value():+.2E}, {(ke_err[1]*age).to(u.erg).to_value():+.2E}]")
+    fuv_tot_med, fuv_tot_err = catr.get_FUV_flux(star_mask=star_mask)
+    print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
+    print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
+    print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.s))}")
+    print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
+    mass_med, mass_err = catr.get_stellar_mass(star_mask=star_mask)
+    lum_med, lum_err = catr.get_bolometric_luminosity(star_mask=star_mask)
+    print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")
+    print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
+
+    age = age*u.year
+    ej_mass_med = mdot_med * age
+    ej_mass_err = tuple(x*age for x in mdot_err)
+    thermE_med = ke_med * age
+    thermE_err = tuple(x*age for x in ke_err)
+    print(f"Mass ejected over {age:.1}:   {print_val_err(ej_mass_med, ej_mass_err, exp=False)}")
+    print(f"Thermal energy over {age:.1}: {print_val_err(thermE_med, thermE_err, extra_f=lambda x: x.to(u.erg))}")
+
     if plotting:
         plt.figure(figsize=(11, 8))
         plt.subplot(111, projection=cii_w)
         plt.title(f"[CII] Moment 0 (-8 to -4 km/s); Mdot = {mdot_med:.1E} [{mdot_err[0].to_value():+.2E}, {mdot_err[1].to_value():+.2E}]")
         plt.imshow(cii_mom0, origin='lower')
-        catalog.utils.plot_coordinates(None, SkyCoord(catalog_df.loc[catalog_df['is_within_3.0_arcmin'], 'SkyCoord'].values), setup=False, show=False)
+        catalog.utils.plot_coordinates(None, SkyCoord(catalog_df.loc[star_mask_series, 'SkyCoord'].values), setup=False, show=False)
         plt.savefig(f"{catalog.utils.figures_path}mdot_june19-2020.png")
 
 
@@ -261,7 +298,46 @@ def calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w):
     plt.savefig(f"{catalog.utils.figures_path}g0_june19-2020.png")
 
 
-def prepare_and_save_catalog(catalog_df, catr):
+def assign_individual_properties(catalog_df, catr, save=False):
+    """
+    June 28, 2020: gonna see if I can mod this to save all the individual
+    star property values+errors to the DataFrame and then save it
+    """
+    # Only do within 12 arcsec, that'll exclude most things we don't care about
+    star_mask_series = catalog_df['is_within_12.0_arcmin']
+    star_mask = star_mask_series.values
+    attributes = [
+        'mass_loss_rate', 'mechanical_luminosity',
+        'momentum_flux',
+        'FUV_flux', 'stellar_mass', 'bolometric_luminosity',
+    ]
+    for attr in attributes:
+        full_cat_list = getattr(catr, 'get_array_'+attr)()
+        value_list, lo_err_list, hi_err_list = [], [], []
+        for v, e in full_cat_list:
+            value_list.append(v)
+            lo_err_list.append(e[0])
+            hi_err_list.append(e[1])
+        value_list = u.Quantity(value_list)
+        lo_err_list = u.Quantity(lo_err_list)
+        hi_err_list = u.Quantity(hi_err_list)
+        field_name = catalog.spectral.stresolver.STResolver.property_names[attr]
+        unit_name = str(value_list.unit)
+        value_name = f"{field_name} ({unit_name})"
+        lo_err_name = f"{field_name}_LO ({unit_name})"
+        hi_err_name = f"{field_name}_HI ({unit_name})"
+        catalog_df[value_name] = value_list.to_value()
+        catalog_df[lo_err_name] = lo_err_list.to_value()
+        catalog_df[hi_err_name] = hi_err_list.to_value()
+    if save:
+        catalog_df = catalog_df.copy()
+        catalog_df['RA'] = catalog_df['SkyCoord'].apply(lambda x: x.ra.deg)
+        catalog_df['DEC'] = catalog_df['SkyCoord'].apply(lambda x: x.dec.deg)
+        catalog_df = catalog_df.drop('SkyCoord', 1)
+        fn = f"{data_directory}catalogs/Ramsey/june28_2020_catalog_properties.csv"
+        catalog_df.to_csv(fn)
+    # catalog.utils.save_df_html(catalog_df)
+    return
     raise NotImplementedError
     """
     Operates on a copy of the catalog, making python objects into more general
@@ -289,6 +365,15 @@ def prepare_and_save_catalog(catalog_df, catr):
     catalog_df[columns_to_keep].to_csv(cat_path+"Wd2_OB_catalog_May-7-2020.csv")
     catalog_df.loc[catalog_df['is_within_6.0_arcmin'], columns_to_keep].to_csv(cat_path+"Wd2_within6arcmin_OB_catalog_May-7-2020.csv")
     catalog_df.loc[catalog_df['is_within_3.0_arcmin'], columns_to_keep].to_csv(cat_path+"Wd2_within3arcmin_OB_catalog_May-7-2020.csv")
+
+
+def print_val_err(val, err, exp=True, extra_f=None):
+    if extra_f is None:
+        extra_f = lambda x : x # identity function
+    val = f"{extra_f(val):.1E}" if exp else f"{extra_f(val):.1f}"
+    str_func = lambda x : f"{extra_f(x).to_value():+.1E}" if exp else f"{extra_f(x).to_value():+.1f}"
+    lo, hi = (str_func(x) for x in err)
+    return f"{val} [{lo}, {hi}]"
 
 
 

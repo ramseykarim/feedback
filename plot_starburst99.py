@@ -5,14 +5,17 @@ matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 import pandas as pd
 
-import catalog_utils
+from astropy import units as u
+
+from .catalog import utils as catalog_utils
 
 sb99_output_path = f"{catalog_utils.ancillary_data_path}catalogs/starburst99/"
-o_star_names = {'O2': 'O2', 'O3': 'O3', 'test1': 'standard', 'Wd2': 'standard'}
-o_star_output_directories = {k: f"{sb99_output_path}{k}/" for k in o_star_names}
+sb99_run_names = {'O2': 'O2', 'O3': 'O3', 'test1': 'standard',}
+sb99_run_names.update({f'Wd2_{i}': 'standard' for i in range(1, 6)})
+sb99_output_directories = {k: f"{sb99_output_path}{k}/" for k in sb99_run_names}
 
-def get_o_star_run_info(n):
-    return o_star_output_directories[n], o_star_names[n]
+def get_sb99_run_info(n):
+    return sb99_output_directories[n], sb99_run_names[n]
 
 def open_power(directory, name):
     """
@@ -107,10 +110,10 @@ def plot_value(df, name=None, value_name_long=None, value_name_short=None, add_f
             linestyle=('--' if l == "Total" else '-'))
     plt.title(name)
     if value_name_short == "POWER":
-        plt.ylabel("Power (erg/s)")
+        plt.ylabel("Power [erg/s]")
         plt.ylim((35, 42))
     else:
-        plt.ylabel("Momentum flux (dyn)")
+        plt.ylabel("Momentum flux [dyn]")
         plt.ylim((27, 34))
     plt.xlabel("Time (Myr)")
     plt.legend()
@@ -118,7 +121,7 @@ def plot_value(df, name=None, value_name_long=None, value_name_short=None, add_f
 
 
 def run_plot_standard():
-    directory, name = get_o_star_run_info('test1')
+    directory, name = get_sb99_run_info('test1')
     df = open_both(directory, name)
 
 
@@ -133,7 +136,7 @@ def run_plot_standard():
 
 
 def run_plot_O3():
-    directory, name = get_o_star_run_info('O3')
+    directory, name = get_sb99_run_info('O3')
     df = open_both(directory, name)
 
 
@@ -149,7 +152,7 @@ def run_plot_O3():
 
 
 def run_plot_O2():
-    directory, name = get_o_star_run_info('O2')
+    directory, name = get_sb99_run_info('O2')
     df = open_both(directory, name)
 
 
@@ -160,21 +163,50 @@ def run_plot_O2():
     plt.ylim((28, 31))
 
 
-def run_plot_Wd2():
-    directory, name = get_o_star_run_info('Wd2')
+def run_plot_Wd2_n(n):
+    run_descriptions = {
+        1: "3.1e4 stellar masses [0.65, 80] and Zeidler pdmf (a = 2.03)",
+        2: "3.1e4, kroupa imf (2.3), [0.65, 80]",
+        3: "3.1e4, kroupa imf, [0.65, 126]",
+        4: "4500, kroupa imf, [0.65, 126]",
+        5: "10^4, kroupa imf, [0.65, 126]",
+    }
+    directory, name = get_sb99_run_info(f'Wd2_{n}')
     df = open_both(directory, name)
 
     plt.figure(figsize=(10, 5))
     plt.subplot(121)
     plot_value(df, name=name, value_name_long='momentum flux', value_name_short='MOMFLUX')
-    plt.title("Westerlund 2 parameters; total mass $1 \\times 10^{4}~M_{\\odot}$")
+    plt.title("STARBURST99; Momentum Flux")
+    alt_title = "Westerlund 2 parameters; total mass $1 \\times 10^{4}~M_{\\odot}$"
     plt.ylim((29, 32))
     plt.subplot(122)
     plot_value(df, name=name, value_name_long='mechanical luminosity', value_name_short='POWER')
-    plt.title("IMF 0.65-80 $M_{\\odot}$, $\\alpha = 2.03$ (Zeidler+2017)")
+    plt.title("STARBURST99; Mechanical Luminosity")
+    alt_title = "IMF 0.65-80 $M_{\\odot}$, $\\alpha = 2.03$ (Zeidler+2017)"
     plt.ylim((37, 40))
+
+
+def check_power_linear(n):
+    directory, name = get_sb99_run_info(f'Wd2_{n}')
+    df = open_both(directory, name)
+    powerOB = df.loc[(df.index <= 2.1e6), 'POWER_OB']
+    power_values = (10.**powerOB.values) * u.erg / u.s
+    time_values = ([0.]+list(powerOB.index.values)) * u.year
+    time_steps = np.diff(time_values)
+    energy_steps = (power_values * time_steps).to(u.erg)
+    total_energy = np.cumsum(energy_steps)
+    avg_power = np.mean(power_values)
+    print("power")
+    print(avg_power)
+    print("energy")
+    print(total_energy)
+    print((avg_power * time_values[-1]).to(u.erg))
 
 
 
 if __name__ == "__main__":
-    pass
+    check_power_linear(3)
+    # for i in range(1, 6):
+    #     run_plot_Wd2_n(i)
+    #####     plt.savefig(f"/home/ramsey/Pictures/6-22-20-work/starburst_{i}.png")

@@ -24,7 +24,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_STResolver()
+    return test_catalog()
 
 
 def plot_sptype_calibration_stuff():
@@ -55,8 +55,10 @@ def plot_sptype_calibration_stuff():
 def test_martins_calibration_load():
     df1, u1 = spectral.martins.load_tables_df()
     df2, u2 = spectral.sternberg.load_tables_df()
+    print(u2.index)
     for i in u2.Units:
         print(i, u.Unit(i))
+    print(u1.index)
     for i in u1.Units:
         print(i, u.Unit(i))
 
@@ -350,6 +352,17 @@ def test_STResolver():
         # if count > 15:
         #     break
     # return s
+
+def test_catalog():
+    df = parse.load_final_catalog_df()
+    df['RA'] = df['SkyCoord'].apply(lambda x: x.ra.deg)
+    df['DEC'] = df['SkyCoord'].apply(lambda x: x.dec.deg)
+    df = df.drop('SkyCoord', 1)
+    fn = f"{utils.ancillary_data_path}catalogs/Ramsey/catalog_may5_2020.csv"
+    df.to_csv(fn)
+    # df = pd.read_csv(fn)
+    return df
+
 
 if __name__ == "__main__":
     args = main()
