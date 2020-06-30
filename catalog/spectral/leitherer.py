@@ -14,6 +14,7 @@ __author__ = "Ramsey Karim"
 
 import numpy as np
 import pandas as pd
+from collections.abc import Sequence # abc = Abstract Base Class
 
 from scipy.interpolate import CloughTocher2DInterpolator
 from scipy.spatial import Delaunay # Hello, old friend
@@ -142,4 +143,12 @@ class LeithererTable:
             interp_function = fit_characteristic(self.xy_delaunay, z)
             self.memoized_interpolations[characteristic] = interp_function
         # Work in log T
-        return interp_function(np.log10(T), logL)
+        result = interp_function(np.log10(T), logL)
+        # Need to fix the numpy scalar issue
+        if hasattr(result, 'ndim') and result.ndim == 0:
+            # This is likely a numpy scalar; return a float
+            return float(result)
+        else:
+            # This might be an array; just return it
+            # Or it doesn't have ndim so just return it and see what happens
+            return result

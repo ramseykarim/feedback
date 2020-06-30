@@ -22,11 +22,10 @@ from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5, ICRS
 
-import catalog_utils
-from misc_utils import flquantiles
+from . import utils
 
 
-catalog_directory = catalog_utils.ancillary_data_path + "catalogs/"
+catalog_directory = utils.ancillary_data_path + "catalogs/"
 
 def convert_hhmmss(hhmmss_hhmmss):
     """
@@ -801,6 +800,7 @@ def catalog_reduction_v2():
     Updated on 4/14/20
     Indexing finished on 5/5/2020
     """
+    df_VPHAS, df_TFT, df_VA, new_catalog = build_catalog()
     raise RuntimeError("I've already run this on May 5, 2020 and saved the pkl")
     df_VPHAS, df_TFT, df_VA, new_catalog = load_indexed_dfs()
 

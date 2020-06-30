@@ -15,12 +15,20 @@ Split from catalog_spectral.py (previously readstartypes.py) on June 2, 2020
 __author__ = "Ramsey Karim"
 
 import numpy as np
+import random
+
 from astropy import units as u
+
+from ... import misc_utils
 
 from . import powr
 from . import parse_sptype
 from . import vacca
 
+# Globally set the quantile number we will use in this module.
+# 6 gives 17th and 83th percentiles, which is close to the +/- 34% of
+#  standard 1 sigma error on a normal distribution
+N_QUANTILE = 6
 
 class STResolver:
     """
@@ -46,20 +54,53 @@ class STResolver:
     """
 
     wr_params = {
-        # Unsure where these parameters are from exactly, but I should be using
-        # the Rauw 2005 parameters.
+        # Rauw 2005 parameters.
         # T, Rstar, Mdot, vinf, D (1/f)
-        ("WN", "6"): (43000, 19.7, 8.5e-6, 1600., 4.),
+        #  (linear) L, M (averaging M, increasing error to 6)
+        ("WN", "6"): (43000., 19.3, 8.5e-6, 2800., 10.,
+            1.15e6, 82.3),
     }
+
+    wr_uncertainties = {
+        # Floats are 1-sigma uncertainties, tuples are bounds between which
+        # the distribution will be assumed ot be uniform
+        ("WN", "6"): (2000., 0.5, 8.5e-7, (1000., 3000.), (4., 10.),
+            0.15e6, 6.),
+    }
+
+    """
+    Supported property names
+    """
+    property_names = {
+        'mass_loss_rate': 'mdot',
+        'terminal_wind_velocity': 'vinf',
+        'momentum_flux': 'mv_flux',
+        'mechanical_luminosity': 'lmech',
+        'FUV_flux': 'fuv',
+        'stellar_mass': 'mass',
+        'bolometric_luminosity': 'lum',
+    }
+
+    """
+    Class-wide dictionaries
+    """
+    # Set up FUV memoization dictionary to avoid too much computation
+    fuv_memoization = {}
+    # Set up WR uncertainty sampling dictionary; keys are the same as above
+    wr_samples = {}
+
 
     """
     Setup
     """
 
-    def __init__(self, st):
+    def __init__(self, st, container=None):
         """
         Taking a lot of cues from st_reduce_to_brightest_star
         :param st: string spectral type, like "O3-5I/III(f)"
+        :param container: CatalogResolver object containing this
+            and other instances. If this is given, you don't need to
+            explicitly link any of the tables or grids.
         """
         # Dictionary holding the spectral types of binary components,
         #   decomposed as lists into all their possibilities
@@ -77,8 +118,45 @@ class STResolver:
               type string and the list of possibilities, with possibilities
               represented in tuple format:
                   (letter, number, luminosity_class, peculiarity)
+              The list will contain both the possibilities explicitly enumerated
+              in the string type as well as a half spectral type above and below
+              each possibility to capture some intrinsic scatter in spectral
+              type calibration. This also means that "well defined" spectral
+              types with no explicit uncertainty are given some uncertainty,
+              which is more realistic.
+            If the spectral type refers to a WR star, the tuple format is
+              extended to include the 5 defining WR parameters, since there is
+              not a simple map between WR spectral type and physical properties.
+              This means that WR stars will have a 9-element tuple;
+                  (letters, number, blank string, peculiarity,
+                    Teff, Rstar, Mdot, vinf, D)
+              This allows for sampling of the WR parameter space, since we
+              simply cannot sample the map like we do for OB stars.
             """
-            self.spectral_types[st_binary_component] = st_bc_possibilities_t
+            full_possibilities_list = []
+            for st_tuple in st_bc_possibilities_t:
+                if STResolver.isWR(st_tuple):
+                    # WR star case; add possibilities from wr_samples
+                    param_samples = STResolver.sample_WR(st_tuple)
+                    # Prepend the spectral type tuple to the parameter tuples
+                    full_possibilities_list.extend([st_tuple + ps for ps in param_samples])
+                elif STResolver.isMS(st_tuple):
+                    # OB star; add the original and adjacent possibilities
+                    # Adjacent list contains original, so we will have 2 copies of original
+                    # This is intentional, to weight towards original type
+                    full_possibilities_list.extend(parse_sptype.st_adjacent(st_tuple))
+                    full_possibilities_list.append(st_tuple)
+                else:
+                    # Nonstandard type; just throw it in, it won't matter
+                    full_possibilities_list.append(st_tuple)
+            # Assign the full possibilities list to the spectral_types dictionary
+            self.spectral_types[st_binary_component] = full_possibilities_list
+        # Check if this instance is part of a CatalogResolver container
+        if container is not None:
+            self.container = container
+            self.link_calibration_table(self.container.calibration_table)
+            self.link_leitherer_table(self.container.leitherer_table)
+            self.link_powr_grids(self.container.powr_dict)
 
     def isbinary(self):
         """
@@ -96,7 +174,8 @@ class STResolver:
         see a reason to support both simultaneously, since Martins is more
         recent. They should be standardized anyway.
         ****
-        This needs to be called by the user since it requires STTable as input.
+        This needs to be called by the user since it requires STTable as input,
+            unless this instance is part of a CatalogResolver.
         ****
         :param table: the STTable object wrapper for the calibration table.
         """
@@ -106,7 +185,8 @@ class STResolver:
         """
         Link the Leitherer table, for mass loss rates of O stars.
         ****
-        This needs to be called by the user since it requires LeithererTable as input.
+        This needs to be called by the user since it requires LeithererTable as input,
+            unless this instance is part of a CatalogResolver.
         ****
         :param table: the LeithererTable wrapper object.
         """
@@ -123,7 +203,8 @@ class STResolver:
         Then, get PoWR model names for each eligible star/possibility
         This does not collect the full UV spectra, just the parameters.
         ****
-        This needs to be called by the user since it requires PoWR grids as input.
+        This needs to be called by the user since it requires PoWR grids as input,
+            unless this instance is part of a CatalogResolver.
         ****
         :param powr_dict: dictionary mapping grid_name to the grid object,
             represented by PoWRGrid instance. Grid name is PoWRGrid.grid_name
@@ -143,12 +224,15 @@ class STResolver:
             # Get the parameters
             if STResolver.isWR(st_tuple):
                 # This is a WR; use hardcoded parameters
-                params = self.get_WR_params(st_tuple)
-            else:
+                params = STResolver.get_WR_params(st_tuple)
+            elif STResolver.isMS(st_tuple):
                 # This is an OB; use Martins calibration
                 paramx = self.calibration_table.lookup_characteristic('Teff', st_tuple)
                 paramy = self.calibration_table.lookup_characteristic('log_g', st_tuple)
                 params = (paramx, paramy)
+            else:
+                # Nonstandard star; nothing we can do
+                return None
             # If the parameters are NaN, return None
             if np.any(np.isnan(params)):
                 return None
@@ -173,6 +257,50 @@ class STResolver:
     needing to be recalculated (expensive for FUV flux, etc).
     """
 
+    def populate_all(self):
+        """
+        Do I need this function?
+        """
+        self.populate_mass_loss_rate()
+        self.populate_terminal_wind_velocity()
+        self.populate_momentum_flux()
+        self.populate_mechanical_luminosity()
+        self.populate_FUV_flux()
+
+    def __getattr__(self, name):
+        """
+        Overloading __getattr__ to try to find a property first.
+        General function for pulling the final sampled property.
+        The property_name dictionary defined in this class is used to
+            find the attribute names for property dictionaries.
+        This function accepts attribute queries starting with "get_"
+            as well as "get_array_".
+            "get_" will get a single, uncertainty-resolved value for this
+            instance. "get_array_" will get a range of possibilities selected
+            at random.
+        """
+        if "array" in name:
+            # Return samples array case
+            name_stub = name.replace('get_array_', '')
+            return_samples = True
+        else:
+            # Return single uncertainty-resolved value case
+            name_stub = name.replace('get_', '')
+            return_samples = False
+        if name_stub in STResolver.property_names:
+            # Get the short property name ('mdot', etc)
+            property_name = STResolver.property_names[name_stub]
+            # Average the velocities, don't add
+            dont_add = ('velocity' in name_stub)
+            def property_getter_method(nsamples=200):
+                if not hasattr(self, property_name):
+                    getattr(self, "populate_" + name_stub)()
+                return STResolver.resolve_uncertainty(getattr(self, property_name),
+                    dont_add=dont_add, return_samples=return_samples, nsamples=nsamples)
+            return property_getter_method
+        else:
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
     def populate_mass_loss_rate(self):
         """
         Get the stellar wind mass loss rate in Msun / year
@@ -191,27 +319,28 @@ class STResolver:
                 # This star won't be in PoWR or Sternberg (invalid WR or odd type)
                 mdot = np.nan
             elif STResolver.isWR(st_tuple):
-                # This is a WR; we have this hardcoded
-                mdot = 10.**(STResolver.get_WR_mdot(st_tuple))
+                # This is a WR; use the function
+                mdot = STResolver.get_WR_mdot(st_tuple)
             else:
-                # This must be an OB star, use Leitherer
-                mdot = self.leitherer_table.lookup_characteristic('log_Mdot', None) # FINISH THIS
-                mdot = sternberg_tables.lookup_characteristic(st_tuple, 'Mdot')
+                # This must be an OB star, since we already checked model_info
+                # Use Leitherer
+                paramx = self.calibration_table.lookup_characteristic('Teff', st_tuple)
+                paramy = self.calibration_table.lookup_characteristic('log_L', st_tuple)
+                mdot = 10.**self.leitherer_table.lookup_characteristic('log_Mdot', paramx, paramy)
                 if np.isnan(mdot):
-                    # Not found in Sternberg tables; default to PoWR
+                    # Not found in tables; default to PoWR
                     mdot = 10.**(model_info['LOG_MDOT'])
             return mdot * mdot_unit
-        self.mdot = STResolver.map_to_components(find_mass_loss_rate, (self.spectral_types, self.powr_models))
+        self.mdot = STResolver.map_to_components(find_mass_loss_rate, (self.spectral_types, self.powr_models), f_list=u.Quantity)
 
-    def populate_terminal_wind_velocity(self, sternberg_tables):
+    def populate_terminal_wind_velocity(self):
         """
         Get the stellar wind terminal velocity in km / s
         Populate self.vinf with possibilities
         The source of this information is different for OB vs WR;
-            OB uses Sternberg tables (so they are needed as arg here)
+            OB uses Leitherer tables (need to run self.link_leitherer_table)
             and WR uses PoWR simulations
         Most of this code is copied from STResolver.get_mass_loss_rate
-        :param sternberg_tables: a S03_OBTables instance
         """
         # Make a terminal velocity finding function
         def find_vinf(st_tuple, model_info):
@@ -224,15 +353,37 @@ class STResolver:
                 vinf = np.nan
             elif STResolver.isWR(st_tuple):
                 # This is a WR with a model; we have this hardcoded
-                winf = STResolver.get_WR_vinf(st_tuple)
+                vinf = STResolver.get_WR_vinf(st_tuple)
             else:
-                # This must be an OB star, use Sternberg
-                vinf = sternberg_tables.lookup_characteristic(st_tuple, 'v_terminal')
+                # This must be an OB star, use Leitherer
+                paramx = self.calibration_table.lookup_characteristic('Teff', st_tuple)
+                paramy = self.calibration_table.lookup_characteristic('log_L', st_tuple)
+                vinf = self.leitherer_table.lookup_characteristic('v_inf', paramx, paramy)
                 if np.isnan(vinf):
-                    # Not found in Sternberg tables; default to PoWR
+                    # Not found in tables; default to PoWR
                     vinf = model_info['V_INF']
             return vinf * vinf_unit
-        self.vinf = STResolver.map_to_components(find_vinf, (self.spectral_types, self.powr_models))
+        self.vinf = STResolver.map_to_components(find_vinf, (self.spectral_types, self.powr_models), f_list=u.Quantity)
+
+    def populate_momentum_flux(self):
+        """
+        Get the momentum flux in dynes by multipying mass loss rate by terminal
+            velocity.
+        """
+        def find_mv_flux(mdot, vinf):
+            # multiply these together and convert to dynes
+            return (mdot * vinf).to(u.dyne)
+        self.mv_flux = STResolver.map_to_components(find_mv_flux, (self.mdot, self.vinf), f_list=u.Quantity)
+
+    def populate_mechanical_luminosity(self):
+        """
+        Get mechanical luminosity in erg/s by using mass loss rate and terminal
+            velocity in the kinetic energy equation, 1/2 m v^2
+        """
+        def find_KE_rate(mdot, vinf):
+            # multipy and convert to erg/s
+            return (mdot * vinf * vinf / 2.).to(u.erg/u.s)
+        self.lmech = STResolver.map_to_components(find_KE_rate, (self.mdot, self.vinf), f_list=u.Quantity)
 
     def populate_FUV_flux(self):
         """
@@ -241,10 +392,6 @@ class STResolver:
         If one of the possible spectral types cannot be looked up in PoWR,
             ignore it and only use the other(s).
         If one of the binary components cannot be looked up at all, ignore it
-
-        :param powr_dict: dictionary mapping grid_name to the grid object,
-            represented by PoWRGrid instance. Grid name is PoWRGrid.grid_name
-        :returns: value, (lower limit, upper limit), as astropy Quantities
         """
         # Make a FUV flux-finding function
         def find_FUV_flux(model_info):
@@ -253,13 +400,175 @@ class STResolver:
             # Isn't that nifty ;)
             if model_info is None:
                 return np.nan * u.solLum
-            wlflux = model_info['grid'].get_model(model_info)
-            return powr.PoWRGrid.integrate_flux(wlflux)
-        self.fuv = STResolver.map_to_components(find_FUV_flux, (self.powr_models,))
+            # Get a unique model ID for memoization
+            model_identifier = model_info['grid'].grid_name + model_info['MODEL']
+            if model_identifier in STResolver.fuv_memoization:
+                # Check if we have it memoized
+                return STResolver.fuv_memoization[model_identifier]
+            else:
+                # Calculate it
+                wlflux = model_info['grid'].get_model_spectrum(model_info)
+                integrated_flux = powr.PoWRGrid.integrate_flux(wlflux)
+                # Memoize it
+                STResolver.fuv_memoization[model_identifier] = integrated_flux
+                return integrated_flux
+        self.fuv = STResolver.map_to_components(find_FUV_flux, (self.powr_models,), f_list=u.Quantity)
+
+    def populate_stellar_mass(self):
+        """
+        Get the stellar mass of this star.
+        Populate self.mass with possibilities.
+        Uses WR params for WRs, or Martins for OB
+        """
+        # Make mass-finding function
+        def find_stellar_mass(st_tuple):
+            # Takes spectral type
+            # Set up the mass unit
+            mass_unit = u.solMass
+            if STResolver.isWR(st_tuple):
+                # WR star; get WR hardcoded param
+                mass = STResolver.get_WR_mass(st_tuple)
+            elif STResolver.isMS(st_tuple):
+                # OB star; use Martins calibration
+                mass = self.calibration_table.lookup_characteristic('M', st_tuple)
+            else:
+                # Nonstandard star; nothing we can do
+                mass = np.nan
+            return mass * mass_unit
+        self.mass = STResolver.map_to_components(find_stellar_mass, (self.spectral_types,), f_list=u.Quantity)
+
+    def populate_bolometric_luminosity(self):
+        """
+        Get the bolometric luminosity of the star.
+        Populate self.lum with possibilities
+        Use WR params for WRs, or Martins for OB
+        """
+        # Make luminosity-finding function
+        def find_luminosity(st_tuple):
+            # Takes spectral type
+            # Set up luminosity unit
+            lum_unit = u.solLum
+            if STResolver.isWR(st_tuple):
+                # WR star; get WR hardcoded param
+                luminosity = STResolver.get_WR_luminosity(st_tuple)
+            elif STResolver.isMS(st_tuple):
+                # OB star; use Martins calibration
+                luminosity = self.calibration_table.lookup_characteristic('log_L', st_tuple)
+                luminosity = 10.**luminosity
+            else:
+                # Nonstandard star; nothing we can do
+                luminosity = np.nan
+            return luminosity * lum_unit
+        self.lum = STResolver.map_to_components(find_luminosity, (self.spectral_types,), f_list=u.Quantity)
+
+
+
+    """
+    WR instance methods
+    """
+
+    """
+    TODO:::::::::::::::::::::::: I LEFT OFF HERE
+    My plan is:
+    if you look at STResolver.link_powr_grids and stuff like that, it's already
+    pretty well set up to handle a bunch of random WR stars. I don't need
+    to duplicate that work.
+    There's nothing sacred about the possibility lists; they don't have to
+    match up to their keys (component spectral type strings) exactly. These
+    lists would be a good place to dump uncertainty
+
+    Ideally, I can use this function (sample_WR) to populate the class-wide
+    list exactly once, and just check to see if it's there every other time.
+    Then when I come across a WR star in __init__, instead of one possibility
+    in the list, I just link the entire class-wide list for that WR type.
+    self.spectral_types[component] = STResolver.wr_samples[component?]
+        I should go in and check if it's worth it to "memoize" the grids
+        associated with each WR sample. I suspect not; only a factor of 2-3.
+    The FUV integrated fluxes will already be memoized in find_FUV_flux,
+        so I'll save time there, especially for the WRs.
+    resolve_uncertainty shouldn't need to be changed much at all, either.
+    It just runs across the wider set of possibilities. Doesn't need to know
+        the difference between WR and OB.
+    """
 
     """
     Static methods
     """
+
+    @staticmethod
+    def sample_WR(st_tuple, nsamples=150):
+        """
+        Get a list of samples of parameters for a given WR spectral type.
+        This function handles some memoization since these samples
+            don't need to be recalculated.
+        This function will return the sampled list.
+
+        If it is not already memoized:
+        Populate a class-wide list of samples of all WR parameters.
+        The list will be contained in a dictionary keyed the same as
+            STResolver.wr_params and wr_uncertainties.
+        The list will be shared among all classes since the work is the same.
+        :param st_tuple: WR spectral type tuple, at least 2 elements
+        :param nsamples: number of parameter combinations to draw.
+            Not used if this spectral type has already been memoized.
+        """
+        # First, check if we already have it and return it if so
+        if st_tuple[:2] in STResolver.wr_samples:
+            # We have it memoized
+            return STResolver.wr_samples[st_tuple[:2]]
+        # Check if we have any info on this spectral type at all
+        elif st_tuple[:2] not in STResolver.wr_params:
+            # We don't have it; return list of single empty tuple
+            # This will play nicely with everything else
+            return [()]
+        # If not, calculate it
+        base_parameters = STResolver.wr_params[st_tuple[:2]]
+        uncertainties = STResolver.wr_uncertainties[st_tuple[:2]]
+        # Treat Gaussian and uniform uncertainties differently
+        samples_list = []
+        for p, p_e in zip(base_parameters, uncertainties):
+            if isinstance(p_e, tuple):
+                # Uniform uncertainty
+                # Half of samples from uniform distribution, other half are
+                # base parameter value. This weights toward the value.
+                param_samples = list(np.random.uniform(low=p_e[0], high=p_e[1], size=(nsamples//2)))
+                param_samples += [p]*(nsamples - len(param_samples))
+                # Shuffle values
+                random.shuffle(param_samples)
+                # This list should contain no negative values
+                samples_list.append(param_samples)
+            else:
+                # Gaussian uncertainty
+                param_samples = np.random.normal(p, p_e, size=nsamples)
+                # Resample any negatives
+                n_negatives = param_samples[param_samples <= 0].size
+                if n_negatives > 0:
+                    print('had to fix negatives')
+                    param_samples[param_samples <= 0] = np.random.normal(p, p_e, size=nsamples)
+                    # If there are any remaining negatives, set them to the base value
+                    param_samples[param_samples <= 0] = p
+                samples_list.append(list(param_samples))
+        # Modify the mass loss rates by the filling factor
+        # This should really drive the mass loss rate uncertainty
+        nominal_D = base_parameters[4]
+        mdot_list, D_list = samples_list[2], samples_list[4]
+        modified_mdot_list = [mdot * np.sqrt(nominal_D / D) for mdot, D in zip(mdot_list, D_list)]
+        samples_list[2] = modified_mdot_list
+        # Reshape to be nsamples-len list of tuples of the ~5 parameters
+        samples_list = list(zip(*samples_list))
+        # Memoize
+        STResolver.wr_samples[st_tuple[:2]] = samples_list
+        # Return it
+        return samples_list
+
+    @staticmethod
+    def isMS(st_tuple):
+        """
+        Check if this is a main sequence star
+        :param st_tuple: standard tuple format of spectral type
+        :returns: boolean, True if main sequence
+        """
+        return st_tuple[0] in parse_sptype.standard_types
 
     @staticmethod
     def isWR(st_tuple):
@@ -273,36 +582,78 @@ class STResolver:
     @staticmethod
     def get_WR_params(st_tuple):
         """
-        Retrieve the hardcoded WR parameters, or NaNs if not present
-        :param st_tuple: standard tuple format of spectral type
+        Retrieve the WR PoWR parameters, or NaNs if not present, from the
+            spectral type tuple. There are parameters embedded in the tuple
+            for WR stars (not for OB or other stars)
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars. 9 elements total.
         :returns: tuple(paramx, paramy), with float params
         """
-        all_params = STResolver.wr_params.get(st_tuple[:2], (np.nan,)*5)
-        paramx = all_params[0]
-        paramy = powr.PoWRGrid.calculate_Rt(all_params[1:])
-        return paramx, paramy
+        # Check if this WR tuple has parameters
+        if len(st_tuple) > 4:
+            # Calculate and return the parameters
+            paramx = st_tuple[4]
+            paramy = powr.PoWRGrid.calculate_Rt(*st_tuple[5:9])
+            return paramx, paramy
+        else:
+            # No parameters; we must not have values for this type
+            return np.nan, np.nan
 
     @staticmethod
     def get_WR_mdot(st_tuple):
         """
         Quick way to get the mass loss rate for the WR stars supported in this
         class.
-        :param st_tuple: standard tuple format of spectral type
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars.
         :returns: float mass loss rate (solMass / yr)
         """
-        all_params = STResolver.wr_params.get(st_tuple[:2], (np.nan,)*5)
-        return all_params[2]
+        if len(st_tuple) > 4:
+            return st_tuple[6]
+        else:
+            return np.nan
 
     @staticmethod
     def get_WR_vinf(st_tuple):
         """
         Quick way to get the terminal velocity for the WR stars supported in
         this class.
-        :param st_tuple: standard tuple format of spectral type
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars.
         :returns: float terminal velocity (km /s)
         """
-        all_params = STResolver.wr_params.get(st_tuple[:2], (np.nan,)*5)
-        return all_params[3]
+        if len(st_tuple) > 4:
+            return st_tuple[7]
+        else:
+            return np.nan
+
+    @staticmethod
+    def get_WR_luminosity(st_tuple):
+        """
+        Quick way to get the bolometric luminosity for the WR stars supported in
+        this class.
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars.
+        :returns: float terminal velocity (km /s)
+        """
+        if len(st_tuple) > 4:
+            return st_tuple[9]
+        else:
+            return np.nan
+
+    @staticmethod
+    def get_WR_mass(st_tuple):
+        """
+        Quick way to get the stellar mass for the WR stars supported in
+        this class.
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars.
+        :returns: float terminal velocity (km /s)
+        """
+        if len(st_tuple) > 4:
+            return st_tuple[10]
+        else:
+            return np.nan
 
     @staticmethod
     def select_powr_grid(st_tuple):
@@ -335,7 +686,7 @@ class STResolver:
             return None
 
     @staticmethod
-    def map_to_components(f, dictionaries):
+    def map_to_components(f, dictionaries, f_list=None):
         """
         Iterate through all possibilities of all components, operate callable
             f on them, and return a dictionary of the results
@@ -349,6 +700,10 @@ class STResolver:
             The dictionaries should all be structured the exact same way
                 as self.spectral_types
             If only one dictionary, then use a 1-element tuple: (x,)
+        :param f_list: optional function to operate on each list, the level
+            between the bottom level (operated on by f) and the top level
+            dictionary. This could be used, for example, to change the type
+            from list to another sequence (like Quantity)
         :returns: dictionary structured the same as self.spectral_types
         """
         # Set up return dictionary
@@ -361,25 +716,51 @@ class STResolver:
                 # possibility_args is a tuple of everything associated with this
                 #   spectral type possibility
                 f_of_possibilities.append(f(*possibility_args))
+            if f_list is not None:
+                f_of_possibilities = f_list(f_of_possibilities)
             return_dict[component] = f_of_possibilities
         return return_dict
 
     @staticmethod
-    def random_possibility(value_dictionary):
+    def random_possibility(value_dictionary, dont_add=False):
         """
         Pick a random possibility for each component from the value_dictionary
-        and return a dictionary of these values (same keys as value_dictionary)
-        Written June 12, 2020
+        and return the combination (mean if dont_add else sum) of the values
+        Written June 12, 2020, edited June 17, 2020
         :param value_dictionary: dictionary containing values associated with
             each possibility, which are in turn associated with binary components.
             Value dictionary should be structured like self.spectral_types.
-        Still under construction
+        :returns: scalar Quantity value, combination of random possibilities
+            for each component
         """
-        pass
+        selected_values = []
+        for component in value_dictionary:
+            # Get a possible value for each component
+            value = random.choice(value_dictionary[component])
+            # Get the unit (should still be there even if NaN)
+            value_unit = value.unit
+            if np.isfinite(value):
+                # Append if value is finite
+                selected_values.append(value)
+        if not selected_values:
+            # If no valid values, return 0
+            return 0. * value_unit
+        else:
+            # Cast to Quantity to avoid numpy errors
+            selected_values = u.Quantity(selected_values)
+            # Return the mean or sum of the component values
+            reduce_func = np.mean if dont_add else np.sum
+            return reduce_func(selected_values)
+
 
     @staticmethod
-    def resolve_uncertainty(value_dictionary, dont_add=False):
+    def resolve_uncertainty(value_dictionary, nsamples=300, dont_add=False,
+        return_samples=False):
         """
+        Need to rewrite description because this isn't accurate anymore.
+
+
+
         A function to deal with variation of values of some physical property
             across the uncertainty in the star's spectral type.
         By default, sums over binary components; the properties are assumed to
@@ -404,46 +785,56 @@ class STResolver:
             These will be NaN if the object couldn't be looked up at all
                 (all the values were NaN)
         """
-        # I have to do this loop thing because the NaNs really mess things up
-        # Apparently when I do np.nanmedian(NaN-only-quantity-array), the result
-        # is a DIMENSIONLESS NaN, which just totally doesn't make sense
-        # The final values from each component
-        component_values = []
-        # The final lower, upper bounds for each component
-        component_lo_bounds = []
-        component_hi_bounds = []
+        # Value dictionary should already have Quantity arrays
+        # Build list of sample arrays
+        component_samples = []
+        # Cycle through components and make sample arrays for those that have
+        # some valid possibilities
         for component in value_dictionary:
-            # Convert to Quantity arrays and get rid of NaNs
-            # If there aren't units, it's dimensionless. This works, np.array() doesn't
             values = u.Quantity(value_dictionary[component])
             value_unit = values.unit
             values_finite = values[np.isfinite(values)]
-            # Append unit-adjusted NaNs if there aren't any values to use
-            if values_finite.size == 0:
-                # This helps the units feel better about themselves
-                component_values.append(np.nan * value_unit)
-                component_lo_bounds.append(np.nan * value_unit)
-                component_hi_bounds.append(np.nan * value_unit)
+            if values_finite.size > 0:
+                samples_array = u.Quantity(random.choices(values_finite, k=nsamples))
+                component_samples.append(samples_array)
+        # Just walk case-by-case in how many stars have sample sequences,
+        # combine them based on dont_add flag
+        # Remember if it was the single option.
+        one_star_with_values = False
+        # Flag if there are no samples to return (for return_samples)
+        no_samples = False
+        if len(component_samples) == 0:
+            # No samples
+            no_samples = True
+        elif len(component_samples) == 1:
+            # One star with samples; prepare those samples
+            samples_array = component_samples.pop()
+            one_star_with_values = True
+        else:
+            # More than one star with samples
+            samples_array = u.Quantity(component_samples)
+            if not dont_add:
+                samples_array = np.sum(samples_array, axis=0)
             else:
-                # Use the median to get the value, min and max to get bounds
-                component_values.append(np.median(values_finite))
-                component_lo_bounds.append(np.min(values_finite))
-                component_hi_bounds.append(np.max(values_finite))
-        # Combine the upper and lower bounds; there should be no NaNs now
-        # Empty arrays will sum to 0... which is probably fine TBH, it'll be obvious
-        # This was also updated to keep the right units
-        reduce_func = mean_or_0 if dont_add else np.nansum
-        component_values = u.Quantity(component_values)
-        component_lo_bounds = u.Quantity(component_lo_bounds)
-        component_hi_bounds = u.Quantity(component_hi_bounds)
-        final_value = reduce_func(component_values)
-        final_lo_bound = reduce_func(component_lo_bounds)
-        final_hi_bound = reduce_func(component_hi_bounds)
-        # Adjust hi_bound to be + 1x final_value if binary and one component is unknown
-        # Only do this if we're adding binary properties
-        if not dont_add and (len(value_dictionary) == 2) and np.any(np.isnan(component_values)):
-            final_hi_bound += final_value
-        return final_value, (final_lo_bound, final_hi_bound)
+                samples_array = np.mean(samples_array, axis=0)
+
+        if return_samples:
+            # Return the full sample arrays if possible, zeros if not
+            if no_samples:
+                return np.zeros(nsamples) * value_unit
+            else:
+                return samples_array
+        else:
+            if no_samples:
+                # No samples; return zero (with units)
+                zero = 0. * value_unit
+                return zero, (zero, zero)
+            else:
+                # Calculate median and uncertainty and return those
+                return median_and_uncertainty(samples_array)
+                # I used to correct for missing binary component,
+                #   but I don't think it helps or matters
+                return final_value, (lo_err, hi_err) # Lower bar is negative
 
     """
     Stuff for printing
@@ -475,10 +866,11 @@ class STResolver:
             dictionary = self.spectral_types
         # Print a bunch of information out
         print(str(self))
+        space4 = " "*4
         for component in dictionary:
-            print("|*\t " + component)
-            for possibility in dictionary[component]:
-                print("|-\t|p\t", f(possibility))
+            print(f"|*{space4}{component}")
+            for possibility, name in zip(dictionary[component], self.spectral_types[component]):
+                print(f"|-{space4} - p({parse_sptype.st_tuple_to_string(name)}){space4}\t{f(possibility)}")
 
 
 def mean_or_0(arg):
@@ -493,3 +885,203 @@ def mean_or_0(arg):
         return np.nansum(arg)
     else:
         return result
+
+
+
+class CatalogResolver:
+    """
+    A wrapper for STResolver when applied to a number of stars.
+    """
+
+    def __init__(self, sptype_list,
+        calibration_table=None, leitherer_table=None, powr_dict=None):
+        """
+        :param sptype_list: some iterable sequence of string spectral types
+             that could individually be read by STResolver
+        :param calibration_table: Martins or Sternberg table, STTable object
+        :param leitherer_table: LeithererTable object
+        :param powr_dict: dictionary of PoWRGrid objects
+        """
+        # Link all tables/grids
+        self.calibration_table = calibration_table
+        self.leitherer_table = leitherer_table
+        self.powr_dict = powr_dict
+        # Make the STResolver instances
+        self.star_list = [STResolver(s, container=self) for s in sptype_list]
+        # Populate the instances with possible values for every property
+        # based on spectral type uncertainty
+        for s in self.star_list:
+            s.populate_all()
+
+    def __getattr__(self, name):
+        """
+        Overloading __getattr__ to try to find a property.
+        Relies on STResolver to check if it's a valid property.
+        Methods prefixed with "get_" will get a single value and uncertainty
+            combined+sampled from values across the entire cluster.
+        Methods prefixed with "get_array_" will get the values and uncertainties
+            for each cluster member and will not combine them.
+
+        Note about this and STResolver's __getattr__:
+            In STResolver, the "get_array_" prefix means "return an array of
+            samples for this star". Using the "get_" prefix in CatalogResolver
+            causes calls to the "get_array_" methods in STResolver, since we
+            need to sample across all stars to get the single cluster value and
+            uncertainty.
+            In STResolver, the "get_" prefix means "return the value and
+            uncertainty directly, already calculated from samples".
+            Using the "get_array_" prefix in CatalogResolver causes calls to the
+            "get_" methods in STResolver, since we do not need to sample across
+            the cluster. We can let STResolver do the work it already knows
+            how to do.
+        """
+        try:
+            # See if the method exists
+            getattr(self.star_list[0], name)(nsamples=1)
+        except Exception as e:
+            attrib_e = AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+            # Use the "from" statement to assign blame (cause)
+            raise attrib_e from e
+        # Check what kind of call this is
+        if "array" in name:
+            # We want a list of individual star values and uncertainties
+            call_to_star = name.replace('get_array_', 'get_')
+            reduce_cluster = False
+        else:
+            # We want a single value and uncertainty combined across cluster
+            call_to_star = name.replace('get_', 'get_array_')
+            reduce_cluster = True
+        # Make a property getter function to be called upon return
+        def property_getter_method(**kwargs):
+            # kwargs can have "nsamples", "star_mask", or "map_function" arguments
+            # Get the star mask (this way we can select which stars to include
+            # in calculations)
+            star_mask = kwargs.pop('star_mask', None)
+            if star_mask is None:
+                # Use all stars by default
+                star_mask = [True]*len(self.star_list) # Lazy "else" list creation
+            # Check if we are mapping a function onto cluster realizations
+            map_function = kwargs.pop('map_function', None)
+            # Prepare to collect quantity arrays
+            all_star_results = []
+            for msk, s in zip(star_mask, self.star_list):
+                if not msk:
+                    # Star mask is False; skip
+                    continue
+                # Pass off the bulk of the work to STResolver, using
+                # the "get_array_" prefix to signal returning sample arrays
+                # or the "get_" prefix to return values & uncertainties
+                star_result = getattr(s, call_to_star)(**kwargs)
+                all_star_results.append(star_result)
+            if reduce_cluster:
+                # We are reducing the cluster to value & uncertainty
+                # Make 2D Quantity, 0th dimension is stars, 1st is realizations
+                all_star_results = u.Quantity(all_star_results)
+                # Get the desired reduction function
+                reduce_func = np.mean if ('velocity' in name) else np.sum
+                # Check map_function argument and decide which function to use
+                if map_function is not None:
+                    return CatalogResolver.map_and_reduce_cluster(all_star_results, map_function, reduce_func=reduce_func)
+                else:
+                    return CatalogResolver.reduce_cluster(all_star_results, reduce_func=reduce_func)
+            else:
+                # We are returning the results as is
+                return all_star_results
+        return property_getter_method
+
+    def __str__(self):
+        text = f"<Catalog of {len(self.star_list)} stars>"
+        return text
+
+    def __repr__(self):
+        text = f"<CatalogResolver({len(self.star_list)})>"
+        return text
+
+    def reduce_cluster(star_samples, reduce_func=np.sum):
+        """
+        Reduce a set of cluster realizations.
+        :param star_samples: 2D Quantity array.
+            Must be star_samples.shape[0] == len(self.star_list).
+            shape[1] is the realization dimension.
+        :param reduce_func: function used to reduce cluster. Default is sum.
+            Needs to be a numpy function that can operate on arrays
+        :returns: value or array of shape u.Quantity(star_samples).shape[2:]
+            Almost certainly a float, in the case of this function.
+        """
+        # 2D Quantity array; 0th dimension is stars, 1st is realizations
+        # Reduce all the star samples into full cluster samples
+        cluster_samples = reduce_func(star_samples, axis=0)
+        # Return the median value and error bars
+        return median_and_uncertainty(cluster_samples)
+
+
+    def map_and_reduce_cluster(star_samples, func_to_map, reduce_func=np.sum):
+        """
+        Map a function onto each cluster realization before reducing it and
+        sampling from those cluster realizations. This function expects (though
+        does not assume) that the func_to_map will increase the dimensionality
+        of the realization array, so we take steps to save memory at the expense
+        of time. Rather than creating a single 2+D Quantity array and running
+        the reduce and median/ uncertainty functions on that single array, this
+        will loop through individual cluster realizations, reduce them one by
+        one, and append the reduction to a list. When this is complete, the
+        reduced list will be (turned into a Quantity and) passed to the
+        median/uncertainty functions.
+
+        :param star_samples: list of Quantity arrays
+            Must be len(star_samples) == len(self.star_list)
+            The Quantity arrays must all be the same shape.
+        :param func_to_map: a function designed to operate on the Quantity
+            arrays that make up the star_samples list.
+            It should expect Quantity arrays of length len(self.star_list) and
+            ordered as such.
+            It should return arrays whose 0th dimension is the same size as the
+            Quantity array.
+            In other words, the 0th dimension of the return array should be the
+            realization axis. Other dimensions, if they exist, are not touched,
+            and will be passed through the reduction and median/uncertainty
+            processes.
+        :param reduce_func: function used to reduce cluster. Default is sum.
+            Needs to be a numpy function that can operate on arrays
+        :returns: value or array of shape u.Quantity(star_samples).shape[2:]
+            In other words, shape of the "other dimensions" if they exist.
+        """
+        # Prepare cluster_samples list
+        cluster_samples = []
+        # Loop through realizations (j dimension)
+        for j in range(star_samples.shape[1]):
+            # Extract a single cluster realization, len == number of stars
+            single_realization = star_samples[:, j] # 1D array
+            # Apply function to the realization array
+            single_realization = func_to_map(single_realization) # (n+1)D
+            # Reduce the realization and add to the list
+            single_realization = reduce_func(single_realization, axis=0) # nD
+            cluster_samples.append(single_realization)
+        # Cast to a 1+D Quantity array (more manageable than 2+D)
+        cluster_samples = u.Quantity(cluster_samples)
+        # Return the median value and error bars
+        return median_and_uncertainty(cluster_samples)
+
+
+"""
+Functions used by both STResolver and CatalogResolver
+"""
+
+def median_and_uncertainty(realizations_array):
+    """
+    Find the median value and error bars.
+    Error bars use first and last quantiles.
+    See code description of "N_QUANTILE" global variable.
+    :param realizations_array: Quantity array, collection of cluster values.
+        The shape doesn't matter as long as the 0th axis is the realization
+        axis.
+    :returns: value, (lower_error_bar, upper_error_bar)
+        Each of these has the shape realizations_array.shape[1:]
+    """
+    value = np.median(realizations_array, axis=0)
+    # Get upper and lower bounds, convert to uncertainties
+    # flquantiles is built for 0th sample axis
+    lower, upper = misc_utils.flquantiles(realizations_array, N_QUANTILE)
+    lo_err, hi_err = lower - value, upper - value # lower bound < 0
+    # Return median, (lower_bound, upper_bound) of samples
+    return value, (lo_err, hi_err)

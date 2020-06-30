@@ -17,13 +17,10 @@ from astropy import units as u
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 
-from misc_utils import flquantiles
-from catalog_read import load_final_catalog_df
-import catalog_spectral
-import catalog_utils
-import g0_dust
+from . import misc_utils
+from . import catalog
 
-data_directory = catalog_utils.ancillary_data_path
+data_directory = catalog.utils.ancillary_data_path
 
 rcw_dist = 4.16*u.kpc
 
@@ -33,16 +30,42 @@ Finish preparing the catalog with physical properties
 This step uses catalog_spectral.py functions
 """
 def main():
-    catalog_df = load_final_catalog_df()
-    catalog_df = convert_ST_to_properties(catalog_df)
+    # Seed random number generators
+    catalog.spectral.stresolver.random.seed(1312)
+    np.random.seed(1312)
+
+    catalog_df = catalog.parse.load_final_catalog_df()
 
     # catalog_df = filter_by_within_range(catalog_df)
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=3.)
+    # print(3, end=": ")
+    # print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=6.)
+    # print(6, end=": ")
+    # print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=12.)
+    # print(12, end=": ")
+    # print(len(catalog_df.loc[catalog_df['is_within_12.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
+    catalog_df = filter_by_only_WR(catalog_df) # ['is_WR']
+    catr = convert_catalog_to_CatalogResolver(catalog_df)
+    # prepare_and_save_catalog(catalog_df, catr)
+    # return
 
+    cii_mom0, cii_w = catalog.utils.load_cii(2)
 
-    # catalog_utils.save_df_html(catalog_df)
+    # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
+    print("all calculations below limited to 3 arcmin radius from Wd2")
+    print("OB STARS")
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(~catalog_df['is_WR']))
+    print()
+    print("WR STARS")
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(catalog_df['is_WR']))
+    print()
+    print("ALL STARS")
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False)
+
+    return
+    catalog.utils.save_df_html(catalog_df)
 
     # Option here to copy the improved make_wcs and make_wcs_like functions from mosaic_vlt.py
     # We can just use CII's WCS in the meantime
@@ -51,47 +74,32 @@ def main():
     # print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin']]))
     # print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin']]))
 
-    cii_mom0, cii_w = catalog_utils.load_cii(2)
-    # calc_and_plot_g0(catalog_df, cii_mom0, cii_w)
     # calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
 
     ## Experiment to see what WR stars mass loss looks like (May 22, 2020)
-    catalog_df = filter_by_only_WR(catalog_df)
     catalog_df = catalog_df.loc[~catalog_df['is_WR']]
     # calc_and_plot_and_save_WR_wind_power(catalog_df, cii_w, rcw_dist, saving=True, radius_arcmin=6.)
     calc_and_plot_mdot(catalog_df, cii_mom0, cii_w)
     return
 
 
-def convert_ST_to_properties(catalog_df):
+def convert_catalog_to_CatalogResolver(catalog_df):
     """
-    Applies catalog_spectral.STResolver to the catalog created in catalog_read
-    :param df: the final catalog from catalog_read
+    Generate a CatalogResolver object from a catalog DataFrame
+    :param catalog_df: pandas DataFrame with 'Spectral' column whose values
+        are individually readable by STResolver
+    :returns: CatalogResolver
     """
-    # Make STResolver objects
-    catalog_df['ST_obj'] = catalog_df['Spectral'].apply(catalog_spectral.STResolver)
     # Make the PoWR objects
-    powr_tables = {x: catalog_spectral.PoWRGrid(x) for x in ('OB', 'WNE', 'WNL')}
-    # Make the Sternberg tables object
-    sb_tables = catalog_spectral.S03_OBTables()
-    catalog_df['ST_obj'].apply(lambda s: s.link_powr_grids(powr_tables))
-    # Use a helper function to do this quickly
-    def apply_and_unpack(fn_to_apply_to_STobj, name_of_property):
-        """
-        Helper function to unpack values and uncertainties
-        Modifies catalog_df in place
-        """
-        tmp = catalog_df['ST_obj'].apply(fn_to_apply_to_STobj)
-        catalog_df[name_of_property+'_med'] = tmp.apply(lambda x: x[0])
-        catalog_df[name_of_property+'_lo'] = tmp.apply(lambda x: x[1][0])
-        catalog_df[name_of_property+'_hi'] = tmp.apply(lambda x: x[1][1])
-    # Get FUV flux
-    apply_and_unpack(lambda s: s.get_FUV_flux(), 'FUV')
-    # Get stellar wind mass loss rate
-    apply_and_unpack(lambda s: s.get_mass_loss_rate(sb_tables), 'Mdot')
-    # Get stellar wind terminal velocity
-    apply_and_unpack(lambda s: s.get_terminal_wind_velocity(sb_tables), 'vinf')
-    return catalog_df
+    powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNE', 'WNL')}
+    # Make the Martins tables object
+    cal_tables = catalog.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
+    # Make Leitherer tables object
+    ltables = catalog.spectral.leitherer.LeithererTable()
+    # Create CatalogResolver instance
+    catr = catalog.spectral.stresolver.CatalogResolver(catalog_df['Spectral'].values,
+        calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
+    return catr
 
 
 def filter_by_within_range(catalog_df, radius_arcmin=6.):
@@ -104,7 +112,7 @@ def filter_by_within_range(catalog_df, radius_arcmin=6.):
     if not isinstance(radius_arcmin, u.Quantity):
         radius_arcmin = radius_arcmin * u.arcmin
     def within_range(coord):
-        return coord.separation(catalog_utils.wd2_center_coord) < radius_arcmin
+        return coord.separation(catalog.utils.wd2_center_coord) < radius_arcmin
     catalog_df[f'is_within_{radius_arcmin.to(u.arcmin).to_value():.1f}_arcmin'] = catalog_df['SkyCoord'].apply(within_range)
     return catalog_df
 
@@ -122,23 +130,31 @@ def filter_by_only_WR(catalog_df):
     return catalog_df
 
 
-def calc_g0(catalog_df, wcs_obj, distance_los):
+def calc_g0(catalog_df, catr, wcs_obj, distance_los, catalog_mask=None):
     """
-    Create an array of G0 in Habing units (average 1-D IRF) given the catalog
+    Create an array of G0 in Habing units (average 1-D ISRF) given the catalog
         with FUV fluxes and a WCS object for the array
-    Also returns lower, upper limits
-    :param catalog_df: needs to have "FUV_med", "FUV_lo", "FUV_hi",
-        and "SkyCoord" columns
+    Also returns uncertainty (lower_bar, upper_bar)
+    :param catalog_df: needs to have "SkyCoord" column
+    :param catr: CatalogResolver object
     :param wcs_obj: a WCS object that describes a region around these stars
     :param distance_los: a Quantity or float distance. If float, assumed to
         be in parsecs
+    :param catalog_mask: pandas Series or something that can get passed right
+        into catalog_df.loc[catalog_mask]
     :returns: val, lo, hi as arrays
     """
     # Habing unit
     radfield1d = 1.6e-3 * u.erg / (u.cm*u.cm * u.s)
+    # Mask the catalog_df and prepare a star_mask for the CatalogResolver
+    if catalog_mask is not None:
+        star_mask = list(catalog_mask.values)
+        catalog_df = catalog_df.loc[catalog_mask]
+    else:
+        star_mask = None
     # Make distance array function
     def inv_dist_f(coord):
-        return 1./(4*np.pi * catalog_utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
+        return 1./(4*np.pi * catalog.utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
     # Get inverse distance array AND INCLUDE 4PI (I think)
     # If I rewrote distance_from_point_, I could maybe do this with SkyCoord arrays.
     # As it's written now, this needs to be done as DataFrame.apply to each SkyCoord
@@ -147,79 +163,74 @@ def calc_g0(catalog_df, wcs_obj, distance_los):
     """
     This could be a good place to look at the effects of distance uncertainties too
     """
-    # Make fuv function to do this quickly
-    def sum_fuv(fuv_flux_array):
+    # Make fuv function to send to CatalogResolver.map_and_reduce_cluster
+    def illumination_distance(fuv_flux_array):
         """
-        :param fuv_flux_array: some kind of Quantity in power units,
+        :param fuv_flux_array: Quantity array in power units,
             should be the same shape as the inv_dist.shape[0]
         """
-        fuv_flux_array = u.Quantity(list(fuv_flux_array.values))
-        return (np.sum(inv_dist * fuv_flux_array[:, np.newaxis, np.newaxis], axis=0) / radfield1d).decompose()
-    # Get the (median) radiation field value
-    fuv_med = sum_fuv(catalog_df['FUV_med'])
-    # Get the lower and upper limits based on FUV uncertainty
-    fuv_lo = sum_fuv(catalog_df['FUV_lo'])
-    fuv_hi = sum_fuv(catalog_df['FUV_hi'])
-    # Returns val, (lo, hi)
-    return fuv_med, fuv_lo, fuv_hi
+        return inv_dist * fuv_flux_array[:, np.newaxis, np.newaxis]
+    # Get the median radiation field value and uncertainty
+    val, uncertainty = catr.get_FUV_flux(map_function=illumination_distance, star_mask=star_mask)
+    lo, hi = uncertainty
+    # Fix the units: divide by 1D radiation field and decompose units
+    quick_fix_units = lambda x: (x / radfield1d).decompose()
+    val = quick_fix_units(val)
+    lo, hi = quick_fix_units(lo), quick_fix_units(hi)
+    # Returns val, (lo_bar, hi_bar)
+    return val, (lo, hi)
 
 
-def calc_mdot(catalog_df):
+def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False,
+    additional_condition=None, age=2.e6):
     """
-    Sum up the mass loss rates of all the objects
-    :returns: val, lo, hi
+    Calculate mass loss rate and kinetic energy and the 2 Myr mass and energy
+        totals.
+    :param catalog_df: needs to have "SkyCoord" column
+    :param catr: CatalogResolver object
+    :param cii_mom0: CII moment0 map, numpy array
+    :param cii_w: CII map WCS object
+    :param plotting: True if we want plots
+    :param additional_condition: pandas series (or equivalent) boolean True
+        if star should be included. Gets &-ed with 'is_within_3.0_arcmin',
+        so cannot use this to include stars outside this radius
     """
-    # Make mdot function to do this quickly
-    def sum_mdot(mdot_array):
-        return np.sum(u.Quantity(list(mdot_array.values)))
-    # Get the (median) value
-    mdot_med = sum_mdot(catalog_df['Mdot_med'])
-    # Get the lower and upper bounds
-    mdot_lo = sum_mdot(catalog_df['Mdot_lo'])
-    mdot_hi = sum_mdot(catalog_df['Mdot_hi'])
-    return mdot_med, mdot_lo, mdot_hi
+    star_mask_series = catalog_df['is_within_3.0_arcmin']
+    if additional_condition is not None:
+        star_mask_series = star_mask_series & additional_condition
+    star_mask = star_mask_series.values
+    mdot_med, mdot_err = catr.get_mass_loss_rate(star_mask=star_mask)
+    mvflux_med, mvflux_err = catr.get_momentum_flux(star_mask=star_mask)
+    ke_med, ke_err = catr.get_mechanical_luminosity(star_mask=star_mask)
+    fuv_tot_med, fuv_tot_err = catr.get_FUV_flux(star_mask=star_mask)
+    print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
+    print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
+    print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.s))}")
+    print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
+    mass_med, mass_err = catr.get_stellar_mass(star_mask=star_mask)
+    lum_med, lum_err = catr.get_bolometric_luminosity(star_mask=star_mask)
+    print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")
+    print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
 
-
-def calc_KE(catalog_df):
-    """
-    Sum up mechanical luminosity, calculated by multiplying 0.5 * mdot * vinf**2
-    :returns: val, lo, hi
-    """
-    # Make function to do this quickly
-    def sum_ke(suffix):
-        mdot = u.Quantity(list(catalog_df['Mdot'+suffix]))
-        vinf = u.Quantity(list(catalog_df['vinf'+suffix]))
-        ke_over_time = (mdot * vinf**2 / 2.)
-        return np.sum(ke_over_time).to(u.erg / u.s)
-    suffixes = ('_med', '_lo', '_hi')
-    ke_med, ke_lo, ke_hi = (sum_ke(s) for s in suffixes)
-    return ke_med, ke_lo, ke_hi
-
-
-def calc_and_plot_mdot(catalog_df, cii_mom0, cii_w, plotting=False):
-    mdot_med, mdot_lo, mdot_hi = calc_mdot(catalog_df.loc[catalog_df['is_within_3.0_arcmin']])
-    ke_med, ke_lo, ke_hi = calc_KE(catalog_df.loc[catalog_df['is_within_3.0_arcmin']])
-    dl, du = mdot_med - mdot_lo, mdot_hi - mdot_med
-    print(f"MDOT: {mdot_med:.1E}, [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
-    dl, du = ke_med - ke_lo, ke_hi - ke_med
-    print(f"MECH LUM: {ke_med:.1E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
-    age = 2.e6*u.year
-    dl, du = (mdot_med - mdot_lo)*age, (mdot_hi - mdot_med)*age
-    print(f"Mass ejected over {age:.1}: {mdot_med*age:.2f} [-{dl.to_value():.2f}, +{du.to_value():.2f}]")
-    dl, du = ((ke_med - ke_lo)*age).to(u.erg), ((ke_hi - ke_med)*age).to(u.erg)
-    print(f"Thermal energy over {age:.1}: {(ke_med*age).to(u.erg):.2E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
-    print(f"{(ke_lo*age).to(u.erg):.2E}, {(ke_hi*age).to(u.erg):.2E}")
+    age = age*u.year
+    ej_mass_med = mdot_med * age
+    ej_mass_err = tuple(x*age for x in mdot_err)
+    thermE_med = ke_med * age
+    thermE_err = tuple(x*age for x in ke_err)
+    print(f"Mass ejected over {age:.1}:   {print_val_err(ej_mass_med, ej_mass_err, exp=False)}")
+    print(f"Thermal energy over {age:.1}: {print_val_err(thermE_med, thermE_err, extra_f=lambda x: x.to(u.erg))}")
 
     if plotting:
         plt.figure(figsize=(11, 8))
         plt.subplot(111, projection=cii_w)
-        plt.title(f"[CII] Moment 0 (-8 to -4 km/s); Mdot = {mdot_med:.1E} [-{dl.to_value():.2E}, +{du.to_value():.2E}]")
+        plt.title(f"[CII] Moment 0 (-8 to -4 km/s); Mdot = {mdot_med:.1E} [{mdot_err[0].to_value():+.2E}, {mdot_err[1].to_value():+.2E}]")
         plt.imshow(cii_mom0, origin='lower')
-        catalog_utils.plot_coordinates(None, SkyCoord(catalog_df.loc[catalog_df['is_within_3.0_arcmin'], 'SkyCoord'].values), setup=False, show=False)
-        plt.savefig("figures/mdot_may29-2020.png")
+        catalog.utils.plot_coordinates(None, SkyCoord(catalog_df.loc[star_mask_series, 'SkyCoord'].values), setup=False, show=False)
+        plt.savefig(f"{catalog.utils.figures_path}mdot_june19-2020.png")
 
 
 def calc_and_plot_and_save_WR_wind_power(catalog_df, wcs_obj, distance_los, plotting=False, saving=False, radius_arcmin=12.0):
+    raise NotImplementedError
     """
     This is a very hardcoded function serving a very specific purpose
     I want to see what the wind power from only the WR stars looks like across
@@ -230,7 +241,7 @@ def calc_and_plot_and_save_WR_wind_power(catalog_df, wcs_obj, distance_los, plot
     catalog_df = catalog_df.loc[~catalog_df['is_WR'] & catalog_df[f'is_within_{radius_arcmin:.1f}_arcmin']]
     # Make distance array function (copied from calc_g0)
     def inv_dist_f(coord):
-        return 1./(4*np.pi * catalog_utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
+        return 1./(4*np.pi * catalog.utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
     inv_dist = u.Quantity(list(catalog_df['SkyCoord'].apply(inv_dist_f).values))
     mdot_array = u.Quantity(list(catalog_df['Mdot_hi'].values))
     mdot_total_grid = (np.sum(inv_dist * mdot_array[:, np.newaxis, np.newaxis], axis=0) / standard_unit).decompose()
@@ -248,8 +259,9 @@ def calc_and_plot_and_save_WR_wind_power(catalog_df, wcs_obj, distance_los, plot
 
 
 
-def calc_and_plot_g0(catalog_df, cii_mom0, cii_w):
-    fuv_med, fuv_lo, fuv_hi = calc_g0(catalog_df.loc[catalog_df['is_within_6.0_arcmin']], cii_w, rcw_dist)
+def calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w):
+    fuv_med, fuv_error = calc_g0(catalog_df, catr, cii_w, rcw_dist, catalog_mask=catalog_df['is_within_6.0_arcmin'])
+    fuv_lo, fuv_hi = fuv_error
     coords = SkyCoord(catalog_df.loc[catalog_df['is_within_6.0_arcmin'], 'SkyCoord'].values)
 
     plt.figure(figsize=(13, 15))
@@ -259,39 +271,78 @@ def calc_and_plot_g0(catalog_df, cii_mom0, cii_w):
     plt.title(f"[CII] Moment 0 map (-8 to -4 km/s)")
     plt.imshow(cii_mom0, origin='lower')
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
 
     # Median value
     plt.subplot(222, projection=cii_w)
     plt.title("log(G0) in Habing units (median)")
     plt.imshow(np.log10(fuv_med.value), origin='lower', vmin=2.8, vmax=4.7)
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
 
     # Low value
-    dl = (fuv_med - fuv_lo).value
     plt.subplot(223, projection=cii_w)
     plt.title("log(G0) in Habing units (lower uncertainty)")
-    plt.imshow(np.log10(dl), origin='lower', vmin=1.8, vmax=3.7)
+    plt.imshow(np.log10((-fuv_lo).value), origin='lower', vmin=1.8, vmax=3.7)
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
 
     # High value
-    du = (fuv_hi - fuv_med).value
     plt.subplot(224, projection=cii_w)
     plt.title("log(G0) in Habing units (upper uncertainty)")
-    plt.imshow(np.log10(du), origin='lower', vmin=1.8, vmax=3.7)
+    plt.imshow(np.log10(fuv_hi.value), origin='lower', vmin=1.8, vmax=3.7)
     plt.colorbar()
-    catalog_utils.plot_coordinates(None, coords, setup=False, show=False)
+    catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
     # plt.show()
     plt.tight_layout()
-    plt.savefig("figures/g0_may7-2020.png")
+    plt.savefig(f"{catalog.utils.figures_path}g0_june19-2020.png")
 
 
-def prepare_and_save_catalog(catalog_df):
+def assign_individual_properties(catalog_df, catr, save=False):
+    """
+    June 28, 2020: gonna see if I can mod this to save all the individual
+    star property values+errors to the DataFrame and then save it
+    """
+    # Only do within 12 arcsec, that'll exclude most things we don't care about
+    star_mask_series = catalog_df['is_within_12.0_arcmin']
+    star_mask = star_mask_series.values
+    attributes = [
+        'mass_loss_rate', 'mechanical_luminosity',
+        'momentum_flux',
+        'FUV_flux', 'stellar_mass', 'bolometric_luminosity',
+    ]
+    for attr in attributes:
+        full_cat_list = getattr(catr, 'get_array_'+attr)()
+        value_list, lo_err_list, hi_err_list = [], [], []
+        for v, e in full_cat_list:
+            value_list.append(v)
+            lo_err_list.append(e[0])
+            hi_err_list.append(e[1])
+        value_list = u.Quantity(value_list)
+        lo_err_list = u.Quantity(lo_err_list)
+        hi_err_list = u.Quantity(hi_err_list)
+        field_name = catalog.spectral.stresolver.STResolver.property_names[attr]
+        unit_name = str(value_list.unit)
+        value_name = f"{field_name} ({unit_name})"
+        lo_err_name = f"{field_name}_LO ({unit_name})"
+        hi_err_name = f"{field_name}_HI ({unit_name})"
+        catalog_df[value_name] = value_list.to_value()
+        catalog_df[lo_err_name] = lo_err_list.to_value()
+        catalog_df[hi_err_name] = hi_err_list.to_value()
+    if save:
+        catalog_df = catalog_df.copy()
+        catalog_df['RA'] = catalog_df['SkyCoord'].apply(lambda x: x.ra.deg)
+        catalog_df['DEC'] = catalog_df['SkyCoord'].apply(lambda x: x.dec.deg)
+        catalog_df = catalog_df.drop('SkyCoord', 1)
+        fn = f"{data_directory}catalogs/Ramsey/june28_2020_catalog_properties.csv"
+        catalog_df.to_csv(fn)
+    # catalog.utils.save_df_html(catalog_df)
+    return
+    raise NotImplementedError
     """
     Operates on a copy of the catalog, making python objects into more general
         values (SkyCoords to RA,Dec, Quantities to floats)
+    Takes the CatalogResolver object and populates some useful columns
     """
     catalog_df = catalog_df.copy()
     columns_to_keep = []
@@ -316,474 +367,15 @@ def prepare_and_save_catalog(catalog_df):
     catalog_df.loc[catalog_df['is_within_3.0_arcmin'], columns_to_keep].to_csv(cat_path+"Wd2_within3arcmin_OB_catalog_May-7-2020.csv")
 
 
-"""
-$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-"""
-def original_g0_calculation():
-    """
-    This is the November 2019 version; it had a lot of left-aligned code,
-    so it can't really be imported, which is a bummer
-    """
-    # spitzer irac generator
-    def irac_data(wl):
-        i = [3.6, 4.5, 5.8, 8.0].index(wl) + 1
-        fn =  "{:s}spitzer/irac/30002561.30002561-28687.IRAC.{:1d}.median_mosaic.fits".format(data_directory, i)
-        data, image_header = fits.getdata(fn, header=True)
-        return data, image_header, image_header['WAVELEN']
-    # herschel spire/pacs generator
-    def herschel_data(wl):
-        i = [70, 160, 250, 350, 500].index(wl)
-        folder = ["HPPJSMAPB", "HPPJSMAPR", "extdPSW", "extdPMW", "extdPLW"][i]
-        fn = glob.glob(f"{data_directory}herschel/anonymous1571176316/1342255009/level2_5/{folder}/*.fits*").pop()
-        with fits.open(fn) as hdul:
-            global_header = hdul[0].header
-            data = hdul[1].data
-            image_header = hdul[1].header
-        return data, image_header, global_header['WAVELNTH']
-    # herschel SED fit on 350 grid cutout generator
-    def herschel_SED_fit():
-        fn = f"{data_directory}herschel/RCW49large_3p.fits"
-        with fits.open(fn) as hdul:
-            T = hdul[1].data
-            image_header = hdul[1].header
-        return T, image_header, 'T'
-    # herschel spire/pacs processed data generator
-    def processed_herschel_data(wl):
-        band_stub = {70:"PACS70um", 160:"PACS160um", 250:"SPIRE250um", 350:"SPIRE350um", 500:"SPIRE500um"}
-        offset = {70: 80, 160: 370}
-        folder = f"{data_directory}herschel/helpssproc/processed/1342255009_reproc350/"
-        offset_stub = f"-plus{offset[wl]:06d}" if wl in offset else ""
-        fn = f"{folder}{band_stub[wl]}-image-remapped-conv{offset_stub}.fits"
-        data, image_header = fits.getdata(fn, header=True)
-        return data, image_header, image_header['WAVELNTH']
-    # sofia data that Maitraiyee emailed me on nov 18 2019
-    def sofia_data_integrated():
-        data, header = fits.getdata(f"{data_directory}sofia/rcw49-cii-int.fits", header=True)
-        header.set('NAXIS', value=2)
-        for k in header:
-            if '3' in k:
-                header.remove(k)
-        return data[0, :, :], header, 157
-
-    def plot_spire(subplot=111):
-        ### READY TO PLOT SPIRE 500 IN GREY
-        img_data, img_header, wl = herschel_data(500)
-        img_data = np.arcsinh(img_data)
-        vmin, vmax = flquantiles(img_data[~np.isnan(img_data)].ravel(), 50)
-        print("vlims: {:.2f}, {:.2f}".format(vmin, vmax), img_data.shape)
-        plt.subplot(subplot, projection=WCS(img_header))
-        plt.imshow(img_data, vmin=vmin, vmax=7, cmap='gray_r')
-        plt.xlabel("RA")
-        plt.ylabel("DEC")
-        # CDELT1=-0.003888888888889
-
-    def plot_irac(subplot=111):
-        ### READY TO PLOT IRAC 3.6um IN GREY
-        img_data, img_header, wl = irac_data(3.6)
-        img_data = np.arcsinh(img_data)
-        vmin, vmax = flquantiles(img_data[~np.isnan(img_data)].ravel(), 50)
-        print("vlims: {:.2f}, {:.2f}".format(vmin, vmax), img_data.shape)
-        plt.subplot(subplot, projection=WCS(img_header))
-        plt.imshow(img_data, vmin=vmin, vmax=4.3, cmap='gray_r')
-        plt.xlabel("RA")
-        plt.ylabel("DEC")
-
-    def plot_sofia_integrated(subplot=111):
-        ### READT TO PLOT SOFIA INTEGRATED [CII] INTENSITY (moment 0)
-        img_data, img_header, wl = sofia_data_integrated()
-        vmin, vmax = 8, 400
-        plt.subplot(subplot, projection=WCS(img_header, naxis=2))
-        plt.imshow(img_data, vmin=vmin, vmax=vmax, cmap='gray_r')
-        plt.xlabel("RA")
-        plt.ylabel("DEC")
+def print_val_err(val, err, exp=True, extra_f=None):
+    if extra_f is None:
+        extra_f = lambda x : x # identity function
+    val = f"{extra_f(val):.1E}" if exp else f"{extra_f(val):.1f}"
+    str_func = lambda x : f"{extra_f(x).to_value():+.1E}" if exp else f"{extra_f(x).to_value():+.1f}"
+    lo, hi = (str_func(x) for x in err)
+    return f"{val} [{lo}, {hi}]"
 
 
-    radec_df = pd.read_pickle(f"{data_directory}catalogs/Ramsey/OBradec.pkl")
-    readstartypes.reduce_catalog_spectral_types(radec_df)
-    readstartypes.get_catalog_properties_vacca(radec_df, 'Teff')
-    readstartypes.get_catalog_properties_vacca(radec_df, 'log_g')
-
-    radec_df.to_html("~/Downloads/test.html")
-    sys.exit()
-
-    wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg))
-    # Find everything within 11 arcminutes of the center (the rough size of the nebula on the sky)
-    def within_range(star_row):
-        return star_row.coords.separation(wd2_center_coord).arcmin < 11
-    is_within_range = radec_df.apply(within_range, axis=1)
-
-    def get_transform():
-        return plt.gca().get_transform('world')
-
-    def get_radec(df):
-        return df.RAdeg, df.DEdeg
-
-    def plot_all_ET_vs_ST():
-        plt.figure(figsize=(14, 9))
-        plot_spire()
-        mask = radec_df.SpectralType != 'ET'
-        plt.scatter(*get_radec(radec_df.loc[mask]), marker='x',
-            color='blue', transform=get_transform(), label='ST')
-        plt.scatter(*get_radec(radec_df.loc[~mask]), marker='x',
-            color='red', transform=get_transform(), label='ET')
-        plt.legend()
-        plt.show()
-
-    def plot_nearby_Wd2():
-        plt.figure(figsize=(13, 10))
-        plot_irac()
-        print(radec_df.shape)
-        print(is_within_range.sum())
-        plt.scatter(*get_radec(radec_df.loc[is_within_range]), marker='x',
-            color='blue', transform=get_transform(), label='Wd2 OB Stars')
-        plt.scatter([wd2_center_coord.ra.deg], [wd2_center_coord.dec.deg], marker='o',
-            color='red', transform=get_transform(), label='center of Wd2')
-        plt.legend()
-        plt.show()
-
-    def plot_nearby_Wd2_types_JUSTSTARS(extra_filter=True):
-        df = radec_df.loc[is_within_range & extra_filter] # & (radec_df.SpectralType_Number < 20) & (radec_df.Teff > 0)
-        values = df.paramx
-        plt.scatter(*get_radec(df), marker='o', s=12, c=values, cmap='cool',
-            transform=get_transform(), label='Wd2 OB Stars')
-
-    def plot_specific_stars(rows, names):
-        for row, name in zip(rows, names):
-            plt.plot([row['RAdeg']], [row['DEdeg']], marker='x', markersize=10, transform=get_transform(), label=name)
-
-    def plot_nearby_Wd2_types():
-        plt.figure(figsize=(13, 10))
-        plot_irac()
-        plot_nearby_Wd2_types_JUSTSTARS()
-        plt.scatter([wd2_center_coord.ra.deg], [wd2_center_coord.dec.deg], marker='x',
-            color='blue', transform=get_transform(), label='center of Wd2')
-        plt.legend()
-        plt.show()
-
-
-    def make_wcs(ref_coord, grid_shape=None, ref_pixel=None, pixel_scale=None):
-        """
-        ref_pixel should be Numpy array index (0-indexed)
-        If grid shape is (10, 10) i.e. (0..9, 0..9) and you want pixel (4, 4)
-            i.e. the fifth i,j pixels to be the center, specify (4, 4).
-            This function will pass (4+1, 4+1) to WCS to ensure that the fifth
-            pixels are chosen in this case.
-        pixel_scale can be a Quantity; if it isn't, it's assumed to be in arcmin
-        """
-        if not isinstance(pixel_scale, u.quantity.Quantity):
-            pixel_scale *= u.arcmin
-        if ref_pixel is None:
-            ref_pixel = tuple(int(x/2) for x in grid_shape)
-        kws = {
-            'NAXIS': (2, "Number of axes"),
-            'NAXIS1': (grid_shape[1], "X/j axis length"),
-            'NAXIS2': (grid_shape[0], "Y/i axis length"),
-            'RADESYS': ('ICRS', "Interational Celestial Reference System"),
-            'CRVAL1': (ref_coord.ra.deg, "[deg] RA of reference point"),
-            'CRVAL2': (ref_coord.dec.deg, "[deg] DEC of reference point"),
-            'CRPIX1': (ref_pixel[1] + 1, "[pix] Image reference point"),
-            'CRPIX2': (ref_pixel[0] + 1, "[pix] Image reference point"),
-            'CTYPE1': ('RA---TAN', "RA projection type"),
-            'CTYPE2': ('DEC--TAN', "DEC projection type"),
-            'PA': (0., "[deg] Position angle of axis 2 (E of N)"),
-            'CD1_1': (-pixel_scale.to(u.deg).to_value(), "Transformation matrix"),
-            'CD1_2': (0., ""),
-            'CD2_1': (0., ""),
-            'CD2_2': (pixel_scale.to(u.deg).to_value(), ""),
-            'EQUINOX': (2000., "[yr] Equatorial coordinates definition"),
-        }
-        header = fits.Header()
-        # Two lines to avoid some weird bug about reading dictionaries in the constructor
-        header.update(kws)
-        return WCS(header)
-
-    args, kwargs = (4.16*1000,), {'pixel_scale': 1*u.arcsec, 'grid_shape':(1500, 1500), 'ref_pixel':(500, 500)}
-
-
-    def test_compare_wcssep_pixelgrid():
-        img_data, img_header, wl = herschel_data(500)
-        w = WCS(img_header)
-        t0 = datetime.datetime.now()
-        grid = catalog_utils.distance_from_point_pixelgrid(test_point, w, *args)
-        t1 = datetime.datetime.now()
-        grid2 = distance_from_point_wcssep(test_point, w, *args)
-        t2 = datetime.datetime.now()
-        print((t1-t0).total_seconds()*1000, "ms")
-        print((t2-t1).total_seconds()*1000, "ms")
-        plt.subplot(111, projection=w)
-        plt.imshow((grid2-grid)/grid2, cmap='gray_r')
-        plt.xlabel("RA")
-        plt.ylabel("DEC")
-        plt.show()
-
-
-
-    def distance_from_all_points(point_coords, w, distance_los_pc):
-        return np.sum(point_coords.apply(lambda x: (.1/catalog_utils.distance_from_point_pixelgrid(x, w, distance_los_pc)**2)), axis=0)
-
-    def calc_g0(cat, w, distance_los_pc):
-        radfield1d = 1.6e-3 # erg cm-2 s-1
-        cm2_to_pc2 = (u.cm.to(u.pc))**2
-        # gives inverse distance in cm-2
-        # SHOULD THERE BE A 4PI HERE???
-        inv_dist = cat.coords.apply(lambda x: cm2_to_pc2/(catalog_utils.distance_from_point_pixelgrid(x, w, distance_los_pc)**2))
-        # gives luminosity in erg s-1
-        lum = cat.luminosity.apply(lambda x: x.to(u.erg/u.s).to_value())
-        # returns luminosity expressed in terms of avg 1d IRF
-        return np.sum(lum * inv_dist, axis=0) / radfield1d
-
-    # img_data, img_header, wl = irac_data(8)
-    # w = WCS(img_header)
-
-    # w = make_wcs(wd2_center_coord, pixel_scale=2*u.arcsec, grid_shape=(1500, 1500))
-    def find_specific_star(spectral_type):
-        # Find first star of this spectral type
-        star = radec_df.loc[radec_df.SpectralType == spectral_type]
-        return star.loc[star.index[0]]
-
-    def find_all_stars(condition):
-        stars = radec_df.loc[condition]
-        return [stars.loc[x] for x in stars.index]
-
-    # WN6ha = radec_df.loc[radec_df.SpectralType == 'WN6ha']
-    # WN6ha = WN6ha.loc[WN6ha.index[0]]
-
-    radec_df['paramx'] = radec_df.Teff_V96
-    radec_df['paramy'] = radec_df.log_g_V96
-    is_WR = radec_df.SpectralType_Number.isnull() & is_within_range
-    WR_i = radec_df.loc[is_WR].index[0]
-    # These are our parameters for WN6ha
-    radec_df.loc[WR_i, 'paramx'] = 43000
-    radec_df.loc[WR_i, 'paramy'] = readstartypes.PoWRGrid.calculate_Rt(19.7, 8.5e-6, 1600, 4)
-
-    OBGrid = readstartypes.PoWRGrid('OB')
-    WRGrid = readstartypes.PoWRGrid('WNE')
-    def nearest_gridpoint(row):
-        if row['SpectralType_ReducedTuple'][0][0] == 'W':
-            grid = WRGrid
-        else:
-            grid = OBGrid
-        paramx, paramy = grid.parse_query_params(row['paramx'], row['paramy'])
-        return paramx, paramy
-    radec_df['grid_params'] = radec_df.loc[is_within_range].apply(nearest_gridpoint, axis=1)
-    radec_df['grid_paramx'] = radec_df.grid_params.loc[is_within_range].apply(lambda x: x[0])
-    radec_df['grid_paramy'] = radec_df.grid_params.loc[is_within_range].apply(lambda x: x[1])
-    radec_df.drop(columns='grid_params', inplace=True)
-    # Editorial note (April 29, 2020): it looks like the "grid_param*" columns were for testing purposes
-    # They don't help us find the flux, that can be done with "param*" (see below)
-    def get_wlflux(row):
-        if row['SpectralType_ReducedTuple'][0][0] == 'W':
-            grid = WRGrid
-        else:
-            grid = OBGrid
-        return grid.get_model(row['paramx'], row['paramy'])
-    radec_df['wlflux'] = radec_df.loc[is_within_range].apply(get_wlflux, axis=1)
-    radec_df['wl'] = radec_df.wlflux.loc[is_within_range].apply(lambda x: x[0])
-    radec_df['flux'] = radec_df.wlflux.loc[is_within_range].apply(lambda x: x[1])
-
-    def plot_model_grids():
-        plt.figure(figsize=(16, 9))
-        plt.subplot(121)
-        OBGrid.plot_grid_space(setup=False, show=False)
-        plt.scatter(radec_df.grid_paramx[~is_WR], radec_df.grid_paramy[~is_WR], color='red', marker='x')
-        plt.subplot(122)
-        WRGrid.plot_grid_space(setup=False, show=False)
-        plt.scatter(radec_df.grid_paramx[is_WR], radec_df.grid_paramy[is_WR], color='red', marker='x')
-        plt.show()
-
-    def plot_all_fuv_spectra():
-        plt.figure(figsize=(13, 9))
-        radec_df.wlflux.loc[is_within_range].apply(readstartypes.PoWRGrid.plot_spectrum, setup=False, show=False, fuv=True, xunit=u.eV)
-        plt.show()
-
-    radec_df['luminosity'] = radec_df.wlflux.loc[is_within_range].apply(readstartypes.PoWRGrid.integrate_flux)
-
-    def coords_to_string(coord):
-        return coord.to_string(style='hmsdms', sep=':').replace(' ', ',')
-    def gen_region(row):
-        log_lum = (np.log10(row.luminosity) - 4.5)*10 + 5
-        comment = "# {:s}".format(row.SpectralType_Reduced)
-        return "circle({:s},{:.4f}\") {:s}".format(coords_to_string(row.coords), log_lum, comment)
-
-
-    def write_region_file():
-        radec_df['luminosity'] = radec_df.luminosity.loc[is_within_range].apply(lambda x: x.to_value())
-        with open('figures/Wd2_stars_luminosity.reg', 'w') as f:
-            f.write("# Region file format: DS9 version 4.1\n")
-            f.write("global color=white dashlist=8 3 width=1 font=\"helvetica 10 normal roman\" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1\n")
-            for row in radec_df.loc[is_within_range].itertuples():
-                f.write(gen_region(row)+'\n')
-            f.write('\n')
-        print('done')
-
-
-    def save_html():
-        columns_to_drop = ['SpectralType_ReducedTuple', 'SpectralType_Number',
-            'wlflux','wl','flux', 'coords', 'SpectralType_Adopted',
-            'Teff_V96', 'paramy', 'grid_paramx', 'grid_paramy',]
-        for c in columns_to_drop:
-            radec_df.drop(columns=c, inplace=True)
-        radec_df.luminosity.loc[is_within_range] = radec_df.luminosity.loc[is_within_range].apply(lambda x: "{:.2f}".format(np.log10(x.to_value())))
-        radec_df.paramx.loc[is_within_range] = radec_df.paramx.loc[is_within_range].apply(lambda x: "{:.2f}".format(x/1000))
-        nearby_stars = radec_df.loc[is_within_range]
-        nearby_stars = nearby_stars[['RAdeg', 'DEdeg', 'MSP', 'SpectralType', 'SpectralType_Reduced', 'paramx', 'luminosity']]
-        nearby_stars.rename(columns={'SpectralType_Reduced': 'SpectralType_Adopted', 'paramx': 'Teff (kK)', 'luminosity': 'log FUV L (Lsun)'}, inplace=True)
-        nearby_stars.to_html('Wd2_catalog_FUVflux.html', na_rep='')
-
-
-    def make_g0CII_figure():
-        plt.figure(figsize=(16, 8))
-        img_data, img_header, wl = sofia_data_integrated()
-        w = WCS(img_header, naxis=2)
-
-        t0 = datetime.datetime.now()
-        grid = calc_g0(radec_df.loc[is_within_range], w, 4.16*1000)
-        print(grid.shape)
-        t1 = datetime.datetime.now()
-        print((t1-t0).total_seconds()*1000, "ms")
-        plt.subplot(121, projection=w)
-        plt.imshow(np.log10(grid), cmap='cividis', vmax=5.5)
-        plt.colorbar(label='log10 G0')
-        plot_nearby_Wd2_types_JUSTSTARS()
-        plt.xlabel("RA")
-        plt.ylabel("DEC")
-        plot_sofia_integrated(subplot=122)
-        plt.colorbar()
-        plot_nearby_Wd2_types_JUSTSTARS()
-        plt.subplots_adjust(top=0.974, bottom=0.061, left=0.05, right=0.95, hspace=0.2, wspace=0.1)
-        plt.show()
-        # plt.savefig("Wd2_sofia_G0.pdf")
-
-    def make_g0hotstars_figure(Tcut_kK, hotter=True, fracmin=0.3, fracmax=0.7):
-        """
-        About half the global G0 is from stars > ~45kK
-        about 60% from > 40kK
-
-        Star 34 (O5V) dominates its own region
-        It is also the star with the bow-shock looking arc to the northwest
-        """
-        distance_to_Wd2 = 4.16*1000
-        plt.figure(figsize=(19, 8))
-        img_data, img_header, wl = herschel_SED_fit()
-        w = WCS(img_header, naxis=2)
-        if hotter:
-            condition = radec_df.paramx > Tcut_kK*1e3
-        else:
-            condition = radec_df.paramx < Tcut_kK*1e3
-        # print(radec_df.loc[is_hot & is_within_range])
-        grid_hot = calc_g0(radec_df.loc[condition & is_within_range], w, distance_to_Wd2)
-        grid_all = calc_g0(radec_df.loc[is_within_range], w, distance_to_Wd2)
-        grid_diff = grid_hot/grid_all
-        pkwargs = dict(cmap='cividis', vmin=2.7, vmax=5.5)
-        glt = ">" if hotter else "<"
-        for sp, grid, title in zip((131, 132, 133), (grid_hot, grid_diff, grid_all), ("Stars with Teff {:s} {:.0f} kK".format(glt, Tcut_kK), "Difference", "All stars")):
-            plt.subplot(sp, projection=w)
-            if sp == 132:
-                plt.imshow(grid, cmap='magma', vmin=fracmin, vmax=fracmax)
-                plt.colorbar(label='Hot star contribution fraction')
-            else:
-                plt.imshow(np.log10(grid), **pkwargs)
-                plt.colorbar(label='log G0')
-            plot_nearby_Wd2_types_JUSTSTARS()
-            plt.title(title)
-            plt.xlabel("RA")
-            plt.ylabel("DEC")
-        plt.subplots_adjust(top=0.974, bottom=0.019, left=0.054, right=0.985, hspace=0.2, wspace=0.223)
-        plt.show()
-
-
-    def save_g0_fits(Tcut_kK=None, hotter=True):
-        img_data, img_header, wl = herschel_SED_fit()
-        w = WCS(img_header, naxis=2)
-
-        if Tcut_kK is not None:
-            if hotter:
-                condition = radec_df.paramx > Tcut_kK*1e3
-            else:
-                condition = radec_df.paramx < Tcut_kK*1e3
-            condition = condition & is_within_range
-        else:
-            condition = is_within_range
-
-        t0 = datetime.datetime.now()
-        grid = calc_g0(radec_df.loc[condition], w, 4.16*1000)
-        t1 = datetime.datetime.now()
-        print((t1-t0).total_seconds()*1000, "ms")
-
-        header = fits.Header({'SIMPLE': True})
-        header.update(w.to_header())
-        header['BUNIT'] = ("Habing fields", "Data unit")
-        header['OBJECT'] = ("RCW49", "Target name")
-        header['CREATOR'] = ("Ramsey: {}".format(str(__file__)), "FITS file creator")
-        header['DATE'] = (datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(), "File creation date")
-        header['COMMENT'] = "Habing field taken to be 1.6e-3 erg cm-2 s-1"
-        header['HISTORY'] = "Star catalog synthesized from several literature sources"
-        header['HISTORY'] = "Catalog used here can be found as Wd2_catalog_FUVflux.csv"
-        header['HISTORY'] = "Used Hershel SPIRE 350um pixel grid"
-        fits.writeto("figures/rcw49-g0-stars.fits", grid, header)
-
-
-    def make_g0_starsVdust_figure(Tcut_kK=None, hotter=True):
-        distance_to_Wd2 = 4.16*1000
-        plt.figure(figsize=(14, 10))
-        img_data, img_header, wl = herschel_SED_fit()
-        w = WCS(img_header, naxis=2)
-        if Tcut_kK is not None:
-            glt = ">" if hotter else "<"
-            if hotter:
-                condition = radec_df.paramx > Tcut_kK*1e3
-            else:
-                condition = radec_df.paramx < Tcut_kK*1e3
-            condition = condition & is_within_range
-            stars_txt = "G0 from stars with Teff {:s} {:.0f} kK".format(glt, Tcut_kK)
-        else:
-            condition = is_within_range
-            stars_txt = "G0 from stars"
-        # print(radec_df.loc[is_hot & is_within_range])
-        grid_stars = calc_g0(radec_df.loc[condition], w, distance_to_Wd2)
-        grid_dust = g0_dust.calculate_g0()
-        grid_diff = grid_stars/grid_dust
-        pkwargs = dict(cmap='cividis', vmin=1, vmax=5)
-        for sp, grid, title in zip((221, 223, 222), (grid_stars, grid_diff, grid_dust), (stars_txt, "Difference", "G0 from dust")):
-            plt.subplot(sp, projection=w)
-            if sp == 223:
-                plt.imshow(np.log10(grid), cmap='magma', vmin=-1, vmax=4)
-                plt.colorbar(label='log stellar G0 excess')
-            else:
-                plt.imshow(np.log10(grid), **pkwargs)
-                plt.colorbar(label='log G0')
-            plot_nearby_Wd2_types_JUSTSTARS()
-            plt.title(title)
-            plt.xlabel("RA")
-            plt.ylabel("DEC")
-        plt.subplots_adjust(top=0.974, bottom=0.019, left=0.054, right=0.985, hspace=0.2, wspace=0.223)
-        plt.show()
-
-
-
-    ##### I don't remember what this was for
-    # w = WCS(herschel_SED_fit()[1])
-    # plt.imshow(catalog_utils.distance_from_point_pixelgrid(wd2_center_coord, w, 4.16*1000), origin='lower')
-    # plt.show()
-    # sys.exit()
-
-    # All stars, real simple
-    # make_g0CII_figure()
-
-    # O5 and earlier
-    # make_g0hotstars_figure(45, hotter=False)
-
-    # The swarm of ETs
-    # make_g0hotstars_figure(36, hotter=False, fracmin=0.2, fracmax=0.45)
-
-    # COMPARE TO DUST
-    make_g0_starsVdust_figure()
-
-    # save_g0_fits()
-
-    print(f'edit the end of {__file__} to save a file or make a figure')
 
 if __name__ == "__main__":
     args = main()

@@ -139,10 +139,11 @@ def ionized_volume():
     cube_f = lambda r: (r*u.pc.to(u.cm))**3.
     return (4.*np.pi/3) * (cube_f(bubble_radius) - cube_f(plasma_bubble_radius))
 
+mean_molecular_weight = 0.5
 
 def calc_P(T, n):
     # returns in K cm-3
-    return T * n * 0.5
+    return T * n / mean_molecular_weight
 
 
 def calc_E(P):
@@ -151,7 +152,7 @@ def calc_E(P):
 
 
 def calc_mass(n):
-    return 0.5 * u.M_p.to(u.solMass) * n * ionized_volume()
+    return mean_molecular_weight * u.M_p.to(u.solMass) * n * ionized_volume()
 
 
 print(f"Radius = {bubble_radius:.2f} pc")

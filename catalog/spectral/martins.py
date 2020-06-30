@@ -47,6 +47,7 @@ replace_key = {
     '^': '',
     'rsun': 'Rsun', 'msun': 'Msun', 'lL': 'log L',
     ' spec': '', 'teff': 'Teff', 'mv': 'Mv',
+    'log ': 'log_',
 }
 
 def split_line_and_apply_replace_key(line):
@@ -54,7 +55,7 @@ def split_line_and_apply_replace_key(line):
     for k in replace_key:
         line = line.replace(k, replace_key[k]) # LaTeX-specific hardcode-y replacement
     # Remove surrounding whitespace again and replace spaces with underscores
-    return [x.strip().replace(' ', '_') for x in line.split('&')][:-1] # Address dangling ampersand
+    return [x.strip() for x in line.split('&')][:-1] # Address dangling ampersand
 
 
 def load_table_df(n, skiplines, just_units=False):

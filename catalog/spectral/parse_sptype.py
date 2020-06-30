@@ -92,6 +92,9 @@ def st_parse_slashdash(spectral_type_string, intercept_WR=True):
         spectral type error.
         Note that dashed luminosity class behave like slashes because we don't
         have totally smooth model coverage of luminosity classes.
+    June 17, 2020:
+    Updated to allow dashes between letter classes, e.g. O9-B3, with behavior
+        as described above.
     """
     # Editorial note (April 29, 2020): seems we replace '-' with '/', which for uncertainty
     #   purposes seems fair.
@@ -104,7 +107,7 @@ def st_parse_slashdash(spectral_type_string, intercept_WR=True):
         # This is a "slash star"
         if intercept_WR:
             # Return the WR type; assume no other slashes
-            return spectral_type_string.split('/')[1]
+            return [spectral_type_string.split('/')[1]]
         else:
             # Return both complete spectral types
             return spectral_type_string.split('/')
@@ -120,12 +123,18 @@ def st_parse_slashdash(spectral_type_string, intercept_WR=True):
     else:
         possible_lumclasses.append(spectral_type_string)
     possible_classes = []
+    # Break down class/subclass cases now that each only has one luminosity class
     for possible_lumclass in possible_lumclasses:
+        # Slash or dash in subclass number
         pattern_subclass = f'{number_re}({slashdash_re}{number_re})+'
         match_subclass = re.search(pattern_subclass, possible_lumclass)
+        # Slash or dash across standard letter types
+        pattern_crossclass = f'{standard_types_re}{number_re}({slashdash_re}{standard_types_re}{number_re})+'
+        match_crossclass = re.search(pattern_crossclass, possible_lumclass)
+        # Run through the cases
         if match_subclass:
-            # print("-----"*2, match_subclass, '->', match_subclass.group())
-            # Here would be the place to separate dash- from slash/ behavior
+            # Case that only the subclass (number) has a slash/dash
+            # Separate dash- from slash/ behavior
             if '-' in match_subclass.group():
                 # Dash
                 # Numbers should all be multiples of 0.5
@@ -141,11 +150,24 @@ def st_parse_slashdash(spectral_type_string, intercept_WR=True):
                 possible_subclasses = match_subclass.group().split('/')
                 for i in range(len(possible_subclasses)):
                     possible_classes.append(possible_lumclass.replace(match_subclass.group(), possible_subclasses[i]))
-        elif '/' in possible_lumclass and possible_lumclass[possible_lumclass.index('/') + 1] in standard_types:
-            # This could be two different letter types, just split along slash and proceed with possibilities
-            # I added this on April 30, 2020, and I did not extensively test it.
-            possible_classes.extend(possible_lumclass.split('/'))
+        elif match_crossclass:
+            # Case that there is a slash or dash across letter types
+            # Separate dash and slash behavior
+            if '-' in match_crossclass.group():
+                # Dash; convert everything to numbers. Should be multiples of 0.5
+                class_bounds = [int(st_to_number(x)*2) for x in match_crossclass.group().split('-')]
+                # There should be at most one dash
+                assert len(class_bounds) == 2
+                class_options = [x/2. for x in range(class_bounds[0], class_bounds[1]+1)]
+                for c_option in class_options:
+                    c_option = ''.join(number_to_st(c_option))
+                    possible_classes.append(possible_lumclass.replace(match_crossclass.group(), c_option))
+            else:
+                # Slash; simpler case
+                # I originally wrote this on April 30, 2020; cleaned up on June 17, 2020
+                possible_classes.extend(possible_lumclass.split('/'))
         else:
+            # No match, just assume only one possibility
             possible_classes.append(possible_lumclass)
     return possible_classes
 
@@ -215,6 +237,27 @@ def lc_to_number(lumclass):
         #   but now I'm going to assign 'V' because that makes more sense
         lumclass = 'V'
     return ['I', 'II', 'III', 'IV', 'V'].index(lumclass) + 1
+
+
+def st_adjacent(spectral_type_tuple):
+    """
+    For a given standard spectral type tuple, returns 3 similar tuples:
+    A half type earlier, the original argument type, and a half type later.
+    This should be representative of reasonable half-type uncertainty, which
+        should apply to both single spectral types as well as statedly uncertain
+        types.
+    If the input tuple is more than 2 elements, the third and further elements
+        are simply duplicated into the adjacent type tuples.
+    :param spectral_type_tuple: standard tuple format
+    :returns: list of spectral type tuples, increasing (later) type
+    """
+    spectral_type_number = st_to_number(spectral_type_tuple)
+    earlier, later = spectral_type_number - 0.5, spectral_type_number + 0.5
+    earlier, later = number_to_st(earlier), number_to_st(later)
+    if len(spectral_type_tuple) > 2:
+        earlier = earlier + spectral_type_tuple[2:]
+        later = later + spectral_type_tuple[2:]
+    return [earlier, spectral_type_tuple, later]
 
 
 def st_reduce_to_brightest_star(st):

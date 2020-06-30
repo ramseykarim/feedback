@@ -54,13 +54,16 @@ def gaussian(x, mu, sigma, amplitude):
 
 def polynomial(x, fit):
     """
-    Polynomial given x array and coefficients
-    :param x: x array
+    Polynomial given x array/scalar and coefficients
+    :param x: x array or scalar
     :param fit: coefficient sequence. Assumes "np.polyfit" coefficient ordering, so 0th coeff is for highest order
-    :return: x-shaped array of polynomial y values
+    :return: x-shaped array (or scalar float) of polynomial y values
     """
     deg = len(fit) - 1
-    solution = np.zeros(x.shape)
+    if hasattr(x, 'ndim') and x.ndim > 0:
+        solution = np.zeros(x.shape)
+    else:
+        solution = 0.
     for i, coeff in enumerate(fit):
         solution += coeff * x**(deg - i)
     return solution

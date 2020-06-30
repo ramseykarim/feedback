@@ -62,10 +62,10 @@ def fit_characteristic(df_lumclass, characteristic):
         # Note: "high" limit is "late-type" limit, "low" limit is "early-type"
         if lo <= spectral_type_number <= hi:
             # Within interpolation bounds; interpolate
-            return interp_from_number(spectral_type_number)
+            return float(interp_from_number(spectral_type_number))
         elif hi < spectral_type_number <= hi + 3:
             # Extrapolate, but not too far from high limit
-            return misc_utils.polynomial(np.array(spectral_type_number), extrap_fit)
+            return misc_utils.polynomial(spectral_type_number, extrap_fit)
         else:
             # Either less than low limit (unlikely) or too far past high limit
             return INVALID_SPTYPE_PROPERTY_FLAG

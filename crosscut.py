@@ -10,7 +10,8 @@ from astropy.nddata.utils import Cutout2D
 from scipy.interpolate import interpn
 from math import ceil
 
-from misc_utils import get_pixel_scale
+from .misc_utils import get_pixel_scale
+from . import catalog
 
 """
 Functions and script to make a cross-cut plot using several different data sources
@@ -115,8 +116,18 @@ def normalize_crosscut(xcut):
     return (subtracted + np.nanstd(subtracted)) / (3 * np.nanstd(subtracted[np.isfinite(subtracted)]))
 
 
+if False:
+    data_path = catalog.utils.ancillary_data_path
+    chandra_fn = f"{data_path}chandra/full_band.fullfield.diffuse_filled.flux"
+    hdul = fits.open(chandra_fn)
+    data = hdul[0].data
+    print(data.shape)
+    plt.imshow(data, origin='lower')
+    plt.show()
+    hdul.close()
+
 if __name__ == "__main__":
-    data_path = "/home/rkarim/Research/Feedback/ancillary_data/"
+    data_path = catalog.utils.ancillary_data_path
 
     cross_cuts_coords = {
         0: ("10:24:07.3706 -57:45:04.036", "10:24:39.7421 -57:41:21.431", -4.7, -3.7), # First one I tried
@@ -205,5 +216,5 @@ if __name__ == "__main__":
         plt.plot([coord_start_xcut.ra.deg, coord_end_xcut.ra.deg],
             [coord_start_xcut.dec.deg, coord_end_xcut.dec.deg],
             transform=plt.gca().get_transform('world'), color='r')
-    # plt.show()
-    plt.savefig(f"/home/rkarim/Pictures/4-07-20-work/crosscut_{selection}.png")
+    plt.show()
+    # plt.savefig(f"/home/rkarim/Pictures/4-07-20-work/crosscut_{selection}.png")

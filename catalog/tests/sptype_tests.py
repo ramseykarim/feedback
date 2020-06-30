@@ -15,6 +15,7 @@ import pandas as pd
 from astropy import units as u
 
 from .. import utils
+from .. import parse
 from .. import spectral
 
 
@@ -23,7 +24,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_powr_totalL_accuracy()
+    return test_catalog()
 
 
 def plot_sptype_calibration_stuff():
@@ -54,8 +55,10 @@ def plot_sptype_calibration_stuff():
 def test_martins_calibration_load():
     df1, u1 = spectral.martins.load_tables_df()
     df2, u2 = spectral.sternberg.load_tables_df()
+    print(u2.index)
     for i in u2.Units:
         print(i, u.Unit(i))
+    print(u1.index)
     for i in u1.Units:
         print(i, u.Unit(i))
 
@@ -174,6 +177,19 @@ def test_leitherer_sptypes():
     plt.show()
 
 
+def test_leitherer_individuals():
+    ltables = spectral.leitherer.LeithererTable()
+    mtables = spectral.sttable.STTable(*spectral.martins.load_tables_df())
+    sptypes = ["O3V", "O5III"]
+    for s in sptypes:
+        print(s)
+        T = mtables.lookup_characteristic('Teff', s)
+        logL = mtables.lookup_characteristic('log_L', s)
+        print(T, logL)
+        print(type(T), type(logL))
+        logmdot = ltables.lookup_characteristic('log_Mdot', T, logL)
+        print(logmdot, type(logmdot))
+
 
 
 old_catalog_fn = f"{utils.ancillary_data_path}catalogs/Ramsey/old_catalogs/OBradec.pkl"
@@ -189,12 +205,23 @@ def test_st_parse_slashdash():
     Tested the new subtype dash behavior, it looks like it works!
     """
     cat = pd.read_pickle(old_catalog_fn)
-    tests = [cat.SpectralType[19], cat.SpectralType[5], cat.SpectralType[7], 'B5/6.5III', 'O4II/III', cat.SpectralType[26], cat.SpectralType[27], 'O4-5.5V/III*']
+    tests = ['O8/B1.5V', 'O8-B1.5V', cat.SpectralType[19], cat.SpectralType[5], cat.SpectralType[7], 'B5/6.5III', 'O4II/III', cat.SpectralType[26], cat.SpectralType[27], 'O4-5.5V/III*']
     for t in tests:
         l = spectral.parse_sptype.st_parse_slashdash(t)
         print(t, '\t', l)
         print('\t', [spectral.parse_sptype.st_parse_type(x) for x in l])
         print()
+
+
+def test_st_adjacent():
+    tests = ['O8', 'O4.5V', 'O2If', 'B2.5', 'O9.5']
+    for t in tests:
+        print(t, end=': ')
+        t = spectral.parse_sptype.st_parse_type(t)
+        t = tuple(x for x in t if x)
+        print(t, end=' --> ')
+        print(spectral.parse_sptype.st_adjacent(t))
+
 
 
 def test_full_st_parse():
@@ -223,71 +250,119 @@ def test_powr_totalL_accuracy():
     count = 0
     for model_info in tbl.iter_models():
         count += 1
-        wl, flux = tbl.get_model(model_info)
+        wl, flux = tbl.get_model_spectrum(model_info)
         lum = np.trapz(flux, x=wl).to('solLum')
         print(f"Model {model_info.MODEL} (Teff{model_info.T_EFF}/log_g{model_info.LOG_G}:")
         print(f" -> Integrated luminosity (numpy): {lum.to_string()}")
-        print(f" -> Difference: {((lum.to_value() / (10**model_info.LOG_L))-1)*100.:.5} %")
+        print(f" -> Difference (%): {((lum.to_value() / (10**model_info.LOG_L))-1)*100.:.5}")
         print()
         if count > 20:
             break
 
-"""
 
-def test_powr_totalL_plot():
+def test_powr_plot():
     # tbl.plot_grid_space(tbl.grid_info.LOG_L, "log L")
-    tbl = PoWRGrid('WNE')
+    tbl = spectral.powr.PoWRGrid('WNE')
     tbl.plot_grid_space(c='blue', show=False, alpha=0.3)
-    tbl = PoWRGrid('WNL')
+    tbl = spectral.powr.PoWRGrid('WNL')
     tbl.plot_grid_space(c='red', setup=False, alpha=0.3)
 
 
 def testSuite_PoWR():
-    tbl = PoWRGrid('WNL')
-    wf1 = tbl.get_model(4.4, 1.7)
-    wf2 = tbl.get_model(5.0, 0.0)
+    tbl = spectral.powr.PoWRGrid('WNL')
+    wf1 = tbl.get_model_spectrum(4.4, 1.7)
+    wf2 = tbl.get_model_spectrum(5.0, 0.0)
     tbl.plot_spectrum(*wf1, show=False, xunit=u.eV, fuv=True, ylog=False)
-    tblob = PoWRGrid('OB')
-    wf3 = tblob.get_model(43000, 3.8)
+    tblob = spectral.powr.PoWRGrid('OB')
+    wf3 = tblob.get_model_spectrum(43000, 3.8)
     tbl.plot_spectrum(*wf2, show=False, setup=False, xunit=u.eV, fuv=True, ylog=False)
-    wf4 = tblob.get_model(16000, 3.0)
+    wf4 = tblob.get_model_spectrum(16000, 3.0)
     tbl.plot_spectrum(*wf3, show=False, setup=False, xunit=u.eV, fuv=True, ylog=False)
     tbl.plot_spectrum(*wf4, setup=False, xunit=u.eV, fuv=True, ylog=False)
 
 
+def test_STResolver_WR():
+    spectral.stresolver.random.seed(1312)
+    np.random.seed(1312)
+    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in ('OB', "WNE", "WNL")}
+    cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
+    ltables = spectral.leitherer.LeithererTable()
+
+    s = spectral.stresolver.STResolver("WN6ha")
+    s.link_calibration_table(cal_tables)
+    s.link_leitherer_table(ltables)
+    s.link_powr_grids(powr_grids)
+
+    st = s.spectral_types['WN6ha'][0]
+    print(st)
+    print("Rtrans: ", np.log10(spectral.powr.PoWRGrid.calculate_Rt(*st[5:])))
+    s.populate_all()
+    # for pm in s.powr_models['WN6ha']:
+    #     print(pm)
+    print(s.get_mass_loss_rate())
+
+
 
 def test_STResolver():
-    def f(x):
-        # function to pass NaNs and print MODEL from DataFrames
-        try:
-            return x['MODEL']
-        except:
-            return "[NO MODEL]"
-    tbls = {x: PoWRGrid(x) for x in ('OB', "WNE", "WNL")}
-    sb_tables = S03_OBTables()
-    # cat = pd.read_pickle(f"{catalogs_directory}/Ramsey/OBradec.pkl")
-    tests = ['B5/6.5III', 'O4I/III', 'WN', 'C*']
-    count = 0
-    for t in tests:
-        if t == "ET":
-            t = "O7.5/B1"
-        s = STResolver(t)
-        # print(t, '\n\t', s)
-        # print('\t', s.__repr__())
-        s.link_powr_grids(tbls)
-        v, lu = s.get_mass_loss_rate(sb_tables)
-        l, u = lu
-        dl, du = v-l, u-v
-        # vtxt = "---N/A---" if ((v == 0.) or np.isnan(v)) else f"{v:.2E}"
-        # etxt = "" if ((dl == 0.) and (du == 0.)) else f" (-{dl:.2E}, +{du:.2E})"
-        vtxt = str(v) + " +/- "
-        etxt = str(dl) + "," + str(du)
-        print(f"{s.__repr__():.<30s}: {vtxt}{etxt}")
-        count += 1
-        if count > 95:
-            break
-    return s
-"""
+    # def f(x):
+    #     # function to pass NaNs and print MODEL from DataFrames
+    #     try:
+    #         return x['MODEL']
+    #     except:
+    #         return "[NO MODEL]"
+    spectral.stresolver.random.seed(1312)
+    np.random.seed(1312)
+    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in ('OB', "WNE", "WNL")}
+    cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
+    ltables = spectral.leitherer.LeithererTable()
+    # cat = pd.read_pickle(f"{parse.catalog_directory}Ramsey/catalog_may5_2020.pkl")
+    # print(cat.columns)
+    # tests = cat.Spectral.values
+    # print(tests)
+    tests = ['O5-6.5III+O3V', 'O4I/III', 'WN6ha', 'B1-2', 'C*', 'O4V+PMS']
+
+    catr = spectral.stresolver.CatalogResolver(tests,
+        calibration_table=cal_tables, leitherer_table=ltables,
+        powr_dict=powr_grids)
+    print(catr)
+    mdot, mdot_e = catr.get_mass_loss_rate(nsamples=10)
+    print(mdot)
+    print(mdot_e)
+    fluxes = catr.get_array_FUV_flux()
+    for f in fluxes:
+        print(f)
+
+    # count = 0
+    # for t in tests:
+    #     if t == "ET":
+    #         t = "O7.5/B1"
+    #     s = spectral.stresolver.STResolver(t)
+    #     print(t, '\n\t', s)
+    #     print('\t', s.__repr__())
+    #     s.link_calibration_table(cal_tables)
+    #     s.link_leitherer_table(ltables)
+    #     s.link_powr_grids(powr_grids)
+    #     s.populate_mass_loss_rate()
+    #     print(s.get_mass_loss_rate())
+    #     # s.rollcall(dictionary=s.mdot)
+    #     # print(s.mdot)
+    #     # print(f">>>>>>>> {s.random_possibility(s.mdot):.3E}")
+
+        # count += 1
+        # if count > 15:
+        #     break
+    # return s
+
+def test_catalog():
+    df = parse.load_final_catalog_df()
+    df['RA'] = df['SkyCoord'].apply(lambda x: x.ra.deg)
+    df['DEC'] = df['SkyCoord'].apply(lambda x: x.dec.deg)
+    df = df.drop('SkyCoord', 1)
+    fn = f"{utils.ancillary_data_path}catalogs/Ramsey/catalog_may5_2020.csv"
+    df.to_csv(fn)
+    # df = pd.read_csv(fn)
+    return df
+
 
 if __name__ == "__main__":
     args = main()
