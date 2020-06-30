@@ -21,7 +21,8 @@ if not os.path.isdir(fila_dir):
     fila_dir = "/home/rkarim/Research/Filaments/"
 
 readme = """## README ##
-This is a 3D grid of tau(160micron), T [K], beta
+This is a 3D grid of log10(tau(160micron)), T [K], beta
+Return value is a dictionary; check the keys
 ## END ##
 """
 print(readme)
@@ -52,8 +53,8 @@ def make_grid():
 
     # set up parameter grid
 
-    # Tau160 in logarithmic steps of 0.5%
-    tau_range = np.exp(np.arange(np.log(0.002), np.log(0.4), np.log(1.005)))
+    # log10(Tau160) in logarithmic steps of 0.5%
+    tau_range = np.arange(np.log10(0.002), np.log10(0.4), np.log10(1.005))
     # Temperature from 5 to 150 in geometric steps of 3%
     T_range = np.arange(5, 60, 0.05)
     # Beta in arithmetic steps of 0.1
@@ -72,7 +73,9 @@ def make_grid():
     # tau160 = np.log10(0.3)
     # print(f"Tau160 = {tau160:.3f}")
 
-    tt, TT, bb = np.meshgrid(tau_range, T_range, b_range, indexing='xy')
+    # I switched the indexing from xy to ij on June 13, 2020.
+    # See numpy docs on 3D meshgrid indexing; unintuitive
+    tt, TT, bb = np.meshgrid(tau_range, T_range, b_range, indexing='ij')
     result = {d.name: np.full(TT.shape, np.nan).ravel() for d in herschel}
 
     total_i = TT.size
@@ -90,6 +93,7 @@ def make_grid():
     result['tau160'] = tt
     result['T'] = TT
     result['beta'] = bb
+    result['README'] = readme
     print("grid shape:", TT.shape)
     with open(filename, 'wb') as f:
         pickle.dump(result, f)
