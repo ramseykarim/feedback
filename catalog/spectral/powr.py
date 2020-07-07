@@ -65,7 +65,7 @@ def FUV_nonionizing_mask(wl_A):
 class PoWRGrid:
 
     def __init__(self, grid_name):
-        if grid_name not in ['OB', 'WNE', 'WNL']:
+        if grid_name not in ['OB', 'WNE', 'WNL', 'WNL-H50']:
             raise RuntimeError(f"{grid_name} not available")
         self.grid_name = grid_name
         self.grid_info = load_powr_grid_info(self.grid_name)
@@ -126,7 +126,7 @@ class PoWRGrid:
         """
         data = np.genfromtxt(self.get_model_filename(*args))
         wl = (10**data[:, 0]) * u.Angstrom
-        # flux comes in erg/ (cm2 s A) at 10pc, so convert to area-integrated flux
+        # flux comes in (log) erg/ (cm2 s A) at 10pc, so convert to area-integrated flux
         flux_units = (u.erg / (u.s * u.Angstrom))
         total_flux_units = flux_units * (4*np.pi * (10*u.pc.to('cm'))**2)
         flux = (10**data[:, 1]) * total_flux_units

@@ -54,15 +54,16 @@ def main():
     cii_mom0, cii_w = catalog.utils.load_cii(2)
 
     # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
-    print("all calculations below limited to 3 arcmin radius from Wd2")
+    radius_limit = 6 # arcmin
+    print(f"all calculations below limited to {radius_limit} arcmin radius from Wd2")
     print("OB STARS")
-    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(~catalog_df['is_WR']))
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(~catalog_df['is_WR']), radius_limit=radius_limit)
     print()
     print("WR STARS")
-    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(catalog_df['is_WR']))
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(catalog_df['is_WR']), radius_limit=radius_limit)
     print()
     print("ALL STARS")
-    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False)
+    calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, radius_limit=radius_limit)
 
     return
     catalog.utils.save_df_html(catalog_df)
@@ -91,7 +92,7 @@ def convert_catalog_to_CatalogResolver(catalog_df):
     :returns: CatalogResolver
     """
     # Make the PoWR objects
-    powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNE', 'WNL')}
+    powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNL-H50', 'WNL', 'WNE')}
     # Make the Martins tables object
     cal_tables = catalog.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
     # Make Leitherer tables object
@@ -182,7 +183,7 @@ def calc_g0(catalog_df, catr, wcs_obj, distance_los, catalog_mask=None):
 
 
 def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False,
-    additional_condition=None, age=2.e6):
+    additional_condition=None, age=2.e6, radius_limit=3):
     """
     Calculate mass loss rate and kinetic energy and the 2 Myr mass and energy
         totals.
@@ -192,10 +193,13 @@ def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False,
     :param cii_w: CII map WCS object
     :param plotting: True if we want plots
     :param additional_condition: pandas series (or equivalent) boolean True
-        if star should be included. Gets &-ed with 'is_within_3.0_arcmin',
+        if star should be included. Gets &-ed with 'is_within_x.0_arcmin',
         so cannot use this to include stars outside this radius
+    :param radius_limit: upper radius limit in arcmin (from center of wd2)
+        Based on a field like 'is_within_3.0_arcmin', so that field must
+        aready exist
     """
-    star_mask_series = catalog_df['is_within_3.0_arcmin']
+    star_mask_series = catalog_df[f'is_within_{radius_limit:.1f}_arcmin']
     if additional_condition is not None:
         star_mask_series = star_mask_series & additional_condition
     star_mask = star_mask_series.values
@@ -370,7 +374,7 @@ def assign_individual_properties(catalog_df, catr, save=False):
 def print_val_err(val, err, exp=True, extra_f=None):
     if extra_f is None:
         extra_f = lambda x : x # identity function
-    val = f"{extra_f(val):.1E}" if exp else f"{extra_f(val):.1f}"
+    val = f"{extra_f(val):.2E}" if exp else f"{extra_f(val):.2f}"
     str_func = lambda x : f"{extra_f(x).to_value():+.1E}" if exp else f"{extra_f(x).to_value():+.1f}"
     lo, hi = (str_func(x) for x in err)
     return f"{val} [{lo}, {hi}]"

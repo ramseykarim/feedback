@@ -669,12 +669,15 @@ class STResolver:
                 if not st_tuple[1]:
                     # Just WN, nothing else
                     return None
-                if int(st_tuple[1]) <= 6:
-                    # WN6 or earlier
+                if int(st_tuple[1]) <= 5:
+                    # WN5 or earlier
                     return 'WNE'
                 else:
-                    # WN7 or later
-                    return 'WNL'
+                    # WN6 or later
+                    if 'h' in st_tuple[3]:
+                        return 'WNL-H50'
+                    else:
+                        return 'WNL'
             else:
                 # This is WC or WO or something
                 return None
