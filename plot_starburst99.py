@@ -12,11 +12,14 @@ from .catalog import utils as catalog_utils
 
 sb99_output_path = f"{catalog_utils.ancillary_data_path}catalogs/starburst99/"
 sb99_run_names = {'O2': 'O2', 'O3': 'O3', 'test1': 'standard',}
-sb99_run_names.update({f'Wd2_{i}': 'standard' for i in list(range(1, 6))+list(range(10, 14))+list(range(20, 24))})
+# sb99_run_names.update({f'Wd2_{i}': 'standard' for i in list(range(1, 6))+list(range(10, 14))+list(range(20, 24))})
 sb99_output_directories = {k: f"{sb99_output_path}{k}/" for k in sb99_run_names}
 
-def get_sb99_run_info(n):
-    return sb99_output_directories[n], sb99_run_names[n]
+def get_sb99_run_info(name):
+    try:
+        return sb99_output_directories[name], sb99_run_names[name]
+    except:
+        return f"{sb99_output_path}{name}/", 'standard'
 
 def open_power(directory, name):
     """
@@ -259,7 +262,7 @@ def compare_runs():
 
 
 def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange',
-    setup=False, show=False, label_suffix=None):
+    setup=False, show=False, label_suffix=None, secondary_uncertainty=None):
     if axes is None:
         pow_ax, mom_ax = plt.subplot(121), plt.subplot(122)
         axes = pow_ax, mom_ax
@@ -270,8 +273,12 @@ def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange'
     powerOB_list, mvfluxOB_list = [], []
     powerWR_list, mvfluxWR_list = [], []
     time_list = []
-    for i in range(3):
-        args = get_sb99_run_info(f'Wd2_{prefix_n}{i}')
+
+    load_list = [get_sb99_run_info(f'Wd2_{prefix_n}{i}') for i in range(3)]
+    if secondary_uncertainty is not None:
+        load_list.extend([get_sb99_run_info(x) for x in secondary_uncertainty])
+
+    for args in load_list:
         df = open_both(*args)
         powerOB_list.append(df['POWER_OB'])
         powerWR_list.append(df['POWER_WR'])
@@ -287,6 +294,10 @@ def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange'
     fillOB_kwargs = {**fill_kwargs, 'color': colorOB}
     fillWR_kwargs = {**fill_kwargs, 'color': colorWR, 'hatch': '////'}
 
+    lightfill_kwargs = dict(alpha=0.1, lw=0.02)
+    lightfillOB_kwargs = {**lightfill_kwargs, 'color': colorOB}
+    lightfillWR_kwargs = {**lightfill_kwargs, 'color': colorWR, 'hatch': '////'}
+
     plot_kwargs = dict(alpha=0.9, lw=1)
     plotOB_kwargs = {**plot_kwargs, 'color': colorOB, 'linestyle': '-', 'label': labelOB}
     plotWR_kwargs = {**plot_kwargs, 'color': colorWR, 'linestyle': '--', 'label': labelWR}
@@ -297,8 +308,11 @@ def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange'
     plt.plot(t, powerOB_list[0], **plotOB_kwargs)
     plt.fill_between(t, powerWR_list[2], powerWR_list[1], **fillWR_kwargs)
     plt.plot(t, powerWR_list[0], **plotWR_kwargs)
+    if secondary_uncertainty is not None:
+        plt.fill_between(t, powerOB_list[4], powerOB_list[3], **lightfillOB_kwargs)
+        plt.fill_between(t, powerWR_list[4], powerWR_list[3], **lightfillWR_kwargs)
     if setup:
-        plt.title("Starburst99 simulation, power")
+        plt.title("Starburst99: Power vs Cluster Age")
         plt.ylabel("Power [erg/s]")
         plt.ylim((36, 39))
         plt.xlabel("Time (Myr)")
@@ -309,8 +323,11 @@ def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange'
     plt.plot(t, mvfluxOB_list[0], **plotOB_kwargs)
     plt.fill_between(t, mvfluxWR_list[2], mvfluxWR_list[1], **fillWR_kwargs)
     plt.plot(t, mvfluxWR_list[0], **plotWR_kwargs)
+    if secondary_uncertainty is not None:
+        plt.fill_between(t, mvfluxOB_list[4], mvfluxOB_list[3], **lightfillOB_kwargs)
+        plt.fill_between(t, mvfluxWR_list[4], mvfluxWR_list[3], **lightfillWR_kwargs)
     if setup:
-        plt.title("Momentum flux")
+        plt.title("Momentum Flux vs Cluster Age")
         plt.ylabel("Momentum flux [dyn]")
         plt.ylim((28, 31))
         plt.xlabel("Time (Myr)")
@@ -328,8 +345,9 @@ def fill_between_horiz(ax, center, low, high, color='k', linestyle='-', hatch=No
 
 
 def make_nice_sb99_figure():
-    axes = runs_with_uncertainty(1, setup=True, label_suffix='[1, 120]')
-    runs_with_uncertainty(2, axes=axes, colorOB='blue', colorWR='red', label_suffix='[1, 80]')
+    # axes = runs_with_uncertainty(1, setup=True, label_suffix='[1, 120]')
+    # runs_with_uncertainty(2, axes=axes, colorOB='blue', colorWR='red', label_suffix='[1, 80]')
+    axes = runs_with_uncertainty(3, setup=True, colorOB='blue', colorWR='red', label_suffix='[1, 100] $M_{\\odot}$', secondary_uncertainty=['Wd2_21', 'Wd2_12'])
     ob_pow = (np.log10(8.3) + 37, np.log10(8.3 - 0.5) + 37, np.log10(8.3 + 0.5) + 37)
     # wr_pow = (np.log10(3.6) + 37, np.log10(3.6 - 1.1) + 37, np.log10(3.6 + 1.3) + 37) # WR20a
     wr_pow = (np.log10(5.3) + 37, np.log10(5.3 - 1.3) + 37, np.log10(5.3 + 1.7) + 37) # WR20a + WR20b
@@ -396,6 +414,7 @@ def make_nice_energy_figure(ax=None, log=True):
         f = lambda x: x
     ax = total_energy_over_time(1, axes=ax, setup=True, color='green', label_suffix='[1, 120]', log=log)
     total_energy_over_time(2, axes=ax, color='blue', label_suffix='[1, 80]', log=log)
+    total_energy_over_time(3, axes=ax, color='red', label_suffix='[1, 100]', log=log)
     shell_KE = f(2e50)
     plasma_TE = f(2.4e48)
     plt.axhline(y=shell_KE, color='k', alpha=0.7, lw=0.7, linestyle='-', label='Shell KE')
@@ -408,7 +427,9 @@ def make_nice_energy_figure(ax=None, log=True):
 
 if __name__ == "__main__":
     make_nice_sb99_figure()
-    # check_power_linear(10, age_lim_Myr=[2, 2.5, 3, 3.5])
+
+    check_power_linear(30, age_lim_Myr=[1.5, 2, 2.5, 3, 3.5])
+
     # make_nice_energy_figure(ax=plt.subplot(121), log=False)
     # make_nice_energy_figure(ax=plt.subplot(122))
     # plt.show()

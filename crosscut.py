@@ -4,6 +4,7 @@ import matplotlib
 font = {'family': 'sans', 'weight': 'normal', 'size': 6}
 matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
+from matplotlib import patches
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -145,24 +146,27 @@ def load_general(filename, *args, **kwargs):
     img = np.log10(img - np.nanmin(img)) # INTERESTING: subtracting before log has an (unpredictable?) effect on the log curve
     return (img, wcs, *args)
 
-def normalize_crosscut(xcut, rescale=True):
+def offset_crosscut(xcut):
     """
     A few operations to comfortably line up all the cross cuts
     :param xcut: array to work on
-    :param rescale: True if there should be a geometric factor applied to the
-        array. False is useful if the array is log, in which case
-        a geometric factor affects the apparent power law.
-    :returns: same array as xcut argument, but offset and maybe normalized
+    :returns: same array as xcut argument, but offset
     """
     # Subtract median
     subtracted = xcut - np.nanmedian(xcut)
     # Get rid of stars (mostly for HST)
     subtracted[subtracted > np.nanstd(subtracted)*5] = np.nan ## TODO: make this star-proof for F814W. note that stars are several pixels wide. (fit gaussian?)
     # Add back some value to get it above 0
-    if rescale:
-        # Normalize, if applicable
-        subtracted /= (4 * np.nanstd(subtracted[np.isfinite(subtracted)]))
     return subtracted
+
+def normalize_crosscut(xcut):
+    """
+    Rescale operation to comfortably line up all the cross cuts
+    :param xcut: array to work on
+    :returns: same array as xcut argument, but normalized
+    """
+    # Normalize
+    return xcut / (4 * np.nanstd(xcut[np.isfinite(xcut)]))
 
 
 data_path = catalog.utils.ancillary_data_path
@@ -176,120 +180,36 @@ cross_cuts_coords = {
     "clear-across-1": ("10:23:29.8019 -57:46:56.589", "10:24:43.2086 -57:41:05.669", -25, 0), # To accompany the cartoon
     "clear-across-2": ("10:24:49.8687 -57:45:21.769", "10:23:20.1454 -57:45:33.656", -12, -4),
     "from-center-1": ("10:23:58.1 -57:45:49", "10:25:05.5470 -57:40:17.746", -25, 0), # Center from WR20a (Wd2 center) thru Wd2 MC to faraway
+    "thru-clcenter-1": ("10:22:59.3030 -57:49:59.699", "10:25:02.3860 -57:41:11.252", -25, 0), # similar to from-center-1
+    "thru-clcenter-2": ("10:23:49.0980 -57:53:50.384", "10:24:14.4021 -57:37:19.339", -25, 0), # more N-S than thru-clcenter-1
+    "thru-clcenter-3": ("10:23:12.0398 -57:41:53.733", "10:25:02.2100 -57:49:57.528", -25, 0) # crosses bright ridge
 }
 
 
-if False:
-    data_path = catalog.utils.ancillary_data_path
-    chandra_fn = f"{data_path}chandra/full_band.fullfield.diffuse_filled.flux"
-    hdul = fits.open(chandra_fn)
-    data = hdul[0].data
-    print(data.shape)
-    plt.imshow(data, origin='lower')
-    plt.show()
-    hdul.close()
-
-if False:
-    selection = "from-center-1"
-    coord_start_xcut, coord_end_xcut = (SkyCoord(x, unit=(u.hourangle, u.deg)) for x in cross_cuts_coords[selection][:2])
-    approx_midpoint = SkyCoord((coord_start_xcut.ra + coord_end_xcut.ra)/2, (coord_start_xcut.dec + coord_end_xcut.dec)/2)
-    vlims = cross_cuts_coords[selection][2:]
-
-    coords_xcut = (coord_start_xcut, coord_end_xcut)
-    xcut_len = get_xcut_length(coords_xcut)
-    n_points = 50
-    xcut_args = (coords_xcut,)
-
-    cuts_to_make = {
-        # images just need filenames. cubes need velocity limits too.
-        # "500 um": "herschel/helpssproc/processed/1342255009/SPIRE500um-image.fits",
-        # "350 um": "herschel/helpssproc/processed/1342255009/SPIRE350um-image.fits",
-        # "70 um": "herschel/helpssproc/processed/1342255009/PACS70um-image.fits", # GOOD
-        "F814W": "hst/F814W.fits", # GOOD
-        "843 MHz": "most/J1024M56.FITS",
-        # "12CO": ("apex/apexCO/RCW49_12CO.fits",), # GOOD
-        # "13CO": ("apex/apexCO/RCW49_13CO.fits",),
-        "8 um": "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits", # GOOD
-        "CII": ("sofia/rcw49-cii.fits",), # GOOD
-        # "$\\tau_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 2),
-        # "870 um": "apex/atlasgal/J102414-574658.fits", # GOOD
-        # "$T_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 1),
-        "0.5-7 keV": ("chandra/full_band.fits", np.arcsinh),
-    }
-
-    cuts_to_plot = {}
-
-    for data_name in cuts_to_make:
-        kwargs = {}
-        if isinstance(cuts_to_make[data_name], str):
-            # this is an image
-            load_args = (data_path + cuts_to_make[data_name], *xcut_args)
-            cuts_to_plot_key = data_name
-        elif len(cuts_to_make[data_name]) == 1: # so messy. need object if using this in future.
-            # this is a cube
-            label = f"{data_name} [{vlims[0]:.1f}, {vlims[1]:.1f}] km/s"
-            load_args = (data_path + cuts_to_make[data_name][0], *vlims, *xcut_args)
-            cuts_to_plot_key = label
-        elif len(cuts_to_make[data_name]) == 2:
-            if isinstance(cuts_to_make[data_name][1], int):
-                # This is an image to be read from another extension
-                # At this point, these should probably be objects.........
-                load_args = (data_path + cuts_to_make[data_name][0], cuts_to_make[data_name][1], *xcut_args)
-                cuts_to_plot_key = data_name
-            else:
-                # this is an image with a funnction to apply
-                load_args = (data_path + cuts_to_make[data_name][0], *xcut_args)
-                cuts_to_plot_key = data_name
-                kwargs['f_to_apply'] = cuts_to_make[data_name][1]
-        # LoL this is so hacky
-        args = load_general(*load_args, **kwargs)
-        # This separation gives me a chance to intercept the arguments if I want
-        w = args[1]
-        cuts_to_plot[cuts_to_plot_key] = cross_cut(*args, find_n_samples(w, xcut_len))
-
-    plt.figure(figsize=(16, 8))
-    plt.subplot(121)
-    for label in cuts_to_plot:
-        normed_cut = normalize_crosscut(cuts_to_plot[label], rescale=False)
-        angle_axis = get_angle_axis(*xcut_args, len(normed_cut))
-        alpha = 0.2 if len(normed_cut) > 20000 else .9 # So hacky; please rewrite this
-        plt.plot(np.log10(angle_axis[1:]), normed_cut[1:], label=label, linestyle='-', marker=None, alpha=alpha, lw=0.7)
-
-    ############ NEED TO SORT THIS OUT, MAKE IT phi^-3 backwards!!!
-    phi = angle_axis[1:]
-    phi3 = -3 * np.log10(phi)
-    phi3 -= np.min(phi3)
-    phi3 /= (np.log10(2.) + 2)
-    plt.plot(np.log10(phi), phi3, '--', lw=1, alpha=0.5, label='$\\phi^{-3}$')
-
-    plt.ylabel("Normalized log intensity")
-    plt.xlabel("Log$_{10}$ Distance along cross-cut [arcseconds]")
-    # plt.ylim([-0.5, 1.2])
-    plt.ylim([-0.5, 2.2])
-    plt.xlim([1, plt.xlim()[1]])
-    plt.axvline(x=np.log10(34), linestyle='-.', label='Wd2')
-    plt.legend()
-
-    img, w = load_image(data_path + cuts_to_make["8 um"])
-    width = 15*u.arcmin # was 10
-    img_cutout = Cutout2D(img, approx_midpoint, [width, width], wcs=w)
-    plt.subplot(122, projection=img_cutout.wcs)
-    plt.imshow(np.arcsinh(img_cutout.data), origin='lower', vmin=np.arcsinh(11), vmax=np.arcsinh(900), cmap='Greys_r')
-    arrow = True # Looks a little better without arrow
-    if arrow:
-        x, y = coord_start_xcut.ra.deg, coord_start_xcut.dec.deg
-        dx = (coord_end_xcut.ra - coord_start_xcut.ra).deg
-        dy = (coord_end_xcut.dec - coord_start_xcut.dec).deg
-        plt.arrow(x, y, dx, dy,
-            transform=plt.gca().get_transform('world'), color='r', length_includes_head=True, width=0.003)
-    else:
-        plt.plot([coord_start_xcut.ra.deg, coord_end_xcut.ra.deg],
-            [coord_start_xcut.dec.deg, coord_end_xcut.dec.deg],
-            transform=plt.gca().get_transform('world'), color='r')
-    plt.show()
-    # plt.savefig(f"/home/rkarim/Pictures/4-07-20-work/crosscut_{selection}.png")
+def coords_from_selection(selection):
+    return tuple(SkyCoord(x, unit=(u.hourangle, u.deg)) for x in cross_cuts_coords[selection][:2])
 
 
+def vlims_from_selection(selection):
+    return cross_cuts_coords[selection][2:]
+
+
+file_info = {
+    ###### images just need filenames. cubes need velocity limits too.
+    "500 um": "herschel/helpssproc/processed/1342255009/SPIRE500um-image.fits",
+    "350 um": "herschel/helpssproc/processed/1342255009/SPIRE350um-image.fits",
+    "70 um": "herschel/helpssproc/processed/1342255009/PACS70um-image.fits", # GOOD
+    "F814W": "hst/F814W.fits", # GOOD
+    "843 MHz": "most/J1024M56.FITS",
+    "12CO": "apex/apexCO/RCW49_12CO.fits", # GOOD
+    "13CO": "apex/apexCO/RCW49_13CO.fits",
+    "8 um": "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits", # GOOD
+    "CII": "sofia/rcw49-cii.fits", # GOOD
+    "$\\tau_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 2),
+    "870 um": "apex/atlasgal/J102414-574658.fits", # GOOD
+    "$T_{d}$": ("herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits", 1),
+    "0.5-7 keV": "chandra/full_band.fits",
+}
 
 
 class DataLayer:
@@ -301,13 +221,24 @@ class DataLayer:
     Written: July 6, 2020
     """
     def __init__(self, name, filepath, cube=False, extension=0, f_to_apply=None,
-        alpha=0.9):
+        alpha=0.9, offset=False):
         self.name = name
         self.filepath = catalog.utils.ancillary_data_path + filepath
         self.is_cube = cube
         self.extension = extension
         self.f_to_apply = f_to_apply
         self.alpha = alpha # For plotting
+        if offset:
+            # Some kind of vertical offsetting procedure
+            if callable(offset):
+                self.offset = offset
+            elif misc_utils.is_number(offset):
+                # Some zero point to subtract
+                self.offset = lambda x: x - float(offset)
+            else:
+                self.offset = offset_crosscut
+        else:
+            self.offset = lambda x: x
 
     def load(self, vmin=None, vmax=None):
         """
@@ -356,7 +287,6 @@ class DataLayer:
             return self.name
 
 
-
 class CrossCut:
     """
     This class will manage an entire cross-cut figure.
@@ -397,11 +327,15 @@ class CrossCut:
         if fig is None:
             self.fig = plt.figure(figsize=figsize)
         else:
+            plt.figure(fig.number)
             self.fig = fig
         if xcut_axis is None:
             self.axes = {'xcut': plt.subplot(121), 'img': None}
         else:
+            if isinstance(xcut_axis, int):
+                xcut_axis = plt.subplot(xcut_axis)
             self.axes = {'xcut': xcut_axis, 'img': None}
+        return self.fig
 
     def set_axis_limits(self, xlim, ylim):
         """
@@ -438,10 +372,10 @@ class CrossCut:
                 # cut_array[cut_array <= 0] = np.nanmin(cut_array[cut_array > 0])/10
                 cut_array = np.log10(cut_array[1:])
                 angle_array = np.log10(angle_array[1:])
-            # Decide whether we should rescale while offsetting
-            rescale = not self.log
             # Normalize/offsef the array
-            cut_array = normalize_crosscut(cut_array, rescale=rescale)
+            cut_array = layer.offset(cut_array)
+            if not self.log:
+                cut_array = normalize_crosscut(cut_array)
             plt.plot(angle_array, cut_array, label=layer.label(self),
                 linestyle='-', marker=None, alpha=layer.alpha, lw=0.7)
             # Record that we already did this
@@ -494,7 +428,7 @@ class CrossCut:
         self.axes['img'] = plt.subplot(subplot_number, projection=img_cutout.wcs)
         plt.imshow(stretched_image, origin='lower', vmin=lo, vmax=hi, cmap='Greys_r')
         # Prepare to plot the line or arrow showing the cross cut
-        plot_kwargs = dict(color='r', transform=plt.gca().get_transform('world'))
+        plot_kwargs = dict(color='r', transform=catalog.utils.get_transform())
         coord_start_xcut, coord_end_xcut = self.coords
         arrow = True # can think about this later
         if arrow:
@@ -502,11 +436,42 @@ class CrossCut:
             dx = (coord_end_xcut.ra - coord_start_xcut.ra).deg
             dy = (coord_end_xcut.dec - coord_start_xcut.dec).deg
             plt.arrow(x, y, dx, dy, length_includes_head=True, width=0.002,
-                **plot_kwargs, alpha=0.3)
+                **plot_kwargs, alpha=0.3, head_width=0.02, head_length=0.04)
         else:
             plt.plot([coord_start_xcut.ra.deg, coord_end_xcut.ra.deg],
                 [coord_start_xcut.dec.deg, coord_end_xcut.dec.deg],
                 **plot_kwargs, alpha=0.3)
+
+    def mark_radius(self, radius, label=False, **plot_kwargs):
+        """
+        Overplot onto the image axis a circle of given radius originating
+        from the first coordinate.
+        Also mark this radius on the cross-cut diagram with a vertical line
+        of the same appearance.
+        :param radius: must be Quantity, angular unit
+        :param plot_kwargs: any kwargs to pass to BOTH Ellipse and axvline.
+        """
+        # Make the circle
+        self.switch_axes('img')
+        center_coord = self.coords[0]
+        x, y = center_coord.ra.deg, center_coord.dec.deg
+        width_dec = radius.to(u.deg).to_value() * 2
+        width_ra = width_dec / np.cos(center_coord.dec.rad)
+        circle_patch = patches.Ellipse((x, y), width_ra, width_dec,
+            transform=catalog.utils.get_transform(), fill=False,
+            **plot_kwargs)
+        self.axes['img'].add_patch(circle_patch)
+        # Now make the vertical line
+        self.switch_axes('xcut')
+        radius_to_mark = radius.to(u.arcsec).to_value()
+        if self.log:
+            radius_to_mark = np.log10(radius_to_mark)
+        if label:
+            if not isinstance(label, str):
+                label = f"$r = {radius.to(u.arcsec).to_value():.1f}''$"
+        plt.axvline(radius_to_mark, **plot_kwargs, label=label)
+        if label:
+            plt.legend()
 
 
 
@@ -517,31 +482,80 @@ class CrossCut:
         """
         return dict(vmin=self.vlims[0], vmax=self.vlims[1])
 
-# (__name__ == "__main__")
-if True:
+def prepare_layers():
+    layers = [
+        DataLayer("CII", "sofia/rcw49-cii.fits", cube=True, alpha=0.7, offset=-0.1),
+        DataLayer("843 MHz", "most/J1024M56.FITS", offset=-0.1),
+        DataLayer("8 um", "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits", offset=2.2),
+        DataLayer("F814W", "hst/F814W.fits", alpha=0.2, offset=-0.8),
+        DataLayer("0.5-7 keV", "chandra/full_band.fits", offset=-9),
+    ]
+    return layers
+
+def single_plot():
     selection = "from-center-1"
-    coords = tuple(SkyCoord(x, unit=(u.hourangle, u.deg)) for x in cross_cuts_coords[selection][:2])
-    vlims = cross_cuts_coords[selection][2:]
+    coords = coords_from_selection(selection)
+    vlims = vlims_from_selection(selection)
     cross_cut_obj = CrossCut(coords, vlims=vlims, log=True)
     cross_cut_obj.setup_figure()
-    layers = [
-        DataLayer("CII", "sofia/rcw49-cii.fits", cube=True, alpha=0.5),
-        DataLayer("843 MHz", "most/J1024M56.FITS"),
-        DataLayer("8 um", "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits"),
-        DataLayer("F814W", "hst/F814W.fits", alpha=0.2),
-        DataLayer("0.5-7 keV", "chandra/full_band.fits"),
-    ]
+    layers = prepare_layers()
     cross_cut_obj.add_data_layer(*layers)
     cross_cut_obj.update_plot()
-    cross_cut_obj.overplot_power_law(x_intercept=2.6, alpha=0.7, linestyle='-.')
-    cross_cut_obj.overplot_power_law(exponent=-(4./3), x_intercept=2.45, exp_label="-4/3", end_x=2.45)
-    cross_cut_obj.overplot_power_law(exponent=-1, x_intercept=1.5, lw=0.5)
-    cross_cut_obj.set_axis_limits((0, 3), (-1.5, 1.5))
+    cross_cut_obj.overplot_power_law(x_intercept=2.6, alpha=0.7, linestyle='-.', lw=0.7)
+    cross_cut_obj.overplot_power_law(exponent=-(4./3), x_intercept=2.5, exp_label="-4/3", end_x=2.5, lw=0.7)
+    cross_cut_obj.overplot_power_law(exponent=-1, x_intercept=2., lw=0.5)
+    cross_cut_obj.set_axis_limits((0.5, 3), (-1., 1.5))
+    cross_cut_obj.switch_axes('xcut')
+    plt.ylabel("Normalized log intensity")
+    plt.xlabel("Log$_{10}$ Distance along cross-cut [arcseconds]")
+    plt.title("Cross cut")
     # CII: vlims=(0, 11), 8um: vlims=(11, 900)
     cross_cut_obj.plot_image('8 um', stretch='arcsinh', vlims=(11, 900))
+    cross_cut_obj.switch_axes('img')
+    plt.title("8 um image, cross cut overlaid")
+    cross_cut_obj.mark_radius((10**2.25)*u.arcsec, color='k', lw=0.3, linestyle='--')
+    shell_radius = np.sin(5/4160.)*u.rad
+    cross_cut_obj.mark_radius(shell_radius, color='k', lw=0.5, linestyle='-')
+    shell_radius = np.sin(6/4160.)*u.rad
+    cross_cut_obj.mark_radius(shell_radius, color='k', lw=0.5, linestyle='-')
     plt.show()
 
 
+def double_plot():
+    selection_n = 1
+    selection = f'thru-clcenter-{selection_n}'
+    terminal_coords = coords_from_selection(selection)
+    center_coord = catalog.utils.wd2_cluster_center_coord
+    coord_pair_1 = (center_coord, terminal_coords[1]) # forwards
+    coord_pair_2 = (center_coord, terminal_coords[0]) # backwards
+    vlims = vlims_from_selection(selection)
+    layers = prepare_layers()
+    # Two nearly identical CrossCut instances
+    cross_cut_objects = tuple(CrossCut(coords, vlims=vlims, log=True) for coords in (coord_pair_1, coord_pair_2))
+    fig = cross_cut_objects[0].setup_figure(figsize=(14, 14), xcut_axis=221)
+    cross_cut_objects[1].setup_figure(fig=fig, xcut_axis=223)
+    for subplot_n, cco in zip((222, 224), cross_cut_objects):
+        cco.add_data_layer(*layers)
+        cco.update_plot()
+        cco.set_axis_limits((0, 3), (-1.5, 1.5))
+        cco.switch_axes('xcut')
+        plt.ylabel("Log$_{10}$ Normalized intensity")
+        plt.xlabel("Log$_{10}$ Distance along cross-cut [arcseconds]")
+        cco.overplot_power_law(x_intercept=2.6, alpha=0.7, linestyle='-.', lw=0.7)
+        # cco.overplot_power_law(exponent=-(4./3), x_intercept=2.45, exp_label="-4/3", end_x=2.45, lw=0.7)
+        cco.overplot_power_law(exponent=-2, x_intercept=2.4, lw=0.5)
+        cco.overplot_power_law(exponent=-1, x_intercept=1.5, lw=0.5)
+        cco.plot_image('8 um', stretch='arcsinh', vlims=(11, 900), subplot_number=subplot_n)
+        plt.title("8 um image, cross cut overlaid")
+        cco.mark_radius((10**2.05)*u.arcsec, color='k', lw=0.3, linestyle='--')
+        cco.mark_radius(np.sin(5/4160.)*u.rad, color='k', lw=0.5, linestyle='-')
+        cco.mark_radius(np.sin(6/4160.)*u.rad, color='k', lw=0.5, linestyle='-')
+    plt.savefig(f"/home/ramsey/Pictures/7-07-20-work/double_crosscut_{selection_n}.png") # , dpi=fig.dpi*1.2
+
+
+
+if __name__ == '__main__':
+    double_plot()
 
 """
 ======================================================================
@@ -551,7 +565,7 @@ use astropy azimuth thing
 """
 
 
-if False:
+def plot_azimuthal():
     data_path = catalog.utils.ancillary_data_path
     center_coord = catalog.utils.wd2_center_coord
     full_radius = 7.*u.arcmin

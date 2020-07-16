@@ -13,14 +13,15 @@ from astropy.coordinates import SkyCoord, FK5
 from spectral_cube import SpectralCube
 from reproject import reproject_interp
 
-from mantipython import physics
-import misc_utils, catalog_utils
-import geometric_model as geomodel
+from .mantipython import physics
+from . import misc_utils
+from . import catalog
+from . import geometric_model as geomodel
 
 
-dust_path = f"{catalog_utils.feedback_path}misc_data/dust/"
-herschel_path = f"{catalog_utils.ancillary_data_path}herschel/"
-cii_cube = f"{catalog_utils.cii_path}rcw49-cii.fits"
+dust_path = f"{catalog.utils.feedback_path}misc_data/dust/"
+herschel_path = f"{catalog.utils.ancillary_data_path}herschel/"
+cii_cube = f"{catalog.utils.cii_path}rcw49-cii.fits"
 
 """
 Constants
@@ -287,7 +288,7 @@ def integrate_shell_cii_mask(n=2, test_mask=False, use_background=False, plot_an
     This could have a geometrical factor applied to it
     """
     # Load in CII
-    cii_img, cii_w = catalog_utils.load_cii(n)
+    cii_img, cii_w = catalog.utils.load_cii(n)
     # This doesn't work great, I should swap in my better convolution function
     cii_img = smooth_image(cii_img, kernel_length=10, std=1.5)
     # Load and prepare tau
@@ -327,6 +328,7 @@ def integrate_shell_cii_mask(n=2, test_mask=False, use_background=False, plot_an
     kabs = get_k(d)
     # Albedo is 0 so ext = abs (no sca)
     Cext160 = get_val_at(160., wl, Cext)
+    print(f"Cext/H(160um) = {Cext160:.2E}")
     # k will produce slightly higher mass since g-to-d includes He
     kabs160 = get_val_at(160., wl, kabs)
     # Distance is the Vargas-Alvarez value
@@ -416,7 +418,7 @@ def make_cii_mom0():
         h1.update(wflat.to_header())
         h1['COMMENT'] = "Full velocity-range moment 0 map from [CII]"
         h1['BUNIT'] = 'K'
-        fits.writeto(f"{catalog_utils.cii_path}mom0_fullrange.fits", img1.to_value(), h1)
+        fits.writeto(f"{catalog.utils.cii_path}mom0_fullrange.fits", img1.to_value(), h1)
         del img1, h1
     if False:
         # Now make a subcubes from -12 to -8 and -8 to -4 km/s
@@ -425,7 +427,7 @@ def make_cii_mom0():
         h2.update(wflat.to_header())
         h2['COMMENT'] = "[CII] moment 0 from -12 km/s to -8 km/s"
         h2['BUNIT'] = 'K'
-        fits.writeto(f"{catalog_utils.cii_path}mom0_-12to-8.fits", img2.to_value(), h2)
+        fits.writeto(f"{catalog.utils.cii_path}mom0_-12to-8.fits", img2.to_value(), h2)
         del img2, h2
     if False:
         # And again for -8 to -4
@@ -434,7 +436,7 @@ def make_cii_mom0():
         h2.update(wflat.to_header())
         h2['COMMENT'] = "[CII] moment 0 from -8 km/s to -4 km/s"
         h2['BUNIT'] = 'K'
-        fits.writeto(f"{catalog_utils.cii_path}mom0_-8to-4.fits", img2.to_value(), h2)
+        fits.writeto(f"{catalog.utils.cii_path}mom0_-8to-4.fits", img2.to_value(), h2)
         del img2, h2
     if False:
         # And again for -25 to 0
@@ -443,7 +445,7 @@ def make_cii_mom0():
         h2.update(wflat.to_header())
         h2['COMMENT'] = "[CII] moment 0 from -25 km/s to 0 km/s"
         h2['BUNIT'] = 'K'
-        fits.writeto(f"{catalog_utils.cii_path}mom0_-25to0.fits", img2.to_value(), h2)
+        fits.writeto(f"{catalog.utils.cii_path}mom0_-25to0.fits", img2.to_value(), h2)
     print("all done")
 
 
@@ -473,5 +475,5 @@ def prepare_img_for_plot(img, scale=np.arcsinh, low_cutoff=np.nanmedian):
 
 
 if __name__ == "__main__":
-    integrate_shell_cii_mask(n=2, Rv=3.1, plot_anything=1)
-    integrate_shell_cii_mask(n=3, Rv=3.1, plot_anything=1)
+    integrate_shell_cii_mask(n=2, Rv=3.1, plot_anything=1, use_background=False)
+    integrate_shell_cii_mask(n=3, Rv=3.1, plot_anything=1, use_background=False)

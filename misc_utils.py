@@ -1,3 +1,5 @@
+from numbers import Number
+
 import numpy as np
 
 from astropy import units as u
@@ -91,3 +93,7 @@ def get_pixel_scale(wcs_obj):
     """
     ps = np.mean(np.abs(np.diag(wcs_obj.pixel_scale_matrix))) * u.deg
     return ps
+
+
+def is_number(x):
+    return isinstance(x, Number)

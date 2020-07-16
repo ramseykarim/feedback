@@ -68,6 +68,10 @@ print("A07 mass [1, 80]")
 mtot_OB_samples = calculate_Mtot(xi0_samples_A07, 1, 80., gamma_samples_A07)
 printout_error(mtot_OB_samples)
 
+print("A07 mass [1, 100]")
+mtot_OB_samples = calculate_Mtot(xi0_samples_A07, 1, 100., gamma_samples_A07)
+printout_error(mtot_OB_samples)
+
 print()
 
 print("Z17 mass [10, 80]")
@@ -81,6 +85,10 @@ mtot_OB_samples = calculate_Mtot(xi0_samples_Z17, 1, 120., gamma_samples_Z17)
 printout_error(mtot_OB_samples)
 print("Z17 mass [1, 80]")
 mtot_OB_samples = calculate_Mtot(xi0_samples_Z17, 1, 80., gamma_samples_Z17)
+printout_error(mtot_OB_samples)
+
+print("Z17 mass [1, 100]")
+mtot_OB_samples = calculate_Mtot(xi0_samples_Z17, 1, 100., gamma_samples_Z17)
 printout_error(mtot_OB_samples)
 
 
