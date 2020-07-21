@@ -26,6 +26,8 @@ ancillary_data_path = f"{feedback_path}rcw49_data/"
 cii_path = f"{ancillary_data_path}sofia/"
 irac_path = f"{ancillary_data_path}spitzer/irac/"
 
+m16_data_path = f"{feedback_path}m16_data/"
+
 misc_data_path = f"{feedback_path}misc_data/"
 
 figures_path = f"{feedback_path}feedback_code/figures/"

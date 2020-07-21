@@ -10,7 +10,8 @@ from astropy.nddata.utils import Cutout2D
 from spectral_cube import SpectralCube
 import pvextractor
 
-import catalog
+from . import misc_utils
+from . import catalog
 
 
 """
@@ -20,8 +21,13 @@ Created: March 24th, 2020 (in the midst of the quarantine)
 __author__ = "Ramsey Karim"
 
 
-fn = f"{catalog.utils.ancillary_data_path}apex/apexCO/RCW49_12CO.fits"
+# RCW 49
 fn = f"{catalog.utils.ancillary_data_path}sofia/rcw49-cii.fits"
+fn = f"{catalog.utils.ancillary_data_path}apex/apexCO/RCW49_12CO.fits"
+# M16
+fn = f"{catalog.utils.m16_data_path}apex/M16_12CO3-2.fits"
+fn = f"{catalog.utils.m16_data_path}sofia/M16_CII_U.fits"
+fn = f"{catalog.utils.m16_data_path}bima/M16_12CO1-0_7x4.fits"
 
 with fits.open(fn) as hdul:
     h = hdul[0].header
@@ -29,14 +35,22 @@ with fits.open(fn) as hdul:
     wflat = WCS(h, naxis=2)
     data = hdul[0].data * u.K / (u.m / u.s)
 cube = SpectralCube(data=data, wcs=w)
+
 subcube = cube.spectral_slab(-30*u.km/u.s, +30*u.km/u.s)
 del data
 mom0 = subcube.moment(order=0)
 
+
+
+"""
+Star positions, bubble centers, etc.
+"""
 wr20b = SkyCoord(156.07666638433972*u.deg, -57.80826909707589*u.deg)
 wr20b_bubble = SkyCoord("10:24:18.7061 -57:48:14.937", unit=(u.hourangle, u.deg), frame=FK5)
 wr20a = SkyCoord("10:23:58.0545 -57:45:48.862", unit=(u.hourangle, u.deg), frame=FK5) # approx from ds9, not SIMBAD or anything
 wr20b_bubble_radius = 1.35967*u.deg
+
+
 
 # coords = SkyCoord([p0, p1], unit=(u.hourangle, u.deg))
 # p = pvextractor.Path(coords, width=1*u.arcmin)
@@ -174,8 +188,10 @@ def vertical_series_thru(center):
     print()
 
 
-def overlay_cosine():
-    center = wr20b
+def overlay_cosine(center, bubble_radius):
+    """
+    overlay_cosine(wr20b, wr20b_bubble_radius)
+    """
     # Horizontal length of EACH HORIZONTAL PV CUT
     pathlength = 5*u.arcmin
     # Vertical length of the SEIRES OF HORIZONTAL CUTS
@@ -186,8 +202,8 @@ def overlay_cosine():
 
     n_image = 16
     current_position = SkyCoord(center.ra, start_dec + n_image*stepwidth, frame=FK5)
-    dec_displacement_from_bubble_center = (wr20b_bubble.dec - current_position.dec).deg
-    ang_displacement_from_bubble_center = 90 - np.rad2deg(np.arccos(dec_displacement_from_bubble_center / wr20b_bubble_radius.to_value()))
+    dec_displacement_from_bubble_center = (center.dec - current_position.dec).deg
+    ang_displacement_from_bubble_center = 90 - np.rad2deg(np.arccos(dec_displacement_from_bubble_center / bubble_radius.to_value()))
     print(ang_displacement_from_bubble_center) # TODO: what is going on with this results? plot circle and see if it makes sense
 
     angle = 270.
@@ -196,7 +212,7 @@ def overlay_cosine():
     p = pvextractor.PathFromCenter(center=current_position, length=pathlength, angle=angle*u.deg, width=2*u.arcsec)
 
     c0, c1 = p._coords[0], p._coords[1]
-    ra_displacement_bubble_center_from_left_edge = (c0.ra - wr20b_bubble.ra).deg * np.cos(current_position.dec)
+    ra_displacement_bubble_center_from_left_edge = (c0.ra - center.ra).deg * np.cos(current_position.dec)
     print(ra_displacement_bubble_center_from_left_edge, dec_displacement_from_bubble_center)
     return
     sl = pvextractor.extract_pv_slice(subcube, p)
@@ -211,7 +227,7 @@ def overlay_cosine():
     # ax.set_aspect(.1)
     ax1 = plt.subplot(121, projection=wflat)
     plt.imshow(mom0.to_value(), origin='lower', cmap='plasma')
-    ax1.plot([wr20b.ra.to_value()], [wr20b.dec.to_value()], color='blue', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
+    ax1.plot([center.ra.to_value()], [center.dec.to_value()], color='blue', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
     # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
     ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
         *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))),
@@ -222,9 +238,13 @@ def overlay_cosine():
 
 
 
-def along_pillar_12CO():
+def along_pillar_12CO(pillar_top, pillar_base, coord_to_mark):
+    """
+    RCW 49:
     pillar_top = "10:24:09.3382 -57:48:54.070"
     pillar_base = "10:24:27.4320 -57:50:35.824"
+    coord_to_mark = wr20b
+    """
     pillar_coords = SkyCoord([pillar_top, pillar_base], unit=(u.hourangle, u.deg), frame=FK5)
     p = pvextractor.Path(pillar_coords, width=50*u.arcsec)
     c0, c1 = p._coords[0], p._coords[1]
@@ -236,10 +256,10 @@ def along_pillar_12CO():
     plt.contour(sl.data, cmap='autumn_r', linewidths=0.5, levels=[10., 15., 20., 25., 30., 35.,])
     plt.ylabel("Velocity (km/s)")
 
-    mom0_cutout = Cutout2D(mom0.to_value(), wr20b, [10.*u.arcmin, 10.*u.arcmin], wcs=wflat)
+    mom0_cutout = Cutout2D(mom0.to_value(), coord_to_mark, [10.*u.arcmin, 10.*u.arcmin], wcs=wflat)
     ax1 = plt.subplot(121, projection=mom0_cutout.wcs)
     plt.imshow(mom0_cutout.data, origin='lower', cmap='plasma')
-    ax1.plot([wr20b.ra.to_value()], [wr20b.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
+    ax1.plot([coord_to_mark.ra.to_value()], [coord_to_mark.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
     # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
     ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
         *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))), # this is somehow correct; no cos(dec) term is necessary.
@@ -365,4 +385,49 @@ def linewidth_from_data_units(linewidth, axis, reference='y'):
     return linewidth * (length / value_range)
 
 
-rotate_around(wr20a, length=16, width=0.5)
+def moment_1_image():
+    """
+    Not a PV diagram, just wanted to follow up on Marc's idea of making moment1
+    maps to detect filaments
+    Use the spectral_slab method of cube to take small (few km/s wide) slices
+    and then make moment 1 images (mean velocity)
+    Could also make moment 2 images to see what those even look like
+    """
+    pillars_in_cii = { # clearest in CII
+        "major-southern": (4., 13.5),
+    }
+    pillars_in_co = { # clearest in CO
+        "broad-interior": (-10., 7.),
+        "focus-interior-1": (-10., -4.),
+        "focus-interior-2": (-4., 4.),
+        "focus-interior-3": (4., 7.),
+    }
+    vlims = (-10, 0)
+    vlims = tuple(v*u.km/u.s for v in vlims)
+    subcube_pillar = cube.spectral_slab(*vlims)
+    cutout_width = 20.*u.arcmin
+    mom0 = subcube_pillar.moment(order=0).to_value()
+    mom0_cut = Cutout2D(mom0, wr20a, [cutout_width]*2, wcs=wflat)
+    mom0, mom0w = mom0_cut.data, mom0_cut.wcs
+
+    mom1 = subcube_pillar.moment(order=1).to(u.km/u.s).to_value()
+    mom1_cut = Cutout2D(mom1, wr20a, [cutout_width]*2, wcs=wflat)
+    mom1, mom1w = mom1_cut.data, mom1_cut.wcs
+
+    plt.figure(figsize=(8, 4))
+    plt.subplot(121, projection=mom0w)
+    img_lims = misc_utils.flquantiles(mom0[np.isfinite(mom0)].ravel(), 16)
+    plt.imshow(mom0, origin='lower')
+    plt.colorbar(label="Temperature (K)")
+    plt.title("Moment 0")
+
+    plt.subplot(122, projection=mom1w)
+    plt.imshow(mom1, origin='lower', vmin=vlims[0].to_value(), vmax=vlims[1].to_value(), cmap='jet')
+    plt.colorbar(label="Mean velocity (km/s)")
+    plt.title("Moment 1")
+
+    plt.show()
+
+
+if __name__ == "__main__":
+    moment_1_image()
