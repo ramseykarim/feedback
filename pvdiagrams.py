@@ -1,4 +1,7 @@
 import numpy as np
+import matplotlib
+font = {'family': 'sans', 'weight': 'normal', 'size': 6}
+matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 import sys
 
@@ -12,6 +15,7 @@ import pvextractor
 
 from . import misc_utils
 from . import catalog
+from . import cube_utils
 
 
 """
@@ -20,26 +24,37 @@ Created: March 24th, 2020 (in the midst of the quarantine)
 """
 __author__ = "Ramsey Karim"
 
+# Useful units
+km_s = u.km / u.s
 
 # RCW 49
-fn = f"{catalog.utils.ancillary_data_path}sofia/rcw49-cii.fits"
 fn = f"{catalog.utils.ancillary_data_path}apex/apexCO/RCW49_12CO.fits"
+fn = f"{catalog.utils.ancillary_data_path}sofia/rcw49-cii.fits"
 # M16
-fn = f"{catalog.utils.m16_data_path}apex/M16_12CO3-2.fits"
-fn = f"{catalog.utils.m16_data_path}sofia/M16_CII_U.fits"
-fn = f"{catalog.utils.m16_data_path}bima/M16_12CO1-0_7x4.fits"
+filenames = [f"{catalog.utils.m16_data_path}apex/M16_12CO3-2.fits",
+    "bima/M16_12CO1-0_7x4.fits",
+    "sofia/M16_CII_U.fits"]
+fn = filenames[1]
 
-with fits.open(fn) as hdul:
-    h = hdul[0].header
-    w = WCS(h)
-    wflat = WCS(h, naxis=2)
-    data = hdul[0].data * u.K / (u.m / u.s)
+# I should move this to the name==main block
+# with fits.open(fn) as hdul:
+#     h = hdul[0].header
+#     w = WCS(h)
+#     wflat = WCS(h, naxis=2)
+#     # MEMORY PROBLEM WITH APEX M16 HERE
+#     data = hdul[0].data * (u.K / (u.m / u.s))
+
+"""
+### July 22, 2020: I just learned that the units should be K, not K/(km/s)
+### I'll have to address this more globally later, but I'll start treating it
+### properly in new code now
+
 cube = SpectralCube(data=data, wcs=w)
 
-subcube = cube.spectral_slab(-30*u.km/u.s, +30*u.km/u.s)
+subcube = cube.spectral_slab(17*km_s, 31*km_s)
 del data
 mom0 = subcube.moment(order=0)
-
+"""
 
 
 """
@@ -50,6 +65,9 @@ wr20b_bubble = SkyCoord("10:24:18.7061 -57:48:14.937", unit=(u.hourangle, u.deg)
 wr20a = SkyCoord("10:23:58.0545 -57:45:48.862", unit=(u.hourangle, u.deg), frame=FK5) # approx from ds9, not SIMBAD or anything
 wr20b_bubble_radius = 1.35967*u.deg
 
+m16_bima_center = SkyCoord("18:18:51.2900 -13:50:00.890", unit=(u.hourangle, u.deg), frame=FK5)
+m16_marc_pillar_center = SkyCoord('18:18:51.5 -13:50:26.3', unit=(u.hourangle, u.deg), frame=FK5)
+m16_marc_pillar_kwargs = dict(angle=-47*u.degree, width=5*u.arcsec, length=150*u.arcsec)
 
 
 # coords = SkyCoord([p0, p1], unit=(u.hourangle, u.deg))
@@ -237,39 +255,6 @@ def overlay_cosine(center, bubble_radius):
     plt.show()
 
 
-
-def along_pillar_12CO(pillar_top, pillar_base, coord_to_mark):
-    """
-    RCW 49:
-    pillar_top = "10:24:09.3382 -57:48:54.070"
-    pillar_base = "10:24:27.4320 -57:50:35.824"
-    coord_to_mark = wr20b
-    """
-    pillar_coords = SkyCoord([pillar_top, pillar_base], unit=(u.hourangle, u.deg), frame=FK5)
-    p = pvextractor.Path(pillar_coords, width=50*u.arcsec)
-    c0, c1 = p._coords[0], p._coords[1]
-
-    sl = pvextractor.extract_pv_slice(subcube, p)
-    ax2 = plt.subplot(122, projection=WCS(sl.header))
-    ax2.imshow(sl.data, origin='lower', aspect=.5)
-    ax2.coords[1].set_format_unit(u.km/u.s)
-    plt.contour(sl.data, cmap='autumn_r', linewidths=0.5, levels=[10., 15., 20., 25., 30., 35.,])
-    plt.ylabel("Velocity (km/s)")
-
-    mom0_cutout = Cutout2D(mom0.to_value(), coord_to_mark, [10.*u.arcmin, 10.*u.arcmin], wcs=wflat)
-    ax1 = plt.subplot(121, projection=mom0_cutout.wcs)
-    plt.imshow(mom0_cutout.data, origin='lower', cmap='plasma')
-    ax1.plot([coord_to_mark.ra.to_value()], [coord_to_mark.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
-    # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
-    ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
-        *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))), # this is somehow correct; no cos(dec) term is necessary.
-        color='green', transform=ax1.get_transform('world'), length_includes_head=True,
-        width=0.003,
-    )
-
-    plt.show()
-
-
 def vertical_cut_thru_entire_structure(pct):
     # Pct is the percentage of the full path that this cut will be at
     # Start here (center of horizontal/constant-Dec line)
@@ -346,6 +331,131 @@ def vertical_series_thru_entire_structure():
         current_position = SkyCoord(current_position.ra, current_position.dec - stepwidth)
     print()
 
+def check_stretch(stretch):
+    """
+    Sanitize the visual stretch command, raise a RuntimeError if it's not valid
+    :param stretch: either a string key to the valid_stretches dictionary
+        defined here, or a callable function that can operate on numbers
+    """
+    valid_stretches = {'linear': lambda x: x, 'log': np.log10, 'arcsinh': np.arcsinh}
+    if stretch in valid_stretches:
+        return valid_stretches[stretch]
+    elif callable(stretch):
+        try:
+            stretch(np.ones((2, 2), dtype=np.float64))
+        except:
+            raise RuntimeError(f"Your stretch function doesn't work right.")
+        else:
+            return stretch
+    else:
+        raise RuntimeError(f"Not a valid stretch: {stretch}")
+
+
+def along_pillar(cube, vlims, coord_A, coord_B, width=None, coord_to_mark=None,
+    img_stretch='linear', pv_stretch='linear',
+    img_subplot_number=(121,), pv_subplot_number=(122,),
+    fig=None, show=True):
+    """
+    RCW 49:
+    pillar_top = "10:24:09.3382 -57:48:54.070"
+    pillar_base = "10:24:27.4320 -57:50:35.824"
+    coord_to_mark = wr20b
+    :param cube: CubeData
+    :param vlims: (lo, hi) velocity limits in km/s (but just number, not quantity)
+    :param coord_A: EITHER:
+        1) coordinate beyond the top of the pillar. string
+        2) center coord. SkyCoord
+        3) Path
+    :param coord_B: EITHER:
+        1) coordinate below the base of the pillar. string
+        2) dict of kwargs for at least angle and length, others are fine too
+        3) ignored, but something must be here since it's positional
+    :param width: width of the pv cut. Default is 15 arcseconds. Quantity.
+        If 'width' is a key in coord_B, then this is ignored
+    :param coord_to_mark: (optional) coordinate to place a marker at
+        could be used for a nearby star. SkyCoord.
+    :param img_stretch: the visual stretch for the accompanying spatial image.
+        If string, must be 'linear', 'log', or 'arcsinh'. Can also be
+        callable, in which case it'scalled on the 2D array of numbers
+    :param pv_stretch: the visual stretch for the PV diagram. Same rules as
+        img_stretch
+    :param img_subplot_number: subplot number/tuple for img. Has to be tuple,
+        even if only one number. Args unpacked into plt.subplot()
+    :param pv_subplot_number: same as img_subplot_number, for pv plot
+    :param fig: figure object to use
+    :param show: whether or not to show the plot
+    """
+    if width is None:
+        # Can still be overriden by coord_B
+        width = 15*u.arcsec
+    if (isinstance(coord_A, str) and isinstance(coord_B, str)) or (isinstance(coord_A, SkyCoord) and isinstance(coord_B, SkyCoord)):
+        if isinstance(coord_A, str):
+            pillar_coords = SkyCoord([coord_A, coord_B], unit=(u.hourangle, u.deg), frame=FK5)
+        else:
+            pillar_coords = SkyCoord([coord_A, coord_B])
+        center_coord = SkyCoord(np.mean(pillar_coords.ra), np.mean(pillar_coords.dec))
+        p = pvextractor.Path(pillar_coords, width=width)
+    elif isinstance(coord_A, SkyCoord) and isinstance(coord_B, dict):
+        coord_B = coord_B.copy()
+        if 'width' not in coord_B:
+            coord_B['width'] = width
+        else:
+            width = coord_B['width']
+        p = pvextractor.PathFromCenter(coord_A, **coord_B)
+        center_coord = coord_A
+    elif isinstance(coord_A, pvextractor.Path):
+        p = coord_A
+    else:
+        raise RuntimeError(f"Incorrect input:\ncoord_A = {coord_A}\ncoord_B = {coord_B}\nTry again!")
+    c0, c1 = SkyCoord(p._coords[0]), SkyCoord(p._coords[1])
+    # print(c0.to_string(style='hmsdms', sep=':'))
+    # print(c1.to_string(style='hmsdms', sep=':'))
+    length = c0.separation(c1)
+    img_stretch = check_stretch(img_stretch)
+    pv_stretch = check_stretch(pv_stretch)
+
+    if fig is None:
+        fig = plt.figure(figsize=(8, 4))
+    else:
+        plt.figure(fig.number)
+
+    # PV diagram
+    vlims = tuple(v*u.km/u.s for v in vlims)
+    subcube = cube.data.spectral_slab(*vlims)
+    sl = pvextractor.extract_pv_slice(subcube, p)
+    ax2 = plt.subplot(*pv_subplot_number, projection=WCS(sl.header))
+    ax2.imshow(pv_stretch(sl.data), origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]))
+    # plt.contour(sl.data, cmap='autumn_r', linewidths=0.5, levels=[10., 15., 20., 25., 30., 35.,])
+    ax2.coords[1].set_format_unit(u.km/u.s)
+    cube.help_plot_pv(ax2)
+    ax2.set_ylabel("Velocity (km/s)")
+    ax2.coords[0].set_format_unit(u.arcsec)
+    ax2.coords[0].set_major_formatter('x')
+    ax2.set_xlabel("Displacement (\")")
+    ax2.set_title(f"PV diagram")
+
+
+    # Moment 0 image
+    mom0_cutout = Cutout2D(subcube.moment(order=0).to_value(), center_coord, [length*3, length*3], wcs=cube.wcs_flat, mode='partial', fill_value=np.nan)
+    ax1 = plt.subplot(*img_subplot_number, projection=mom0_cutout.wcs)
+    plt.imshow(img_stretch(mom0_cutout.data), origin='lower', cmap='plasma')
+    if coord_to_mark is not None:
+        ax1.plot([coord_to_mark.ra.to_value()], [coord_to_mark.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
+    # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
+    ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
+        *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))), # this is somehow correct; no cos(dec) term is necessary.
+        color='white', transform=ax1.get_transform('world'), length_includes_head=True,
+        width=width.to(u.deg).to_value(), fill=False, lw=0.5, alpha=0.6,
+    )
+    ax1.set_xlabel("RA")
+    ax1.set_ylabel("Dec")
+    ax1.set_title(f"{cube.name()} integrated intensity (within PV plot limits)")
+
+    if show:
+        plt.show()
+
+
+
 
 """
 Some code I stole directly from StackOverflow
@@ -385,13 +495,18 @@ def linewidth_from_data_units(linewidth, axis, reference='y'):
     return linewidth * (length / value_range)
 
 
-def moment_1_image():
+def moment_1_image(cube, vlims, focus_coord, cutout_width=None):
     """
     Not a PV diagram, just wanted to follow up on Marc's idea of making moment1
     maps to detect filaments
     Use the spectral_slab method of cube to take small (few km/s wide) slices
     and then make moment 1 images (mean velocity)
     Could also make moment 2 images to see what those even look like
+    :param cube: CubeData instance
+    :param vlims: (lo, hi) velocity limits in km/s (but just number, not quantity)
+    :param focus_coord: the center of the 2D image to zoom in on
+    :param cutout_width: (optional) width of the square cutout image.
+        Default is 20 arcmin. Cutoud2D is set to "trim".
     """
     pillars_in_cii = { # clearest in CII
         "major-southern": (4., 13.5),
@@ -402,16 +517,15 @@ def moment_1_image():
         "focus-interior-2": (-4., 4.),
         "focus-interior-3": (4., 7.),
     }
-    vlims = (-10, 0)
     vlims = tuple(v*u.km/u.s for v in vlims)
-    subcube_pillar = cube.spectral_slab(*vlims)
+    subcube_pillar = cube.data.spectral_slab(*vlims)
     cutout_width = 20.*u.arcmin
     mom0 = subcube_pillar.moment(order=0).to_value()
-    mom0_cut = Cutout2D(mom0, wr20a, [cutout_width]*2, wcs=wflat)
+    mom0_cut = Cutout2D(mom0, focus_coord, [cutout_width]*2, wcs=cube.wcs_flat)
     mom0, mom0w = mom0_cut.data, mom0_cut.wcs
 
     mom1 = subcube_pillar.moment(order=1).to(u.km/u.s).to_value()
-    mom1_cut = Cutout2D(mom1, wr20a, [cutout_width]*2, wcs=wflat)
+    mom1_cut = Cutout2D(mom1, focus_coord, [cutout_width]*2, wcs=cube.wcs_flat)
     mom1, mom1w = mom1_cut.data, mom1_cut.wcs
 
     plt.figure(figsize=(8, 4))
@@ -428,6 +542,22 @@ def moment_1_image():
 
     plt.show()
 
+def run_all_data():
+    subplot_size = (3, 2)
+    subplot_number = 1
+    fig = plt.figure(figsize=(5, 7))
+    for fn in filenames:
+        cube = cube_utils.CubeData(fn)
+        # moment_1_image(cube, m16_bima_center, (17, 31))
+        along_pillar(cube, (17, 31), m16_marc_pillar_center, m16_marc_pillar_kwargs,
+            img_subplot_number=(*subplot_size, subplot_number),
+            pv_subplot_number=(*subplot_size, subplot_number + 1),
+            fig=fig, show=False)
+        del cube
+        subplot_number += 2
+    plt.show()
+
 
 if __name__ == "__main__":
-    moment_1_image()
+    cube = cube_utils.CubeData(filenames[2])
+    along_pillar(cube, (19, 24), m16_marc_pillar_center, m16_marc_pillar_kwargs)

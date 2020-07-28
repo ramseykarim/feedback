@@ -27,6 +27,12 @@ theta_beam = 7.3 # arcsec at 5 GHz, from Table 3 in Paladini (maj == min)
 
 
 def convert_mJybeam_to_Kelvin(mJybeam, full_eq=True):
+    """
+    Update July 22, 2020:
+    Astropy.units has functions for this. Since I already tested this here,
+    I'll leave it for now, but I'm doing this same thing in pvdiagrams.py,
+    so I'm going to use astropy there
+    """
     if full_eq:
         # Equations below 3G4 from
         # https://www.cv.nrao.edu/course/astr534/Interferometers2.html

@@ -16,9 +16,11 @@ from math import ceil
 
 from . import misc_utils
 from . import catalog
+from . import cube_utils
 
 """
 Functions and script to make a cross-cut plot using several different data sources
+Updated July 27, 2020 to work with some M16 data. Hoping to generalize this stuff.
 """
 
 def get_xcut_length(xcut_coords):
@@ -119,33 +121,6 @@ def load_cube(filename, vmin, vmax):
     return img, WCS(header, naxis=2)
 
 
-def load_general(filename, *args, **kwargs):
-    # General function for doing all the loading
-    # FILENAME should be the complete path of a FITS file
-    # Either 2, 3, or 4 additional args should be given, depending
-    #   on whether filename points to a 2D image or a 3D cube
-    #   or if the image should be read from a different extension.
-    # If 2D: 2 args, coords and n_points for cross_cut function
-    # If 3D: 4 args, vmin, vmax for load_cube and then
-    #   coords and n_points.
-    # If different extension: 3 args, first arg is extension number,
-    #   then coords and n_points.
-    # Returns arguments for cross_cut
-    if len(args) == 3:
-        load_args = args[:2] # vmin, vmax
-        args = args[2:] # coords; THIS IS TOO HACKY
-        img, wcs = load_cube(filename, *load_args)
-    elif len(args) == 2:
-        load_args = args[0]
-        args = args[1:]
-        img, wcs = load_image(filename, ext=load_args)
-    else:
-        img, wcs = load_image(filename)
-    # if 'f_to_apply' in kwargs:
-    #     img = kwargs['f_to_apply'](img)
-    img = np.log10(img - np.nanmin(img)) # INTERESTING: subtracting before log has an (unpredictable?) effect on the log curve
-    return (img, wcs, *args)
-
 def offset_crosscut(xcut):
     """
     A few operations to comfortably line up all the cross cuts
@@ -182,7 +157,8 @@ cross_cuts_coords = {
     "from-center-1": ("10:23:58.1 -57:45:49", "10:25:05.5470 -57:40:17.746", -25, 0), # Center from WR20a (Wd2 center) thru Wd2 MC to faraway
     "thru-clcenter-1": ("10:22:59.3030 -57:49:59.699", "10:25:02.3860 -57:41:11.252", -25, 0), # similar to from-center-1
     "thru-clcenter-2": ("10:23:49.0980 -57:53:50.384", "10:24:14.4021 -57:37:19.339", -25, 0), # more N-S than thru-clcenter-1
-    "thru-clcenter-3": ("10:23:12.0398 -57:41:53.733", "10:25:02.2100 -57:49:57.528", -25, 0) # crosses bright ridge
+    "thru-clcenter-3": ("10:23:12.0398 -57:41:53.733", "10:25:02.2100 -57:49:57.528", -25, 0), # crosses bright ridge
+    "M16-marc-pillar2": ("18:18:55.2663 -13:51:17.4481", "18:18:47.7341 -13:49:35.1483", 19, 24), # Marc's pillar 2 PV diagram cut
 }
 
 
@@ -219,12 +195,25 @@ class DataLayer:
         cross cuts or azimuthal averages without knowing the specifics of the
         data source.
     Written: July 6, 2020
+    Updated July 27, 2020: now accepts CubeData instances under the "filename"
+        argument, and can "load" and plot them properly
     """
+
     def __init__(self, name, filepath, cube=False, extension=0, f_to_apply=None,
         alpha=0.9, offset=False):
         self.name = name
-        self.filepath = catalog.utils.ancillary_data_path + filepath
-        self.is_cube = cube
+        if isinstance(filepath, str):
+            # Direct load from filepath method
+            self.filepath = catalog.utils.search_for_file(filepath)
+            self.cube_obj = None
+            self.is_cube = cube
+        elif isinstance(filepath, cube_utils.CubeData):
+            # CubeData instance method
+            self.cube_obj = filepath
+            self.filepath = self.cube_obj.full_path
+            if self.name is None:
+                self.name = self.cube_obj.name
+            self.is_cube = True  # ignore the cube keyword
         self.extension = extension
         self.f_to_apply = f_to_apply
         self.alpha = alpha # For plotting
@@ -246,11 +235,19 @@ class DataLayer:
             and images.
         Could, in the future, update this to use SpectralCube for cubes, but
             I don't think there's a need for that (other than readability)
+        Update July 27, 2020: this now works for CubeData instances, which
+            wrap SpectralCube instances. I'll still rely on the regular
+            file-reading version for some types of data.
         :param vmin: minimum velocity for cubes, in km/s. Not used for images.
         :param vmax: maximum velocity for cubes, in km/s. Not used for images.
         """
         if self.is_cube:
-            img, wcs = load_cube(self.filepath, vmin, vmax)
+            if self.cube_obj is None:
+                img, wcs = load_cube(self.filepath, vmin, vmax)
+            else:
+                km_s = u.km / u.s
+                img = self.cube_obj.data.spectral_slab(vmin*km_s, vmax*km_s).moment(order=0).to_value()
+                wcs = self.cube_obj.wcs_flat
         else:
             img, wcs = load_image(self.filepath, ext=self.extension)
         if self.f_to_apply is not None:
@@ -482,17 +479,24 @@ class CrossCut:
         """
         return dict(vmin=self.vlims[0], vmax=self.vlims[1])
 
-def prepare_layers():
-    layers = [
-        DataLayer("CII", "sofia/rcw49-cii.fits", cube=True, alpha=0.7, offset=-0.1),
-        DataLayer("843 MHz", "most/J1024M56.FITS", offset=-0.1),
-        DataLayer("8 um", "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits", offset=2.2),
-        DataLayer("F814W", "hst/F814W.fits", alpha=0.2, offset=-0.8),
-        DataLayer("0.5-7 keV", "chandra/full_band.fits", offset=-9),
-    ]
+def prepare_layers(target='rcw49'):
+    if target == 'rcw49':
+        layers = [
+            DataLayer("CII", "sofia/rcw49-cii.fits", cube=True, alpha=0.7, offset=-0.1),
+            DataLayer("843 MHz", "most/J1024M56.FITS", offset=-0.1),
+            DataLayer("8 um", "spitzer/irac/30002561.30002561-28687.IRAC.4.median_mosaic.fits", offset=2.2),
+            DataLayer("F814W", "hst/F814W.fits", alpha=0.2, offset=-0.8),
+            DataLayer("0.5-7 keV", "chandra/full_band.fits", offset=-9),
+        ]
+    else:
+        layers = [
+            DataLayer("12CO(1-0)", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7),
+            DataLayer("13CO(1-0)", cube_utils.CubeData("bima/M16_13CO1-0_7x4.fits"), cube=True, alpha=0.7),
+            # DataLayer("12CO(3-2)", "")
+        ]
     return layers
 
-def single_plot():
+def single_plot_rcw49():
     selection = "from-center-1"
     coords = coords_from_selection(selection)
     vlims = vlims_from_selection(selection)
@@ -521,7 +525,7 @@ def single_plot():
     plt.show()
 
 
-def double_plot():
+def double_plot_rcw49():
     selection_n = 1
     selection = f'thru-clcenter-{selection_n}'
     terminal_coords = coords_from_selection(selection)
@@ -553,6 +557,9 @@ def double_plot():
     plt.savefig(f"/home/ramsey/Pictures/7-07-20-work/double_crosscut_{selection_n}.png") # , dpi=fig.dpi*1.2
 
 
+def plot_m16():
+    selection = "M16-marc-pillar2"
+    # can we do it? maybe, we'll see. to be continued
 
 if __name__ == '__main__':
     double_plot()

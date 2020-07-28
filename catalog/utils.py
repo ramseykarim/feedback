@@ -32,6 +32,24 @@ misc_data_path = f"{feedback_path}misc_data/"
 
 figures_path = f"{feedback_path}feedback_code/figures/"
 
+# Similar to the PATH shell variable. Where to look for data, in this order
+data_paths = ["", ancillary_data_path, m16_data_path]
+
+def search_for_file(filename):
+    """
+    Look for the given filename in the specified data_paths, in order.
+    Return the first valid one.
+    Raise an error if none are valid
+    :param filename: string filename
+    """
+    for dp in data_paths:
+        potential_filename = dp + filename
+        if os.path.exists(potential_filename):
+            # print("HEY ", os.path.abspath(potential_filename))
+            return os.path.abspath(potential_filename)
+    raise RuntimeError(f"Invalid data filename: {filename}")
+
+
 def load_irac(n=1, header=True):
     """
     Loads whatever IRAC band I have on my laptop
