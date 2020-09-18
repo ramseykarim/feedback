@@ -10,6 +10,11 @@ Revisited: April 29-30, 2020
 Revisited: June 1, 2020
 June 2, 2020: Split apart in to several files
 June 11, 2020: Updated subtype slash behavior
+
+Revisited: August 4, 2020
+I edited st_parse_slashdash to completely ignore colons ":", which
+are used to denote uncertainty. I could change this in the future, but the
+intention of the author is not always clear.
 """
 __author__ = "Ramsey Karim"
 
@@ -95,9 +100,11 @@ def st_parse_slashdash(spectral_type_string, intercept_WR=True):
     June 17, 2020:
     Updated to allow dashes between letter classes, e.g. O9-B3, with behavior
         as described above.
+    August 4, 2020:
+    Updated to completely ignore ":", which denotes uncertainty.
     """
-    # Editorial note (April 29, 2020): seems we replace '-' with '/', which for uncertainty
-    #   purposes seems fair.
+    # First, replace ":" with an empty string; completely ignore ":"
+    spectral_type_string = spectral_type_string.replace(':', '')
     if not re.search(slashdash_re, spectral_type_string):
         # Check for / and return list(string) if not
         return [spectral_type_string]

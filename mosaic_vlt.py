@@ -18,18 +18,16 @@ them together in a contiuous image centered on Wd2/RCW 49.
 The image is an Halpha image that we will find quite useful.
 
 Created: 4/16/2020
+
+Updated: 8/11/2020
+Moved the VLT-specific stuff to if name == main so I can reuse the WCS stuff
 """
 __author__ = "Ramsey Karim"
 
 
-# Location of VLT Halpha data
-data_directory = "../ancillary_data/vlt/omegacam/"
-# All filenames
-vlt_fns = glob.glob(f"{data_directory}/ADP*")
-
 
 def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None,
-    **extra_header_kws):
+    return_header=False, **extra_header_kws):
     """
     Make a fresh, simple WCS object based on a few parameters. Does not need
         any existing data or WCS info.
@@ -59,6 +57,10 @@ def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None,
         astropy Quantity. If it's a scalar but not a Quantity, it's assumed
         to be in units of arcminutes.
         This is a required argument.
+        The exact keywords added to the header will depend on the form of this
+        argument. (Aug 11, 2020)
+    :param return_header: return the Header instead of the WCS object made
+        from the Header
     :param extra_header_kws: any additional FITS Header keywords and their
         values that you would like to add. If they're not used by WCS, they will
         be lost.
@@ -71,19 +73,25 @@ def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None,
         ref_pixel = tuple(int(x/2) for x in grid_shape)
     # Figure out pixel scale and ultimately get a matrix
     if hasattr(pixel_scale, 'shape') and pixel_scale.shape == (2, 2):
-        pixel_scale_matrix = pixel_scale
+        pixel_scale_kwargs = {
+            'CD1_1': (pixel_scale[0, 0], "Transformation matrix"),
+            'CD1_2': (pixel_scale[0, 1], ""),
+            'CD2_1': (pixel_scale[1, 0], ""),
+            'CD2_2': (pixel_scale[1, 1], ""),
+        }
     else:
         if not isinstance(pixel_scale, u.quantity.Quantity):
             pixel_scale *= u.arcmin
-        pixel_scale_matrix = np.zeros((2, 2))
-        pixel_scale_matrix[0, 0] = pixel_scale_matrix[1, 1] = pixel_scale.to(u.deg).to_value()
-        pixel_scale_matrix[0, 0] *= -1. # RA increasing to the left side
+        pixel_scale_kwargs = {
+            'CDELT1': -1 * pixel_scale.to(u.deg).to_value(),
+            'CDELT2': pixel_scale.to(u.deg).to_value(),  # RA increasing to the left side
+        }
     # Lay out the keywords in a dictionary
     kws = {
         'NAXIS': (2, "Number of axes"),
         'NAXIS1': (grid_shape[1], "X/j axis length"),
         'NAXIS2': (grid_shape[0], "Y/i axis length"),
-        'RADESYS': ('ICRS', "Interational Celestial Reference System"),
+        'RADESYS': (ref_coord.frame.name.upper(), ""),
         'CRVAL1': (ref_coord.ra.deg, "[deg] RA of reference point"),
         'CRVAL2': (ref_coord.dec.deg, "[deg] DEC of reference point"),
         'CRPIX1': (ref_pixel[1] + 1, "[pix] Image reference point"),
@@ -91,18 +99,19 @@ def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None,
         'CTYPE1': ('RA---TAN', "RA projection type"),
         'CTYPE2': ('DEC--TAN', "DEC projection type"),
         'PA': (0., "[deg] Position angle of axis 2 (E of N)"),
-        'CD1_1': (pixel_scale_matrix[0, 0], "Transformation matrix"),
-        'CD1_2': (pixel_scale_matrix[0, 1], ""),
-        'CD2_1': (pixel_scale_matrix[1, 0], ""),
-        'CD2_2': (pixel_scale_matrix[1, 1], ""),
         'EQUINOX': (2000., "[yr] Equatorial coordinates definition"),
     }
+    kws.update(pixel_scale_kwargs)
     kws.update(extra_header_kws)
     header = fits.Header()
     # Two lines to avoid some weird bug about reading dictionaries in the constructor
     header.update(kws)
-    # Return the WCS object
-    return WCS(header)
+    if return_header:
+        # Return the Header object
+        return header
+    else:
+        # Return the WCS object
+        return WCS(header)
 
 
 def angular_size_from_wcs(wcs_obj):
@@ -139,7 +148,7 @@ def image_overlap(wcs_obj1, wcs_obj2):
 
 
 def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1,
-    shrink_height_factor=1, shrink_width_factor=1):
+    shrink_height_factor=1, shrink_width_factor=1, **other_kwargs):
     """
     Create a WCS object with a simliar footprint to one existing WCS object and
         a similar pixel scale to another WCS object.
@@ -159,6 +168,7 @@ def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1
         image. Larger factor leads to a shorter Dec span.
     :param shrink_width_factor: factor by which to shrink the width of the new
         image. Larger factor leads to shorter RA span.
+    :param other_kwargs: passed to make_wcs
     :returns: astropy WCS object
     """
     # Figure out the general location of the image.
@@ -174,7 +184,21 @@ def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1
     # Figure out the pixel height and width of the new WCS object
     grid_shape = tuple(int(round((x / pixel_scale).to_value())) for x in fp_width_height[::-1]) # ij order
     # Use make_wcs to generate an astropy WCS object based on these derived parameters
-    return make_wcs(ref_coord=fp_cr_coord, grid_shape=grid_shape, pixel_scale=pixel_scale)
+    return make_wcs(ref_coord=fp_cr_coord, grid_shape=grid_shape, pixel_scale=pixel_scale,
+        **other_kwargs)
+
+
+if __name__ == "__main__":
+    # Location of VLT Halpha data
+    data_directory = "../ancillary_data/vlt/omegacam/"
+    # All filenames
+    vlt_fns = glob.glob(f"{data_directory}/ADP*")
+else:
+    # This doesn't matter if we're not running this particular file
+    # If we're not running this file, it means we're probably not using VLT
+    # data, just repurposing some of the WCS code above
+    data_directory = None
+    vlt_fns = None
 
 
 def iterate_over_chips(filename_list):
@@ -216,78 +240,79 @@ def list_of_chips(filename_list, wcs_reference):
     return list_to_return
 
 
-# I want the reference WCS to have roughly the same footprint as the IRAC data
-irac_fn = glob.glob("../ancillary_data/spitzer/irac/300*").pop()
-# IRAC pixel_scale_matrix is diagonal (0s on off-diag), so we can copy this style
-irac_w = WCS(fits.getdata(irac_fn, header=True)[1])
-# The pixel scale in the VLT image has RA increasing towards the RIGHT, which ultimately
-# doesn't matter, but I'll have it going towards the left like IRAC and others.
-vlt_w = WCS(fits.getdata(vlt_fns[0], 1, header=True)[1])
+if __name__ == "__main__":
+    # I want the reference WCS to have roughly the same footprint as the IRAC data
+    irac_fn = glob.glob("../ancillary_data/spitzer/irac/300*").pop()
+    # IRAC pixel_scale_matrix is diagonal (0s on off-diag), so we can copy this style
+    irac_w = WCS(fits.getdata(irac_fn, header=True)[1])
+    # The pixel scale in the VLT image has RA increasing towards the RIGHT, which ultimately
+    # doesn't matter, but I'll have it going towards the left like IRAC and others.
+    vlt_w = WCS(fits.getdata(vlt_fns[0], 1, header=True)[1])
 
-new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=1)
-# This comes out to nearly the same size as one of these VLT images, but I checked and this makes sense. IRAC is big.
-# I checked the new footprint against the IRAC footprint, it's good to within 0.5 arcseconds!
+    new_w = make_wcs_like(irac_w, vlt_w, degrade_pixelscale_factor=1)
+    # This comes out to nearly the same size as one of these VLT images, but I checked and this makes sense. IRAC is big.
+    # I checked the new footprint against the IRAC footprint, it's good to within 0.5 arcseconds!
 
 
-def we_have_mosaic_at_home():
-    """
-    Wrote this before I found reproject.mosaicking
-    """
-    component_images = []
-    footprint = np.zeros(new_w.array_shape)
-    for j in range(len(vlt_fns)):
-        component_images.append(np.full(new_w.array_shape, np.nan))
-        sys.stdout.write(f"Opening {vlt_fns[j].split('/')[-1]} and cycling through chips.")
-        with fits.open(vlt_fns[j]) as hdul:
-            for i in range(len(hdul)):
-                if not i:
+    def we_have_mosaic_at_home():
+        """
+        Wrote this before I found reproject.mosaicking
+        """
+        component_images = []
+        footprint = np.zeros(new_w.array_shape)
+        for j in range(len(vlt_fns)):
+            component_images.append(np.full(new_w.array_shape, np.nan))
+            sys.stdout.write(f"Opening {vlt_fns[j].split('/')[-1]} and cycling through chips.")
+            with fits.open(vlt_fns[j]) as hdul:
+                for i in range(len(hdul)):
+                    if not i:
+                        sys.stdout.flush()
+                        continue
+                    data = hdul[i].data
+                    header = hdul[i].header
+                    w = WCS(header)
+                    there_is_overlap = image_overlap(new_w, w)
+                    sys.stdout.write(f"{i}: {header['EXTNAME']}, overlap: {there_is_overlap}; ")
+                    if there_is_overlap:
+                        sys.stdout.write("reprojecting...")
+                        sys.stdout.flush()
+                        new_img, rp_fp = reproject_interp((data, w), new_w, shape_out=new_w.array_shape)
+                        footprint += rp_fp
+                        rp_fp = rp_fp.astype(bool)
+                        component_images[j][rp_fp] = new_img[rp_fp]
+                        sys.stdout.write(f"filled in {np.sum(rp_fp)} / {rp_fp.size} pixels\n")
+                    else:
+                        sys.stdout.write("\n")
                     sys.stdout.flush()
-                    continue
-                data = hdul[i].data
-                header = hdul[i].header
-                w = WCS(header)
-                there_is_overlap = image_overlap(new_w, w)
-                sys.stdout.write(f"{i}: {header['EXTNAME']}, overlap: {there_is_overlap}; ")
-                if there_is_overlap:
-                    sys.stdout.write("reprojecting...")
-                    sys.stdout.flush()
-                    new_img, rp_fp = reproject_interp((data, w), new_w, shape_out=new_w.array_shape)
-                    footprint += rp_fp
-                    rp_fp = rp_fp.astype(bool)
-                    component_images[j][rp_fp] = new_img[rp_fp]
-                    sys.stdout.write(f"filled in {np.sum(rp_fp)} / {rp_fp.size} pixels\n")
-                else:
-                    sys.stdout.write("\n")
-                sys.stdout.flush()
-        # Get rid of most of that low-value strip in one of the CCD chips
-        component_images[j][component_images[j] < np.nanmedian(component_images[j])/5.] = np.nan
-    sys.stdout.write("Compiling image...")
-    sys.stdout.flush()
-    final_new_image = np.nanmedian(component_images, axis=0)
-    sys.stdout.write("done.\n")
-    sys.stdout.flush()
-    return final_new_image, footprint
+            # Get rid of most of that low-value strip in one of the CCD chips
+            component_images[j][component_images[j] < np.nanmedian(component_images[j])/5.] = np.nan
+        sys.stdout.write("Compiling image...")
+        sys.stdout.flush()
+        final_new_image = np.nanmedian(component_images, axis=0)
+        sys.stdout.write("done.\n")
+        sys.stdout.flush()
+        return final_new_image, footprint
 
 
-final_new_image, mosaic_footprint = reproject_and_coadd(
-    list_of_chips(vlt_fns, new_w), new_w, shape_out=new_w.array_shape,
-    reproject_function=reproject_interp, combine_function='mean',
-    match_background=True,
-)
-print("THIS FINISHED RUNNING")
+    final_new_image, mosaic_footprint = reproject_and_coadd(
+        list_of_chips(vlt_fns, new_w), new_w, shape_out=new_w.array_shape,
+        reproject_function=reproject_interp, combine_function='mean',
+        match_background=True,
+    )
+    print("THIS FINISHED RUNNING")
 
-# final_new_image, mosaic_footprint = we_have_mosaic_at_home()
+    # final_new_image, mosaic_footprint = we_have_mosaic_at_home()
 
-new_header = fits.Header()
-new_header.update(new_w.to_header())
-new_header['COMMENT'] = "Mosiac from VLT Halpha images"
+    new_header = fits.Header()
+    new_header.update(new_w.to_header())
+    new_header['COMMENT'] = "Mosiac from VLT Halpha images"
 
-fits.writeto("../ancillary_data/vlt/omegacam/Halpa_mosaic.fits",
-    final_new_image, new_header, overwrite=True)
-print("WROTE FILE")
+    fits.writeto("../ancillary_data/vlt/omegacam/Halpa_mosaic.fits",
+        final_new_image, new_header, overwrite=True)
+    print("WROTE FILE")
 
-# plt.subplot(121, projection=new_w)
-# plt.imshow(final_new_image, origin='lower', vmin=0.5, vmax=500)
-# plt.subplot(122, projection=new_w)
-# plt.imshow(mosaic_footprint, origin='lower')
-# plt.show()
+    # plt.subplot(121, projection=new_w)
+    # plt.imshow(final_new_image, origin='lower', vmin=0.5, vmax=500)
+    # plt.subplot(122, projection=new_w)
+    # plt.imshow(mosaic_footprint, origin='lower')
+    # plt.show()

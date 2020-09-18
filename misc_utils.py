@@ -85,6 +85,26 @@ def flquantiles(x, q):
     return (first_quant, last_quant)
 
 
+def check_stretch(stretch):
+    """
+    Sanitize the visual stretch command, raise a RuntimeError if it's not valid
+    :param stretch: either a string key to the valid_stretches dictionary
+        defined here, or a callable function that can operate on numbers
+    """
+    valid_stretches = {'linear': lambda x: x, 'log': np.log10, 'arcsinh': np.arcsinh, 'sqrt': np.sqrt}
+    if stretch in valid_stretches:
+        return valid_stretches[stretch]
+    elif callable(stretch):
+        try:
+            stretch(np.ones((2, 2), dtype=np.float64))
+        except:
+            raise RuntimeError(f"Your stretch function doesn't work right.")
+        else:
+            return stretch
+    else:
+        raise RuntimeError(f"Not a valid stretch: {stretch}")
+
+
 def get_pixel_scale(wcs_obj):
     """
     Get the pixel scale, assuming same for X and Y.

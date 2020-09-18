@@ -17,6 +17,7 @@ from math import ceil
 from . import misc_utils
 from . import catalog
 from . import cube_utils
+from . import pvdiagrams
 
 """
 Functions and script to make a cross-cut plot using several different data sources
@@ -159,6 +160,8 @@ cross_cuts_coords = {
     "thru-clcenter-2": ("10:23:49.0980 -57:53:50.384", "10:24:14.4021 -57:37:19.339", -25, 0), # more N-S than thru-clcenter-1
     "thru-clcenter-3": ("10:23:12.0398 -57:41:53.733", "10:25:02.2100 -57:49:57.528", -25, 0), # crosses bright ridge
     "M16-marc-pillar2": ("18:18:55.2663 -13:51:17.4481", "18:18:47.7341 -13:49:35.1483", 19, 24), # Marc's pillar 2 PV diagram cut
+    "M16-pillar1": ("18:19:00.5191 -13:51:16.046", "18:18:49.8401 -13:48:29.025", 19, 24), # Marc's pillar 2 PV diagram cut
+
 }
 
 
@@ -168,6 +171,17 @@ def coords_from_selection(selection):
 
 def vlims_from_selection(selection):
     return cross_cuts_coords[selection][2:]
+
+
+def coords_from_region(reg_file_name, index=0):
+    """
+    Use the path_from_ds9 function in pvdiagrams.py to get linear paths
+    The index shouldn't count non-line/vector regions in the file.
+    """
+    # Load the vector or line at the given index (defaults to the first one)
+    p = pvdiagrams.path_from_ds9(reg_file_name, index)
+    # Pull the coordinates from the line/vector and return SkyCoord tuple
+    return tuple(SkyCoord(x) for x in p._coords)
 
 
 file_info = {
@@ -197,10 +211,14 @@ class DataLayer:
     Written: July 6, 2020
     Updated July 27, 2020: now accepts CubeData instances under the "filename"
         argument, and can "load" and plot them properly
+    Updated September 9, 2020: supports a DataLayer-level velocity limit
+        that supersedes the CrossCut-level limit, so that multiple velocity
+        components from the same cube can be overplotted.
+        If vlims is set here, then a CubeData object can be reused.
     """
 
     def __init__(self, name, filepath, cube=False, extension=0, f_to_apply=None,
-        alpha=0.9, offset=False):
+        alpha=0.9, offset=False, vlims=None):
         self.name = name
         if isinstance(filepath, str):
             # Direct load from filepath method
@@ -228,6 +246,10 @@ class DataLayer:
                 self.offset = offset_crosscut
         else:
             self.offset = lambda x: x
+        # Set personal velocity limits; defaults to None
+        assert (vlims is None) or (hasattr(vlims, '__len__') and len(vlims) == 2)
+        self.vlims = vlims
+
 
     def load(self, vmin=None, vmax=None):
         """
@@ -240,7 +262,11 @@ class DataLayer:
             file-reading version for some types of data.
         :param vmin: minimum velocity for cubes, in km/s. Not used for images.
         :param vmax: maximum velocity for cubes, in km/s. Not used for images.
+        If self.vlims is not None, the vlim arguments here are ignored
+            and self.vlims is used instead
         """
+        if self.vlims is not None:
+            vmin, vmax = self.vlims
         if self.is_cube:
             if self.cube_obj is None:
                 img, wcs = load_cube(self.filepath, vmin, vmax)
@@ -278,8 +304,12 @@ class DataLayer:
         return x_array, y_array
 
     def label(self, cross_cut_obj):
+        if self.vlims is None:
+            vmin, vmax = cross_cut_obj.vlims
+        else:
+            vmin, vmax = self.vlims
         if self.is_cube:
-            return f"{self.name} [{cross_cut_obj.vlims[0]:.1f}, {cross_cut_obj.vlims[1]:.1f}] km/s"
+            return f"{self.name} [{vmin:.1f}, {vmax:.1f}] km/s"
         else:
             return self.name
 
@@ -347,8 +377,10 @@ class CrossCut:
     def switch_axes(self, subplot_name='xcut'):
         """
         Quickly switch axes using the axis tag
+        :returns: the switched-to axis
         """
         plt.sca(self.axes[subplot_name])
+        return self.axes[subplot_name]
 
     def update_plot(self):
         """
@@ -369,7 +401,7 @@ class CrossCut:
                 # cut_array[cut_array <= 0] = np.nanmin(cut_array[cut_array > 0])/10
                 cut_array = np.log10(cut_array[1:])
                 angle_array = np.log10(angle_array[1:])
-            # Normalize/offsef the array
+            # Normalize/offset the array
             cut_array = layer.offset(cut_array)
             if not self.log:
                 cut_array = normalize_crosscut(cut_array)
@@ -413,9 +445,9 @@ class CrossCut:
         width = 2 * self.len
         img_cutout = Cutout2D(img, self.approx_midpoint, [width, width], wcs=wcs,
             mode='partial', fill_value=np.nan)
+        # Find the specified stretch, or confirm callable
+        stretch = misc_utils.check_stretch(stretch)
         # Use specified stretch
-        if isinstance(stretch, str):
-            stretch = {'arcsinh': np.arcsinh, 'linear': lambda x: x, 'log': np.log10, 'sqrt': np.sqrt}[stretch]
         stretched_image = stretch(img_cutout.data)
         # Use flquantiles for min, max unless we specified through vlims
         if vlims is None:
@@ -428,16 +460,21 @@ class CrossCut:
         plot_kwargs = dict(color='r', transform=catalog.utils.get_transform())
         coord_start_xcut, coord_end_xcut = self.coords
         arrow = True # can think about this later
+        line_arrow_alpha = 0.2
         if arrow:
             x, y = coord_start_xcut.ra.deg, coord_start_xcut.dec.deg
             dx = (coord_end_xcut.ra - coord_start_xcut.ra).deg
             dy = (coord_end_xcut.dec - coord_start_xcut.dec).deg
-            plt.arrow(x, y, dx, dy, length_includes_head=True, width=0.002,
-                **plot_kwargs, alpha=0.3, head_width=0.02, head_length=0.04)
+            arrow_width = data_length_from_display_length(0.0011661145290986497, coord_start_xcut)  # Converted from 0.002 for RCW 49
+            arrow_head_width = arrow_width * 10  # Converted from 0.02 for RCW 49
+            arrow_head_length = arrow_head_width * 2  # Converted from 0.04 for RCW 49
+            plt.arrow(x, y, dx, dy, length_includes_head=True, width=arrow_width,
+                **plot_kwargs, alpha=line_arrow_alpha,
+                head_width=arrow_head_width, head_length=arrow_head_length)
         else:
             plt.plot([coord_start_xcut.ra.deg, coord_end_xcut.ra.deg],
                 [coord_start_xcut.dec.deg, coord_end_xcut.dec.deg],
-                **plot_kwargs, alpha=0.3)
+                **plot_kwargs, alpha=line_arrow_alpha)
 
     def mark_radius(self, radius, label=False, **plot_kwargs):
         """
@@ -470,6 +507,21 @@ class CrossCut:
         if label:
             plt.legend()
 
+    def mark_distance(self, distance, label=False, **plot_kwargs):
+        """
+        Very similar to mark_radius, but doesn't imply azimuthal symmetry.
+        Instead of a circle on the image plot, overlays a small hatch mark.
+        :param distance: must be a Quantity, angular unit
+        :param plot_kwargs: any kwargs to pass to BOTH the small mark and the
+            axvline
+        """
+        ax = self.switch_axes('img')
+        """
+        TODO: use matplotlib Arc patch, could copy a lot of the code from above
+        Need to get the position angle of the cross cut endpoints, SkyCoord
+        has a method for that. Also arc length, probably just limit it to a
+        useful, general, fixed length
+        """
 
 
     def vlim_kwargs(self):
@@ -479,8 +531,74 @@ class CrossCut:
         """
         return dict(vmin=self.vlims[0], vmax=self.vlims[1])
 
+
+"""
+Some limited-use plotting helper functions
+These work with transforms between data and display coordinates
+"""
+
+def display_length_from_data_length(data_length, reference_coord, axis=None):
+    """
+    Calculate a LENGTH in display units using a known length
+    in data units.
+    This is helpful for the ARROW function in matplotlib.
+
+    This relies on modifying the DEC coordinate to check length, so as long as
+    the reference_coord isn't so close to a pole that adding the data_length to
+    it pushes it past the pole, then we should be fine regardless of Dec.
+    :param data_length: float length in data units (probably degrees for a
+        plot using WCS)
+    :param reference_coord: SkyCoord reference (data) coordinate
+    :param axis: optional, axis for transformation. If None, uses plt.gca()
+    :returns: float length in display units
+    """
+    if axis is None:
+        axis = plt.gca()
+    # Split up x (RA) and y (DEC) data coordinates
+    x0, y0 = reference_coord.ra.deg, reference_coord.dec.deg
+    # Displace y (DEC, since dec displacement is always in degrees, RA displacement varies with DEC)
+    y1 = y0 + data_length
+    # Transform both of these coordinates to display coordinates
+    # and then return the separation between display coordinates
+    return np.sqrt(np.sum(np.subtract(*axis.transData.transform([(x0, y0), (x0, y1)]))**2.))
+
+
+def data_length_from_display_length(display_length, reference_coord, axis=None):
+    """
+    Calculates a LENGTH in data units using a known length in display units.
+    Inverse of the display_length_from_data_length function above.
+
+    Do NOT trust these 100% as physical distances. ARROW clearly mishandles
+    sky coordinate transformations, so this function hacks around that.
+    These are pretty close to physical lengths! But can't be too careful.
+    Same as above, independent of DEC unless very close to poles.
+    :param display_length: float length in display units
+    :param reference_coord: SkyCoord reference (data) coordinate
+    :param axis: optional, axis for transformation. If None, uses plt.gca()
+    :returns: float length in data units
+    """
+    if axis is None:
+        axis = plt.gca()
+    # Generate the inverse transform
+    inv = axis.transData.inverted()
+    # Split up x (RA) and y (DEC)
+    x0, y0 = reference_coord.ra.deg, reference_coord.dec.deg
+    # Convert the reference data coord to a display coord
+    reference_display_coord = axis.transData.transform((x0, y0))
+    # Modify the display y coordinate by the length
+    reference_display_coord[1] += display_length
+    # Transform the modified display coord back to data coords
+    xy1 = inv.transform(reference_display_coord)
+    # Find and return the separation between these data coordinates
+    return np.sqrt(np.sum((np.array([x0, y0]) - xy1)**2.))
+
+
+"""
+Actual cross-cut stuff again
+"""
+
 def prepare_layers(target='rcw49'):
-    if target == 'rcw49':
+    if target.lower() == 'rcw49':
         layers = [
             DataLayer("CII", "sofia/rcw49-cii.fits", cube=True, alpha=0.7, offset=-0.1),
             DataLayer("843 MHz", "most/J1024M56.FITS", offset=-0.1),
@@ -488,11 +606,15 @@ def prepare_layers(target='rcw49'):
             DataLayer("F814W", "hst/F814W.fits", alpha=0.2, offset=-0.8),
             DataLayer("0.5-7 keV", "chandra/full_band.fits", offset=-9),
         ]
-    else:
+    elif target.lower() == 'm16':
         layers = [
+            DataLayer("CII", "sofia/M16_CII_U.fits", cube=True, alpha=0.7),
             DataLayer("12CO(1-0)", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7),
-            DataLayer("13CO(1-0)", cube_utils.CubeData("bima/M16_13CO1-0_7x4.fits"), cube=True, alpha=0.7),
+            # DataLayer("13CO(1-0)", cube_utils.CubeData("bima/M16_13CO1-0_7x4.fits"), cube=True, alpha=0.7),
             # DataLayer("12CO(3-2)", "")
+            DataLayer("12CO(3-2)", "apex/M16_12CO3-2.fits", cube=True, alpha=0.7),
+            DataLayer("13CO(3-2)", "apex/M16_13CO3-2.fits", cube=True, alpha=0.7),
+            DataLayer("5.6 um", "spitzer/SPITZER_I3_6049792_0000_5_E8698528_maic.fits"),
         ]
     return layers
 
@@ -559,10 +681,27 @@ def double_plot_rcw49():
 
 def plot_m16():
     selection = "M16-marc-pillar2"
-    # can we do it? maybe, we'll see. to be continued
+    coords = coords_from_selection(selection)
+    vlims = vlims_from_selection(selection)
+    vlims = (21.5, 22.)
+    cross_cut_obj = CrossCut(coords, vlims=vlims, log=False)
+    cross_cut_obj.setup_figure()
+    layers = prepare_layers(target='m16')
+    cross_cut_obj.add_data_layer(*layers)
+    cross_cut_obj.update_plot()
+    # cross_cut_obj.set_axis_limits()
+    cross_cut_obj.switch_axes('xcut')
+    plt.ylabel("Normalized intensity")
+    plt.xlabel("Distance along cross-cut (arcseconds)")
+    plt.title("Cross cut")
+
+    cross_cut_obj.plot_image('5.6 um', stretch='arcsinh', vlims=(15, 190))
+    cross_cut_obj.switch_axes('img')
+    plt.title("IRAC 3 image, cross cut overlaid")
+    plt.show()
 
 if __name__ == '__main__':
-    double_plot()
+    plot_m16()
 
 """
 ======================================================================

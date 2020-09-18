@@ -4,6 +4,9 @@ font = {'family': 'sans', 'weight': 'normal', 'size': 6}
 matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 import sys
+import os
+
+from math import ceil
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -12,6 +15,7 @@ from astropy.coordinates import SkyCoord, FK5
 from astropy.nddata.utils import Cutout2D
 from spectral_cube import SpectralCube
 import pvextractor
+import regions
 
 from . import misc_utils
 from . import catalog
@@ -31,10 +35,11 @@ km_s = u.km / u.s
 fn = f"{catalog.utils.ancillary_data_path}apex/apexCO/RCW49_12CO.fits"
 fn = f"{catalog.utils.ancillary_data_path}sofia/rcw49-cii.fits"
 # M16
-filenames = [f"{catalog.utils.m16_data_path}apex/M16_12CO3-2.fits",
+filenames = ["apex/M16_12CO3-2.fits", "apex/M16_13CO3-2.fits",
     "bima/M16_12CO1-0_7x4.fits",
-    "sofia/M16_CII_U.fits"]
-fn = filenames[1]
+    "sofia/M16_CII_U.fits",
+    ]
+fn = filenames[3]
 
 # I should move this to the name==main block
 # with fits.open(fn) as hdul:
@@ -66,9 +71,13 @@ wr20a = SkyCoord("10:23:58.0545 -57:45:48.862", unit=(u.hourangle, u.deg), frame
 wr20b_bubble_radius = 1.35967*u.deg
 
 m16_bima_center = SkyCoord("18:18:51.2900 -13:50:00.890", unit=(u.hourangle, u.deg), frame=FK5)
-m16_marc_pillar_center = SkyCoord('18:18:51.5 -13:50:26.3', unit=(u.hourangle, u.deg), frame=FK5)
-m16_marc_pillar_kwargs = dict(angle=-47*u.degree, width=5*u.arcsec, length=150*u.arcsec)
+m16_marc_pillar2_center = SkyCoord('18:18:51.5 -13:50:26.3', unit=(u.hourangle, u.deg), frame=FK5)
+m16_marc_pillar2_kwargs = dict(angle=-47*u.degree, width=5*u.arcsec, length=150*u.arcsec)
+m16_pillar1_coords = tuple(SkyCoord(x, unit=(u.hourangle, u.deg), frame=FK5) for x in ("18:19:00.5191 -13:51:16.046", "18:18:49.8401 -13:48:29.025"))
+m16_pillar1_kwargs = dict(width=15*u.arcsec)
 
+m16_allpillars_series_endpoints = tuple(SkyCoord(x, unit=(u.hourangle, u.deg), frame=FK5) for x in ("18:18:58.4575 -13:49:35.577", "18:18:48.0482 -13:51:28.726"))
+m16_allpillars_series_kwargs = dict(pvpath_angle=-50*u.degree, pvpath_width=10*u.arcsec, pvpath_length=4.6*u.arcmin)
 
 # coords = SkyCoord([p0, p1], unit=(u.hourangle, u.deg))
 # p = pvextractor.Path(coords, width=1*u.arcmin)
@@ -331,88 +340,89 @@ def vertical_series_thru_entire_structure():
         current_position = SkyCoord(current_position.ra, current_position.dec - stepwidth)
     print()
 
-def check_stretch(stretch):
-    """
-    Sanitize the visual stretch command, raise a RuntimeError if it's not valid
-    :param stretch: either a string key to the valid_stretches dictionary
-        defined here, or a callable function that can operate on numbers
-    """
-    valid_stretches = {'linear': lambda x: x, 'log': np.log10, 'arcsinh': np.arcsinh}
-    if stretch in valid_stretches:
-        return valid_stretches[stretch]
-    elif callable(stretch):
-        try:
-            stretch(np.ones((2, 2), dtype=np.float64))
-        except:
-            raise RuntimeError(f"Your stretch function doesn't work right.")
-        else:
-            return stretch
-    else:
-        raise RuntimeError(f"Not a valid stretch: {stretch}")
 
+"""
+PLOT PATH AND REFERENCE IMAGE
+"""
 
-def along_pillar(cube, vlims, coord_A, coord_B, width=None, coord_to_mark=None,
-    img_stretch='linear', pv_stretch='linear',
-    img_subplot_number=(121,), pv_subplot_number=(122,),
-    fig=None, show=True):
+def prepare_subcube(cube, vlims):
     """
-    RCW 49:
-    pillar_top = "10:24:09.3382 -57:48:54.070"
-    pillar_base = "10:24:27.4320 -57:50:35.824"
-    coord_to_mark = wr20b
+    Parse vlims argument
+    Apply velocity limits to a cube
     :param cube: CubeData
     :param vlims: (lo, hi) velocity limits in km/s (but just number, not quantity)
-    :param coord_A: EITHER:
-        1) coordinate beyond the top of the pillar. string
-        2) center coord. SkyCoord
-        3) Path
-    :param coord_B: EITHER:
-        1) coordinate below the base of the pillar. string
-        2) dict of kwargs for at least angle and length, others are fine too
-        3) ignored, but something must be here since it's positional
-    :param width: width of the pv cut. Default is 15 arcseconds. Quantity.
-        If 'width' is a key in coord_B, then this is ignored
+    """
+    vlims = tuple(v*u.km/u.s for v in vlims)
+    return cube.data.spectral_slab(*vlims)
+
+
+def prepare_reference_image(spectr_cube_obj, flat_wcs, center_coord, size=None):
+    """
+    :param spectr_cube_obj: SpectralCube object
+    :param flat_wcs: 2D image WCS of spectr_cube_obj
+    :param center_coord: coordinate for the center of the field
+    :param size: box size, as length-2 sequence of Angle or Quantity, or
+        as single Angle or Quantity. If single, then square box.
+        If sequence, then X/Y order is whatever Cutout2D wants.
+    :returns: np.ndarray image, WCS object from Cutout2D
+    :::::: FUTURE ::::::::
+    Maybe I should have an option to give a WCS definition to regrid to.
+    Cutout2D has a rounding problem, it likes pixels. Works good for one image,
+    but if I am directly comparing multiple images, then not so good.
+    """
+    if size is None:
+        raise RuntimeError("prepare_reference_image: Size cannot be None.")
+    elif not isinstance(size, tuple):
+        size = [size, size]
+    mom0_cutout = Cutout2D(spectr_cube_obj.moment(order=0).to_value(), center_coord, size, wcs=flat_wcs, mode='partial', fill_value=np.nan)
+    return mom0_cutout.data, mom0_cutout.wcs
+
+
+
+def plot_path(cube, subcube, path,
+    center_coord=None, coord_to_mark=None,
+    img_to_plot=None, img_stretch='linear', pv_stretch='linear',
+    img_lims=None,
+    img_subplot=(121,), pv_subplot=(122,),
+    fig=None, show=True):
+    """
+    :param cube: CubeData
+    :param subcube: a SpectralCube instance, already trimmed to the correct
+        velocity limits, OR the vlims tuple, which can be
+        passed to prepare_subcube() with cube
+    :param path: Path instance for the PV slice
+    :param center_coord: center of the moment 0 image to plot. If None,
+        approximates a center using the average of the Path endpoints.
+        Useful if you are repeating this function with different Paths but
+        want the reference image to stay still. If img_to_plot is specified,
+        then center_coord is ignored.
     :param coord_to_mark: (optional) coordinate to place a marker at
         could be used for a nearby star. SkyCoord.
+    :param img_to_plot: if not None, should give a tuple of:
+        1) image to show
+        2) WCS object for that image
+        Useful if this is reused, don't have to
+        recalculate the Cutout2D
     :param img_stretch: the visual stretch for the accompanying spatial image.
         If string, must be 'linear', 'log', or 'arcsinh'. Can also be
         callable, in which case it'scalled on the 2D array of numbers
     :param pv_stretch: the visual stretch for the PV diagram. Same rules as
         img_stretch
-    :param img_subplot_number: subplot number/tuple for img. Has to be tuple,
+    :param img_lims: vlims for the image. If None, lets imshow do its own thing.
+        If not None, should be a tuple of numbers: (vmin, vmax)
+    :param img_subplot: Number indicator of img axis.
+        subplot number/tuple for img. Has to be tuple,
         even if only one number. Args unpacked into plt.subplot()
-    :param pv_subplot_number: same as img_subplot_number, for pv plot
+    :param pv_subplot_number: same as img_subplot, for pv plot
     :param fig: figure object to use
     :param show: whether or not to show the plot
+    :returns: the figure used
     """
-    if width is None:
-        # Can still be overriden by coord_B
-        width = 15*u.arcsec
-    if (isinstance(coord_A, str) and isinstance(coord_B, str)) or (isinstance(coord_A, SkyCoord) and isinstance(coord_B, SkyCoord)):
-        if isinstance(coord_A, str):
-            pillar_coords = SkyCoord([coord_A, coord_B], unit=(u.hourangle, u.deg), frame=FK5)
-        else:
-            pillar_coords = SkyCoord([coord_A, coord_B])
-        center_coord = SkyCoord(np.mean(pillar_coords.ra), np.mean(pillar_coords.dec))
-        p = pvextractor.Path(pillar_coords, width=width)
-    elif isinstance(coord_A, SkyCoord) and isinstance(coord_B, dict):
-        coord_B = coord_B.copy()
-        if 'width' not in coord_B:
-            coord_B['width'] = width
-        else:
-            width = coord_B['width']
-        p = pvextractor.PathFromCenter(coord_A, **coord_B)
-        center_coord = coord_A
-    elif isinstance(coord_A, pvextractor.Path):
-        p = coord_A
-    else:
-        raise RuntimeError(f"Incorrect input:\ncoord_A = {coord_A}\ncoord_B = {coord_B}\nTry again!")
-    c0, c1 = SkyCoord(p._coords[0]), SkyCoord(p._coords[1])
+    c0, c1 = SkyCoord(path._coords[0]), SkyCoord(path._coords[1])
     # print(c0.to_string(style='hmsdms', sep=':'))
     # print(c1.to_string(style='hmsdms', sep=':'))
     length = c0.separation(c1)
-    img_stretch = check_stretch(img_stretch)
-    pv_stretch = check_stretch(pv_stretch)
+    pv_stretch = misc_utils.check_stretch(pv_stretch)
 
     if fig is None:
         fig = plt.figure(figsize=(8, 4))
@@ -420,10 +430,11 @@ def along_pillar(cube, vlims, coord_A, coord_B, width=None, coord_to_mark=None,
         plt.figure(fig.number)
 
     # PV diagram
-    vlims = tuple(v*u.km/u.s for v in vlims)
-    subcube = cube.data.spectral_slab(*vlims)
-    sl = pvextractor.extract_pv_slice(subcube, p)
-    ax2 = plt.subplot(*pv_subplot_number, projection=WCS(sl.header))
+    if isinstance(subcube, tuple):
+        # subcube is vlims
+        subcube = prepare_subcube(cube, subcube)
+    sl = pvextractor.extract_pv_slice(subcube, path)
+    ax2 = plt.subplot(*pv_subplot, projection=WCS(sl.header))
     ax2.imshow(pv_stretch(sl.data), origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]))
     # plt.contour(sl.data, cmap='autumn_r', linewidths=0.5, levels=[10., 15., 20., 25., 30., 35.,])
     ax2.coords[1].set_format_unit(u.km/u.s)
@@ -434,18 +445,31 @@ def along_pillar(cube, vlims, coord_A, coord_B, width=None, coord_to_mark=None,
     ax2.set_xlabel("Displacement (\")")
     ax2.set_title(f"PV diagram")
 
-
     # Moment 0 image
-    mom0_cutout = Cutout2D(subcube.moment(order=0).to_value(), center_coord, [length*3, length*3], wcs=cube.wcs_flat, mode='partial', fill_value=np.nan)
-    ax1 = plt.subplot(*img_subplot_number, projection=mom0_cutout.wcs)
-    plt.imshow(img_stretch(mom0_cutout.data), origin='lower', cmap='plasma')
+    img_stretch = misc_utils.check_stretch(img_stretch)
+    if img_to_plot is None:
+        if center_coord is None:
+            center_coord = catalog.utils.coordinate_midpoint(c0, c1)
+        img_to_plot, cutout_wcs = prepare_reference_image(subcube, cube.wcs_flat, center_coord, size=length*3)
+    else:
+        img_to_plot, cutout_wcs = img_to_plot
+        img_to_plot = img_stretch(img_to_plot)
+    # Figure out axis
+    ax1 = plt.subplot(*img_subplot, projection=cutout_wcs)
+    # Figure out visual image limits
+    if img_lims is not None:
+        img_vlim_kwargs = dict(vmin=img_stretch(img_lims[0]), vmax=img_stretch(img_lims[1]))
+    else:
+        img_vlim_kwargs = dict()
+    # Show the image
+    ax1.imshow(img_to_plot, origin='lower', cmap='plasma', **img_vlim_kwargs)
     if coord_to_mark is not None:
         ax1.plot([coord_to_mark.ra.to_value()], [coord_to_mark.dec.to_value()], color='white', marker='*', markersize=8, transform=ax1.get_transform('world'), alpha=0.3)
     # ax1.plot(*(x.to(u.deg).to_value() for x in (p._coords.ra, p._coords.dec)), transform=ax1.get_transform('world'), linewidth=2, color='green')
     ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
         *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))), # this is somehow correct; no cos(dec) term is necessary.
         color='white', transform=ax1.get_transform('world'), length_includes_head=True,
-        width=width.to(u.deg).to_value(), fill=False, lw=0.5, alpha=0.6,
+        width=path.width.to(u.deg).to_value(), fill=False, lw=0.6, alpha=0.7,
     )
     ax1.set_xlabel("RA")
     ax1.set_ylabel("Dec")
@@ -453,7 +477,250 @@ def along_pillar(cube, vlims, coord_A, coord_B, width=None, coord_to_mark=None,
 
     if show:
         plt.show()
+    # Return the figure
+    return fig
 
+"""
+SINGLE PATH FUNCTIONS
+"""
+
+def path_from_description(coord_A, coord_B, width=None):
+    """
+    :param coord_A: EITHER:
+        1) coordinate beyond the top of the pillar. string
+        2) center coord. SkyCoord
+        3) Path
+    :param coord_B: EITHER:
+        1) coordinate below the base of the pillar. string
+        2) dict of kwargs for at least angle and length, others are fine too
+        3) ignored, but something must be here since it's positional
+    :param width: width of the pv cut. Default is 15 arcseconds. Quantity.
+        If 'width' is a key in coord_B, then this is ignored
+    """
+    if width is None:
+        # Can still be overriden by coord_B
+        width = 15*u.arcsec
+    if (isinstance(coord_A, str) and isinstance(coord_B, str)) or (isinstance(coord_A, SkyCoord) and isinstance(coord_B, SkyCoord)):
+        if isinstance(coord_A, str):
+            pillar_coords = SkyCoord([coord_A, coord_B], unit=(u.hourangle, u.deg), frame=FK5)
+        else:
+            pillar_coords = SkyCoord([coord_A, coord_B])
+        p = pvextractor.Path(pillar_coords, width=width)
+    elif isinstance(coord_A, SkyCoord) and isinstance(coord_B, dict):
+        coord_B = coord_B.copy()
+        if 'width' not in coord_B:
+            coord_B['width'] = width
+        else:
+            width = coord_B['width']
+        p = pvextractor.PathFromCenter(coord_A, **coord_B)
+    elif isinstance(coord_A, pvextractor.Path):
+        p = coord_A
+    else:
+        raise RuntimeError(f"Incorrect input:\ncoord_A = {coord_A}\ncoord_B = {coord_B}\nTry again!")
+    return p
+
+
+def path_from_ds9(reg_file_name, index, width=None):
+    """
+    :param reg_file_name: the filename of a DS9 region file containing at least
+        one Vector or Line
+    :param index: the 0-indexed index of the desired Line or Vector in the
+        region file. The index SHOULD NOT COUNT regions that aren't Lines
+        or Vectors. Think index of [x for x in reg_list if line_or_vector(x)].
+        If index is None, returns a list of all Line or Vector Paths
+    :param width: Path width attribute to be passed directly to Path.width
+    :returns: either Path or list of Paths
+    """
+    # Get list of Paths
+    path_list = pvextractor.paths_from_regfile(reg_file_name)
+    if index is None:
+        # Assign width to all Paths; you can always go change it
+        if width is not None:
+            for p in path_list:
+                p.width = width
+        return path_list
+    else:
+        # Get the path from the list of Lines and Vectors
+        p = path_list[index]
+        # Assign the width
+        p.width = width
+        return p
+
+
+"""
+SERIES OF PATHS FUNCTIONS
+"""
+
+def linear_series_from_description(start_center, end_center, pvpath_length,
+    pvpath_angle, pvpath_width=None, points_not_paths=False):
+    """
+    Create a linear series of parallel Paths. Generator function, so generates
+    lazily.
+    :param start_center: SkyCoord for the center of the first PV path
+    :param end_center: SkyCoord for the center of the last PV path.
+        There is no absolute guarantee that the last PV path will pass exactly
+        through this point, but it will be close, since if you
+        specify pvpath_width, and the separation between the start and
+        end center points is not divisible by that width, then you will not
+        hit the end point. The behavior in this case is to overshoot the
+        end point with the last PV path.
+    :param pvpath_length: angle Quantity or Angle, the length of each PV path
+    :param pvpath_angle: angle Quantity or Angle, the angle of the PV path on
+        sky, with 0 being a path extending towards the West (sky), and positive
+        angles moving SOUTHWEST (sky).
+        Note that a Northward path should be an angle of 270 degrees.
+    :param pvpath_width: angle Quantity or Angle, the width of each PV path.
+        The velocity spectrum is averged across this width.
+        The width also sets the step size along the series; step size will be
+        0.5 * width.
+        If pvpath_width is None, then Path uses the "None" convention of
+        interpolation along the path. Step size then defaults to whatever makes
+        the series 30 steps long.
+    :param points_not_paths: option to return the center point of the PV path,
+        rathern than the pvextractor PathFromCenter object itself, in
+        the generator.
+        If points_not_paths is True, then all the keyword
+    :returns: three useful things:
+        1) the center coordinate of the path
+        2) the longest characteristic length of the system (the max of
+            the series length and the PV path length)
+        3) Generator that returns a finite number of Path objects. The generator
+            function has already been called and is ready to loop over
+    """
+    # Get position angle and separation of series
+    series_position_angle = start_center.position_angle(end_center)
+    series_length = start_center.separation(end_center)
+    # Get midpoint of series
+    center_coord = catalog.utils.coordinate_midpoint(start_center, end_center)
+    # Get the stepwidth, somehow
+    if pvpath_width is None:
+        # We want 30 steps (including the endpoints)
+        n_steps = 30
+        stepwidth = series_length / float(n_steps - 1)
+    elif not hasattr(pvpath_width, 'unit'):
+        # Assume we gave it a number of steps...
+        n_steps = pvpath_width
+        stepwidth = series_length / float(n_steps - 1)
+        # Set width to None to be safe
+        pvpath_width = None
+    else:
+        stepwidth = 0.5 * pvpath_width
+        # We want to overshoot the end point, and also to include endpoints.
+        n_steps = int(ceil(series_length / stepwidth)) + 1
+    print(f"Preparing series of {n_steps} steps over length of {series_length.to(u.arcmin):.2f} at a position angle of {series_position_angle.to(u.deg):.2f}")
+    if not points_not_paths:
+        print(f"Each Path has a length of {pvpath_length.to(u.arcmin):.2f}, width of {(pvpath_width if pvpath_width else 0.).to(u.arcsec):.2f}, and position angle of {pvpath_angle.to(u.deg):.2f}")
+    # Gather the PathFromCenter kwargs
+    path_kwargs = dict(length=pvpath_length, width=pvpath_width, angle=pvpath_angle)
+    def path_generator():
+        # Get an Angle quantity of 0 length
+        separation_along_series = series_length * 0.
+        # Cycle through all n_steps and increment the separation_along_series
+        for current_step_number in range(n_steps):
+            # SkyCoord.directional_offset_by easily returns the coordinate we want
+            current_center = start_center.directional_offset_by(series_position_angle, separation_along_series)
+            separation_along_series += stepwidth
+            if points_not_paths:
+                # Useful for other applications of needing this series
+                yield current_center
+            else:
+                yield pvextractor.PathFromCenter(center=current_center, **path_kwargs)
+    return center_coord, max([x for x in (series_length, pvpath_length) if x is not None]), path_generator()
+
+
+def linear_series_from_ds9(reg_file_name, pvpath_length=None,
+    pvpath_angle=None, pvpath_width=None):
+    """
+    Creates a linear series of parallel Paths. Generator function, so generates
+    lazily. Sources the
+    :param reg_file_name: filename of ds9 .reg file. Must contain at least
+        one Vector or Line region. If pvpath_length and pvpath_angle are left
+        as None, then must contain at least two Vectors or Lines.
+        Any more than one or two, depending on the case, are ignored.
+    :param pvpath_length: (optional) angle Quantity or Angle,
+        the length of each PV path. If not present, there must be a second
+        Line or Vector in the .reg file.
+    :param pvpath_angle: (optional) angle Quantity or Angle,
+        the angle of the PV path on sky, with 0 being a path extending
+        towards the West (sky), and positive angles moving SOUTHWEST (sky).
+        Note that a Northward path should be an angle of 270 degrees.
+        If not present, there must be a second Line or Vector in the .reg file.
+    :param pvpath_width: angle Quantity or Angle, the width of each PV path.
+        The velocity spectrum is averged across this width.
+        The width also sets the step size along the series; step size will be
+        0.5 * width.
+        If pvpath_width is None, then Path uses the "None" convention of
+        interpolation along the path. Step size then defaults to whatever makes
+        the series 30 steps long.
+    :returns: Generator that returns a finite number of Path objects
+
+    September 9, 2020: I kinda messed around with some stuff, added in that
+        points_not_paths bit, but I don't think it's necessary. I can feel
+        an impending code refactor coming (post thesis proposal?)
+        so I'll wait till then to fix it. But just so you know.
+    """
+    # regions module doesn't support Vectors, so we'll just use pvextractor's
+    # region parser
+    path_list = path_from_ds9(reg_file_name, None)
+    series_coords = [SkyCoord(x) for x in path_list.pop(0)._coords]
+    points_not_paths = False # by default
+    if path_list and ((pvpath_angle is None) or (pvpath_length is None)):
+        # If there is a second path_list element
+        # Get the angle and length from the second line or vector in the file
+        template_path_coords = [SkyCoord(x) for x in path_list.pop(0)._coords]
+        pvpath_length = template_path_coords[0].separation(template_path_coords[1])
+        pvpath_angle = template_path_coords[0].position_angle(template_path_coords[1])
+    else:
+        # Toggle points_not_paths
+        pvpath_angle = pvpath_length = None
+        points_not_paths = True
+    # With the information gathered, use linear_series_from_description to
+    # finish the job
+    return linear_series_from_description(series_coords[0], series_coords[1],
+        pvpath_length, pvpath_angle, pvpath_width=pvpath_width,
+        points_not_paths=points_not_paths)
+
+
+def run_plot_and_save_series(cube, vlims,
+    center_coord, length_scale, path_generator,
+    savename, **plot_kwargs):
+    """
+    Save a series of images created from a series of Paths
+    :param cube: a CubeData instance for plot_path()
+    :param vlims: tuple (lo, hi) velocity limits for plot_path()
+    :param center_coord: SkyCoord for the center of the reference image
+    :param length_scale: characteristic length to use as side length of
+        square reference image. Quantity or Angle
+    :param path_generator: the Generator result of one of the
+        linear_series_from_ functions
+    :param savename: some .png filename. Will insert _{step number : 03d}
+        right before the .png part.
+    :param plot_kwargs: keyword arguments to be passed to plot_path()
+    """
+    # Create a savename generator
+    savename = os.path.abspath(savename)
+    save_dir, save_filename = os.path.split(savename)
+    save_filename_stub = save_filename.replace('.png', '')
+    save_filename_generator = lambda n: os.path.join(save_dir, f"{save_filename_stub}{n:03d}.png")
+    # Set up the subcube
+    subcube = prepare_subcube(cube, vlims)
+    # Create the reference image
+    img_to_plot_info = prepare_reference_image(subcube, cube.wcs_flat,
+        center_coord, size=length_scale)
+    # Initialize None figure, to be replaced by the actual figure
+    fig = None
+    # Loop through paths and save images
+    for n, p in enumerate(path_generator):
+        # Write the number to terminal
+        print(p._coords)
+        sys.stdout.write(f"{n:03d}\n")
+        sys.stdout.flush()
+        # Plot and save the figure (only novel on first iteration)
+        fig = plot_path(cube, subcube, p, img_to_plot=img_to_plot_info, fig=fig, show=False, **plot_kwargs)
+        plt.savefig(save_filename_generator(n))
+        # Clear the last figure and increment n
+        plt.clf()
+        n += 1
 
 
 
@@ -493,6 +760,19 @@ def linewidth_from_data_units(linewidth, axis, reference='y'):
     length *= 72
     # Scale linewidth to value range
     return linewidth * (length / value_range)
+
+
+def along_pillar(cube, vlims, coord_A, coord_B, width=None, **kwargs):
+    """
+    RCW 49:
+    pillar_top = "10:24:09.3382 -57:48:54.070"
+    pillar_base = "10:24:27.4320 -57:50:35.824"
+    coord_to_mark = wr20b
+    """
+    # Use path_from_description
+    p = path_from_description(coord_A, coord_B, width=width)
+    # Use general Path plotting function
+    plot_path(cube, vlims, p, **kwargs)
 
 
 def moment_1_image(cube, vlims, focus_coord, cutout_width=None):
@@ -558,6 +838,33 @@ def run_all_data():
     plt.show()
 
 
+def run_series_from_ds9(filename):
+    path_info = linear_series_from_ds9(catalog.utils.search_for_file("catalogs/pillar_series.reg"), pvpath_width=m16_allpillars_series_kwargs['pvpath_width'])
+    cube = cube_utils.CubeData(filename)
+    run_plot_and_save_series(cube, (17, 31), *path_info, f"{catalog.utils.figures_path}pv_anim/m16_pillars/img_{cube.filename_stub()}.png")
+    del cube
+
+
+def run_vectors_from_ds9(filename):
+    path_list = path_from_ds9(catalog.utils.search_for_file("catalogs/pillar_vectors.reg"), None, width=m16_allpillars_series_kwargs['pvpath_width'])
+    cube = cube_utils.CubeData(filename)
+    n = 0
+    for p in path_list:
+        plot_path(cube, (17, 31), p, show=False)
+        plt.savefig(f"/home/ramsey/Pictures/8-27-20-work/pillar_{cube.filename_stub()}_pv_{n:1d}.png")
+        plt.clf()
+        n += 1
+    del cube
+
+
+
+
 if __name__ == "__main__":
-    cube = cube_utils.CubeData(filenames[2])
-    along_pillar(cube, (19, 24), m16_marc_pillar_center, m16_marc_pillar_kwargs)
+    run_series_from_ds9(filenames[3])
+    # for i in range(len(filenames)):
+    # for i in [3,]:
+    #     cube = cube_utils.CubeData(filenames[i])
+    #     along_pillar(cube, (17, 31), *m16_pillar1_coords, **m16_pillar1_kwargs, show=True)
+    #     savename = cube.filename_stub() + "_pv.png"
+    #     print(savename)
+        # plt.savefig("/home/ramsey/Pictures/8-01-20-work/" + savename)

@@ -54,7 +54,7 @@ def main():
     cii_mom0, cii_w = catalog.utils.load_cii(2)
 
     # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
-    radius_limit = 6 # arcmin
+    radius_limit = 3 # arcmin
     print(f"all calculations below limited to {radius_limit} arcmin radius from Wd2")
     print("OB STARS")
     calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False, additional_condition=(~catalog_df['is_WR']), radius_limit=radius_limit)

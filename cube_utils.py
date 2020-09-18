@@ -11,6 +11,8 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
 from spectral_cube import SpectralCube
+from spectral_cube.spectral_cube import Beam
+import MontagePy.main as montage
 
 from . import catalog
 
@@ -43,24 +45,19 @@ class CubeData:
             self.header = hdul[0].header
             self.wcs = WCS(self.header, naxis=3)
             self.wcs_flat = WCS(self.header, naxis=2)
-            self.data = hdul[0].data
-        if self.header['NAXIS'] == 4:
-            self.data = self.data[0]
-        brightness_unit = self.header['BUNIT']
-        # Building this mostly with assert statements because this is
-        # necessarily something I need to hardcode
-        if 'TELESCOP' in self.header and self.header['TELESCOP'] == "HATCREEK":
-            assert ('jy' in brightness_unit.lower()) and ('beam' in brightness_unit.lower())
-            brightness_unit = u.Jy / u.beam
-            self.data *= brightness_unit
-            self.data = self.data.to(u.K, equivalencies=u.brightness_temperature(self.header['RESTFREQ']*u.Hz, beam_area=beam_area(7*u.arcsec, 4*u.arcsec)))
-        else:
-            assert 'K' in brightness_unit
-            brightness_unit = u.K
-            self.data *= brightness_unit
-        # I should check if I need to use any beam efficiency corrections
-        # Ask Marc via powerpoint slide
-        self.data = SpectralCube(data=self.data, wcs=self.wcs)
+        self.data = SpectralCube.read(self.full_path)
+        if self.data.unit == u.one:
+            self.data._unit = u.K
+
+        ### Is there any way I can save memory??
+        # tmp = self.data.spectral_slab(-15*u.km/u.s, +75*u.km/u.s)
+        # del self.data
+        # self.data = tmp
+        """
+        I should check if I need to use any beam efficiency corrections
+        Ask Marc via powerpoint slide
+        Answer: I don't
+        """
 
     def help_plot_pv(self, axis):
         """
@@ -76,6 +73,7 @@ class CubeData:
         Not like str or repr, because those describe the type of object as
             well. This only describes the data.
         For example, the BIMA data may be described as "BIMA 12CO(1-0)"
+        This name has spaces in it
         """
         if self.telescope.lower() == 'sofia':
             line_description = "[12CII]"
@@ -84,9 +82,92 @@ class CubeData:
             line_description = [x for x in filename_components if 'CO' in x].pop()
         return f"{self.telescope.upper()} {line_description}"
 
+    def filename_stub(self):
+        """
+        Return a short name appropriate for placement in a filename
+        Similar to self.name(), but will not contain spaces
+        """
+        name = self.name().replace(self.telescope.upper(), self.telescope.lower()).replace(' ', '_')
+        return name.replace('[', '').replace(']', '')
 
     def __str__(self):
         return f"CubeData({self.basename})"
 
     def __repr__(self):
         return f"<CubeData wrapper around {self.data.__repr__()}>"
+
+
+def montage_ProjectCube(filename_cube, filename_target):
+    """
+    Code bits found here:
+    https://github.com/Caltech-IPAC/MontageNotebooks/blob/master/mGetHdr.ipynb
+    https://github.com/Caltech-IPAC/MontageNotebooks/blob/master/mProjectCube.ipynb
+    """
+    # Get the naxis values
+    with fits.open(filename_cube) as hdul:
+        hdr_cube = hdul[0].header
+        naxis_cube = hdul[0].header['NAXIS']
+    with fits.open(filename_target) as hdul:
+        hdr_target = hdul[0].header
+        naxis_target = hdul[0].header['NAXIS']
+    # Print out some useful diagnostic information
+    print("USING MONTAGE: projecting the cube")
+    padding = " "*2
+    print(padding, filename_cube)
+    print(padding, f" (with {naxis_cube} axes)")
+    print(padding+"to the spatial grid from")
+    print(padding, filename_target)
+    print(padding, f" (with {naxis_target} axes)")
+
+    # Extract header file to a temporary text file
+    filename_target_hdr_file = os.path.join(os.path.dirname(filename_target), os.path.basename(filename_target).replace('.fits', '_zzzHEADERzzz.hdr'))
+    print("Extracting header to temporary file ")
+    print(padding, filename_target_hdr_file)
+    if False:
+        rtn = montage.mGetHdr(filename_target, filename_target_hdr_file)
+        print(padding, "mGetHdr: ", rtn)
+        if int(rtn['status']) != 0:
+            print("mGetHdr FAILED, exiting...")
+            return
+    else:
+        spatial_cards_target = [x for x in hdr_target.keys() if x[-1] in ('1', '2')]
+        spatial_cards_cube = [x for x in hdr_cube.keys() if x[-1] in ('1', '2')]
+        history_cards_cube = [x for x in hdr_cube.keys() if 'HISTORY' in x]
+        ax4_cards = [x for x in hdr_cube.keys() if x[-1] == '4']
+        for card in spatial_cards_cube:
+            hdr_cube.remove(card)
+        for card in spatial_cards_target:
+            hdr_cube[card] = hdr_target[card]
+        print(padding+f"Removing {len(history_cards_cube)} HISTORY cards.")
+        for card in history_cards_cube:
+            hdr_cube.remove(card)
+        for card in ax4_cards:
+            hdr_cube.remove(card)
+        hdr_cube['NAXIS'] = 3
+        hdr_cube.totextfile(filename_target_hdr_file, overwrite=True)
+    # Use mProjectCube to execute the projection
+    target_name_stub = os.path.basename(filename_target).replace('.fits', '').lower()
+    filename_cube_projected = os.path.join(os.path.dirname(filename_cube), os.path.basename(filename_cube).replace('.fits', f'_REPROJ_{target_name_stub}_GRID.fits'))
+    rtn = montage.mProjectCube(filename_cube, filename_cube_projected, filename_target_hdr_file)
+    print(padding, "mProjectCube:", rtn)
+    if int(rtn['status']) != 0:
+        print("mProjectCube FAILED, exiting...")
+        return
+
+    if os.path.exists(filename_target_hdr_file) and (filename_target_hdr_file != filename_target):
+        print("Removing temporary header file ")
+        print(padding, filename_target_hdr_file)
+        # os.remove(filename_target_hdr_file)
+    else:
+        print("TARGET HEADER FILE NOT FOUND!", filename_target_hdr_file)
+
+    print("SUCCESS! Projected to")
+    print(padding, filename_cube_projected)
+    print()
+
+
+
+
+if __name__ == "__main__":
+    montage_ProjectCube(catalog.utils.search_for_file("bima/M16_12CO1-0_7x4.fits"), catalog.utils.search_for_file("sofia/M16_CII_U.fits"))
+    # montage_ProjectCube(catalog.utils.search_for_file("apex/M16_12CO3-2.fits"), catalog.utils.search_for_file("apex/M16_13CO3-2.fits"))

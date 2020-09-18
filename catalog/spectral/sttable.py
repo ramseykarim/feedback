@@ -102,6 +102,12 @@ class STTable:
         type characteristics.
         Note that the argument order was swapped around from the original
         Sternberg-only version of this function.
+
+        Updated August 4, 2020:
+        If the luminosity class is II, change it to III.
+        II is a bright giant, III is a normal giant (according to Wikipedia,
+        Stellar_classification). II seems closer to III than I (supergiants).
+
         :param characteristic: valid column name of table
         :param spectral_type_tuple: can be 3 or 4 elements
             (4th is ignored). Tuple gets sanitized by parse_sptype.sanitize_tuple.
@@ -114,6 +120,10 @@ class STTable:
             return INVALID_SPTYPE_PROPERTY_FLAG
         # Split up tuple
         lettertype, subtype, lumclass = spectral_type_tuple
+        # If luminosity class is II, use III and print a message
+        if lumclass == 'II':
+            # print(f"{__name__}:\nLuminosity class II (bright giant) encountered; defaulting to III (normal giant) for Star: {parse_sptype.st_tuple_to_string(spectral_type_tuple)}, Charateristic: {characteristic}")
+            lumclass = 'III'
         # Get luminosity class DataFrame from self.table_dict
         df_lumclass = self.table_dict[lumclass]
         if lettertype+subtype in df_lumclass.index:

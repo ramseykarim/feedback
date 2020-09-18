@@ -47,7 +47,7 @@ def search_for_file(filename):
         if os.path.exists(potential_filename):
             # print("HEY ", os.path.abspath(potential_filename))
             return os.path.abspath(potential_filename)
-    raise RuntimeError(f"Invalid data filename: {filename}")
+    raise RuntimeError(f"Invalid data filename: \"{filename}\"")
 
 
 def load_irac(n=1, header=True):
@@ -128,6 +128,24 @@ def save_df_html(df, na_rep='--'):
     """
     print(len(df))
     df.to_html("~/Downloads/test.html", na_rep=na_rep)
+
+
+"""
+Something related to point separation
+"""
+
+def coordinate_midpoint(coord1, coord2):
+    """
+    Return the SkyCoord midpoint between two coordinates.
+    :param coord1: SkyCoord (or castable)
+    :param coord2: SkyCoord (or castable)
+    :returns: SkyCoord midpoint between the two arguments
+    """
+    coord1, coord2 = SkyCoord(coord1), SkyCoord(coord2)
+    position_angle = coord1.position_angle(coord2)
+    length = coord1.separation(coord2)
+    return coord1.directional_offset_by(position_angle, length/2.)
+
 
 
 """

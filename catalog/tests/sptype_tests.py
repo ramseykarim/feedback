@@ -24,7 +24,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_catalog()
+    return test_st_parse_slashdash()
 
 
 def plot_sptype_calibration_stuff():
@@ -205,7 +205,7 @@ def test_st_parse_slashdash():
     Tested the new subtype dash behavior, it looks like it works!
     """
     cat = pd.read_pickle(old_catalog_fn)
-    tests = ['O8/B1.5V', 'O8-B1.5V', cat.SpectralType[19], cat.SpectralType[5], cat.SpectralType[7], 'B5/6.5III', 'O4II/III', cat.SpectralType[26], cat.SpectralType[27], 'O4-5.5V/III*']
+    tests = ['O8/B1.5V', 'O8-B1.5V', cat.SpectralType[19], cat.SpectralType[5], cat.SpectralType[7], 'B5/6.5III', 'O4II/III', cat.SpectralType[26], cat.SpectralType[27], 'O4-5.5V/III*', "O5:V"]
     for t in tests:
         l = spectral.parse_sptype.st_parse_slashdash(t)
         print(t, '\t', l)
