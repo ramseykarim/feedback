@@ -215,6 +215,7 @@ def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False,
     lum_med, lum_err = catr.get_bolometric_luminosity(star_mask=star_mask)
     print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")
     print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
+    print(f"MECH/FUV LUM: {(ke_med/fuv_tot_med).decompose():.1E}; MECH/total LUM: {(ke_med/lum_med).decompose():.1E}")
 
     age = age*u.year
     ej_mass_med = mdot_med * age

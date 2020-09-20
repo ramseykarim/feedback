@@ -1,6 +1,10 @@
 import os, sys
 import numpy as np
+import matplotlib
+font = {'family': 'sans', 'weight': 'normal', 'size': 7}
+matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
+
 import scipy.constants as cst
 from scipy.interpolate import interp1d
 from scipy.special import erf
@@ -475,5 +479,10 @@ def prepare_img_for_plot(img, scale=np.arcsinh, low_cutoff=np.nanmedian):
 
 
 if __name__ == "__main__":
-    integrate_shell_cii_mask(n=2, Rv=3.1, plot_anything=1, use_background=False)
+    # integrate_shell_cii_mask(n=2, Rv=3.1, plot_anything=1, use_background=True)
     integrate_shell_cii_mask(n=3, Rv=3.1, plot_anything=1, use_background=False)
+
+    # m1_old, m2_old = 2.42e4*u.solMass, 4.02e4*u.solMass
+    # m1_new, m2_new = 1.79e4*u.solMass, 2.82e4*u.solMass
+    # print(m1_new/m1_old)
+    # print(m2_new/m2_old)
