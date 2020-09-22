@@ -20,6 +20,8 @@ from .. import utils
 
 powr_directory = f"{utils.misc_data_path}SpectralTypes/PoWR/"
 
+AVAILABLE_POWR_GRIDS = ['OB', 'WNE', 'WNL', 'WNL-H50']
+
 
 def skiplines(file_handle, n_lines):
     # skips ahead n_lines in the already-opened file_handle
@@ -65,7 +67,7 @@ def FUV_nonionizing_mask(wl_A):
 class PoWRGrid:
 
     def __init__(self, grid_name):
-        if grid_name not in ['OB', 'WNE', 'WNL', 'WNL-H50']:
+        if grid_name not in AVAILABLE_POWR_GRIDS:
             raise RuntimeError(f"{grid_name} not available")
         self.grid_name = grid_name
         self.grid_info = load_powr_grid_info(self.grid_name)

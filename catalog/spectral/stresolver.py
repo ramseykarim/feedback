@@ -678,8 +678,11 @@ class STResolver:
                         return 'WNL-H50'
                     else:
                         return 'WNL'
+            elif 'C' in st_tuple[0]:
+                # As of Sept 22, 2020, we support WC
+                return 'WC'
             else:
-                # This is WC or WO or something
+                # This is WO or something
                 return None
         elif (len(st_tuple[0]) == 1) and (st_tuple[0] in 'OBAFGKM'):
             # This is an OB star
@@ -1000,6 +1003,7 @@ class CatalogResolver:
         text = f"<CatalogResolver({len(self.star_list)})>"
         return text
 
+    @staticmethod
     def reduce_cluster(star_samples, reduce_func=np.sum):
         """
         Reduce a set of cluster realizations.
@@ -1018,6 +1022,7 @@ class CatalogResolver:
         return median_and_uncertainty(cluster_samples)
 
 
+    @staticmethod
     def map_and_reduce_cluster(star_samples, func_to_map, reduce_func=np.sum):
         """
         Map a function onto each cluster realization before reducing it and

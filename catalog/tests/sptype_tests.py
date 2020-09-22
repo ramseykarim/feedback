@@ -24,7 +24,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_st_parse_slashdash()
+    return test_STResolver()
 
 
 def plot_sptype_calibration_stuff():
@@ -312,25 +312,27 @@ def test_STResolver():
     #         return "[NO MODEL]"
     spectral.stresolver.random.seed(1312)
     np.random.seed(1312)
-    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in ('OB', "WNE", "WNL")}
+    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in spectral.powr.AVAILABLE_POWR_GRIDS}
     cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
     ltables = spectral.leitherer.LeithererTable()
     # cat = pd.read_pickle(f"{parse.catalog_directory}Ramsey/catalog_may5_2020.pkl")
     # print(cat.columns)
     # tests = cat.Spectral.values
     # print(tests)
-    tests = ['O5-6.5III+O3V', 'O4I/III', 'WN6ha', 'B1-2', 'C*', 'O4V+PMS']
+    tests = ['O5+O7+B1', 'O5-6.5III+O3V', 'O4I/III', 'WN6ha', 'B1-2', 'C*', 'O4V+PMS']
 
     catr = spectral.stresolver.CatalogResolver(tests,
         calibration_table=cal_tables, leitherer_table=ltables,
         powr_dict=powr_grids)
     print(catr)
-    mdot, mdot_e = catr.get_mass_loss_rate(nsamples=10)
-    print(mdot)
-    print(mdot_e)
-    fluxes = catr.get_array_FUV_flux()
-    for f in fluxes:
-        print(f)
+    for s in catr.star_list:
+        print(s.spectral_types)
+    # mdot, mdot_e = catr.get_mass_loss_rate(nsamples=10)
+    # print(mdot)
+    # print(mdot_e)
+    # fluxes = catr.get_array_FUV_flux()
+    # for f in fluxes:
+    #     print(f)
 
     # count = 0
     # for t in tests:

@@ -112,7 +112,8 @@ def get_pixel_scale(wcs_obj):
     :return: angular pixel scale as Quantity
     """
     ps = np.mean(np.abs(np.diag(wcs_obj.pixel_scale_matrix))) * u.deg
-    return ps
+    c0, c1 = wcs_obj.pixel_to_world(0, 0), wcs_obj.pixel_to_world(1, 0)
+    return c0.separation(c1)
 
 
 def is_number(x):

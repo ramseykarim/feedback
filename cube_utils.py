@@ -10,6 +10,8 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
+from astropy import modeling
+
 from spectral_cube import SpectralCube
 from spectral_cube.spectral_cube import Beam
 import MontagePy.main as montage
@@ -41,6 +43,7 @@ class CubeData:
         self.full_path = catalog.utils.search_for_file(filename)
         self.telescope = self.full_path.split('/')[-2]
         self.basename = os.path.basename(self.full_path)
+        self.directory = os.path.dirname(self.full_path)
         with fits.open(self.full_path) as hdul:
             self.header = hdul[0].header
             self.wcs = WCS(self.header, naxis=3)
@@ -166,6 +169,28 @@ def montage_ProjectCube(filename_cube, filename_target):
     print()
 
 
+# class TripleGaussian1D(modeling.Fittable1DModel):
+#
+#     # Triplet of parameters for each Gaussian
+#     a1 = modeling.Parameter()
+#     mu1 = modeling.Parameter()
+#     std1 = modeling.Parameter()
+#
+#     a2 = modeling.Parameter()
+#     mu2 = modeling.Parameter()
+#     std2 = modeling.Parameter()
+#
+#     a3 = modeling.Parameter()
+#     mu3 = modeling.Parameter()
+#     std3 = modeling.Parameter()
+#
+#     @staticmethod
+#     def evaluate(x, a1, mu1, std1, a2, mu2, std2, a3, mu3, std3):
+#         return modeling.models.Gaussian1D.evaluate(x, a1, mu1, std1) + modeling.models.Gaussian1D.evaluate(x, a2, mu2, std2) + modeling.models.Gaussian1D.evaluate(x, a3, mu3, std3)
+#
+#     @staticmethod
+#     def fit_deriv(x, a1, mu1, std1, a2, mu2, std2, a3, mu3, std3):
+#         return modeling.models.Gaussian1D.fit_deriv(x, a1, mu1, std1) + modeling.models.Gaussian1D.fit_deriv(x, a2, mu2, std2) + modeling.models.Gaussian1D.fit_deriv(x, a3, mu3, std3)
 
 
 if __name__ == "__main__":
