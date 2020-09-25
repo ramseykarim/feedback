@@ -49,6 +49,7 @@ Updated: September 9, 2020
     diagram, but with more emphasis on the spectra, and averaged over a small
     area
 """
+__author__ = "Ramsey Karim"
 
 
 # M16
@@ -148,6 +149,7 @@ def fit_gaussians(cube_or_spectral, spectrum, n=2, p0=None):
         y = spectrum
     """
     Probably should use astropy.modeling, but I don't know it well enough yet
+    Update: I did this, astropy.modeling is great
     """
     def fit_n_gaussians(x, *args):
         result = np.zeros_like(x)
@@ -648,6 +650,7 @@ def examine_area_solution():
     model_names = [g_fit[x].name for x in range(g_fit.n_submodels)]
     del g_fit
     img_to_plot = args.image
+    img_to_plot_label = img_to_plot
     if any(x in img_to_plot for x in model_names):
         param_index = [x in img_to_plot for x in model_names].index(True)*3
         try:
@@ -666,11 +669,11 @@ def examine_area_solution():
         vlims = [float(x)*u.km/u.s for x in [x for x in img_to_plot.split('_') if 'to' in x].pop().split('to')]
         img_to_plot = img.spectral_slab(*vlims).moment0().to(u.K*u.km/u.s).to_value()
     else:
-        img_to_plot = 'integrated'
+        img_to_plot = integrated
 
     def plot_ref_img(ax):
         ax.imshow(img_to_plot, origin='lower')
-        ax.set_title("CII integrated intensity")
+        ax.set_title(img_to_plot_label)
 
     def plot_point_on_ref_img(ax, i, j, **kwargs):
         ax.plot([j], [i], 'x', **kwargs)
@@ -1019,6 +1022,6 @@ def view_area_mask():
     plt.show()
 
 if __name__ == "__main__":
-    # examine_area_solution()
+    examine_area_solution()
     # scatter_area_solution()
-    view_area_mask()
+    # view_area_mask()
