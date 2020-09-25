@@ -218,7 +218,9 @@ def st_to_number(spectral_type):
         subt = re.search(number_re, spectral_type).group()
     else:
         t, subt = spectral_type[0], spectral_type[1]
-    if t not in standard_types:
+    if (not t) or (not subt):
+        return INVALID_STAR_FLAG
+    elif t not in standard_types:
         return INVALID_STAR_FLAG
     else:
         return standard_types.index(t)*10. + float(subt)

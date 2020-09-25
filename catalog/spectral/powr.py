@@ -20,7 +20,7 @@ from .. import utils
 
 powr_directory = f"{utils.misc_data_path}SpectralTypes/PoWR/"
 
-AVAILABLE_POWR_GRIDS = ['OB', 'WNE', 'WNL', 'WNL-H50']
+AVAILABLE_POWR_GRIDS = ['OB', 'WNE', 'WNL', 'WNL-H50', 'WC']
 
 
 def skiplines(file_handle, n_lines):
@@ -73,6 +73,8 @@ class PoWRGrid:
         self.grid_info = load_powr_grid_info(self.grid_name)
         self.paramx, self.paramy = None, None
         self.paramx_name, self.paramy_name = None, None
+        # In case we map from T/logL pairs to log g
+        self.TL_interp = None
         self.get_params()
 
     def __str__(self):
@@ -87,15 +89,36 @@ class PoWRGrid:
         This function takes in the parameter combo, whatever it may be,
             and returns the model info as a pandas dataframe (Series?). The model info
             is a single row from the "modelparameters.txt" file.
+        Updated September 24, 2020: can take in a Teff / logL pair and
+            successfully select a model, since the Teff/log_g/logL triplet more
+            or less forms a plane
+            Use "L" or "logL" or something as an arg to toggle this; it doesn't
+            matter, it just has to be in there. Making the most of the flexible
+            number of arguments
+            This is probably terrible design, but this whole file needs a
+            makeover, so what's the harm
         """
+        # All the heavy lifting figuring out what the arguments are is done here
         qparamx, qparamy = self.parse_query_params(*args)
+        # By now, you have the correct grid parameters
+
         # <Original comment>
         # If this EXACT combo is NOT present in the grid, return an error!
-        # close enough is NOT close enough!!!! </Original comment>
-        # Editorial note (April 2020): it seems we are approximating, and that's probably fine
+        # close enough is NOT close enough!!!!
+        # </Original comment>
         model = self.grid_info.loc[(self.paramx == qparamx) & (self.paramy == qparamy)]
+        # Editorial note (April 2020): it seems we are approximating, and that's probably fine
         if model.empty:
-            return self.grid_info.loc[((self.paramx - qparamx)**2 + (self.paramy - qparamy)**2).idxmin()]
+            # Check if these are NaN or something (NaN should return False)
+            if np.isfinite(qparamx) and np.isfinite(qparamy):
+                # If T is in K and log_g spans ~3-5 max, this will bias the "nearest" towards temperature....
+                # We should probably keep a map of "parameter number" like in their thing
+                # It just needs to be perfectly even/cartesian (TODO if/when we overhaul this thing)
+                return self.grid_info.loc[((self.paramx - qparamx)**2 + (self.paramy - qparamy)**2).idxmin()]
+            else:
+                # Something failed (probably an interp for log g) so return None
+                # If log g, then likely cause is outside convex hull of CloughTocher2DInterpolator
+                return None
         else:
             return model.loc[model.index[0]]
             # if model.empty:
@@ -149,8 +172,22 @@ class PoWRGrid:
             self.paramy_name = "LOG_R_TRANS"
 
     def parse_query_params(self, *args):
-        # takes input from self.get_model_info
-        # figures out how to turn it into grid parameters
+        """
+        Takes input from self.get_model_info
+        Figures out how to turn it into grid parameters
+        Now takes even more arguments (Sept 24, 2020)
+        """
+        args_lower = [a.lower() for a in args if isinstance(a, str)]
+        if any([logL.lower() in args_lower for logL in ("L", "log_L", "logL")]):
+            # This is a Teff, log_L pair, NOT log_g
+            # We need to map that pair to a log_g value using an interpolation
+            args = [a for a in args if not isinstance(a, str)]
+            Teff, logL = args
+            # Reset the args to T and the interp'd g
+            args = Teff, self.interp_g(Teff, logL)
+            # At present, this is more self-consistent than interping to a
+            # single model (which we could do if we did that even-discretize
+            # thing I mention in get_model_info comments)
         if self.grid_name == 'OB':
             # input is Teff, log_g
             Teff, log_g = args
@@ -182,6 +219,19 @@ class PoWRGrid:
             Teff = trim_logTeff(Teff)
             Rt = trim_logRt(Rt)
             return Teff, Rt
+
+    def interp_g(self, Teff, logL):
+        """
+        Interpolate log_g from Teff and logL
+        These form a plane (or a smooth surface), so the interpolation should be
+        clean.
+        """
+        if self.TL_interp is None:
+            # Make it. Work in log T like in Leitherer
+            xy_delaunay = utils.delaunay_triangulate(np.log10(self.grid_info['T_EFF']), self.grid_info['LOG_L'])
+            self.TL_interp = utils.fit_characteristic(xy_delaunay, self.grid_info['LOG_G'])
+        return self.TL_interp(np.log10(Teff), logL)
+
 
     def plot_grid_space(self, c=None, clabel=None, setup=True, show=True,
         **plot_kwargs):

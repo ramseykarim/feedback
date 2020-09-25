@@ -130,6 +130,49 @@ def combine_tables():
 
 df = pd.read_pickle(mytable)
 coords = SkyCoord(df.coords.values)
+catalog.spectral.stresolver.UNCERTAINTY = False
+
+# Make the PoWR objects
+powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNL-H50', 'WNL', 'WNE')}
+# Make the Martins tables object
+cal_tables = catalog.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
+# Make Leitherer tables object
+ltables = catalog.spectral.leitherer.LeithererTable()
+# Create CatalogResolver instance
+catr = catalog.spectral.stresolver.CatalogResolver(df['SpType'].values,
+    calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
+
+fuv_flux_1, uncertainty = zip(*catr.get_array_FUV_flux())
+fuv_flux_1 = catalog.spectral.stresolver.u.Quantity(fuv_flux_1)
+
 T = df.Teff.values
-plt.scatter(coords.ra.deg, coords.dec.deg, c=np.sqrt(T/1000))
+L = df.LogL.values
+TLs = list(zip(T, L))
+
+catr.link_powr_grids(powr_tables, listof_TL_pair=TLs)
+catr.populate_FUV_flux()
+
+fuv_flux_2, uncertainty = zip(*catr.get_array_FUV_flux())
+fuv_flux_2 = catalog.spectral.stresolver.u.Quantity(fuv_flux_2)
+
+xf = np.log10(fuv_flux_1.to_value())
+yf = np.log10(fuv_flux_2.to_value())
+# plt.scatter(xf, yf, marker='o')
+xvals = [3, 7]
+yvals = [x - 0.3 for x in xvals]
+# plt.plot(xvals, yvals, '--')
+
+mask = (yf < xf-0.3)
+xf_f = xf[mask]
+yf_f = yf[mask]
+
+print(df.loc[~mask])
+
+plt.scatter(T/1000, xf, color='r', marker='o', alpha=0.2)
+plt.scatter(T/1000, yf, color='b', marker='x', alpha=0.2)
+plt.gca().invert_xaxis()
+
+# plt.scatter(xf_f, yf_f, color='r', marker='o')
+# plt.xlim([3.5, 6])
+# plt.ylim([3.5, 6])
 plt.show()

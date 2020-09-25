@@ -7,6 +7,12 @@ import sys
 import warnings
 import time
 import datetime
+from itertools import cycle
+import argparse
+
+from matplotlib.ticker import NullFormatter
+nullfmt = NullFormatter()
+BINS = 20
 
 from scipy.optimize import curve_fit
 from scipy import signal
@@ -558,7 +564,15 @@ def area_fit_attempt():
     print("Done!")
 
 
+"""
+INTERACTIVE SOLUTION VIEWER
+"""
+
 def examine_area_solution():
+    """
+    For example:
+    --ylim -1 5 --component ionized --image ionized_amplitude
+    """
     cube = cube_utils.CubeData(filenames[3])
     filename_stub = "models/gauss_fit_4G_v2"
     filename_stub = cube_utils.os.path.join(cube.directory, filename_stub)
@@ -579,11 +593,29 @@ def examine_area_solution():
                 param_names.append(hdu.header['EXTNAME'])
     param_array = np.array(param_array)
 
+    spectral_axis =  cube.data.spectral_axis.to(u.km/u.s).to_value()
+
+    # Parse some command line args
+    parser = argparse.ArgumentParser(description='View the component fits to the M16 data')
+    parser.add_argument('--ylims', nargs=2, type=float, default=None, help='fix the y limits')
+    parser.add_argument('--component', type=str, default='pillar', help='which component to plot individually')
+    parser.add_argument('--image', type=str, default='integrated', help='which image to plot on the left hand side')
+    args = parser.parse_args()
+    ylim = args.ylims
+
     def g_model(*args):
         return models.Gaussian1D(*args[0:3], name='ionized') + models.Gaussian1D(*args[3:6], name='pillar') + models.Gaussian1D(*args[6:9], name='bg') + models.Gaussian1D(*args[9:12], name='bg2')
 
-    def get_spectrum_at(i, j):
+    def get_respmodel_spectrum_at(i, j):
         """
+        Get the spectrum (may be SMOOTHED) that was fitted to
+        Residuals + model
+        """
+        return residuals_cube[:, i, j] + model_intensity_cube[:, i, j]
+
+    def get_original_spectrum_at(i, j):
+        """
+        Get the original (NOT smoothed) spectrum from the cube
         i and j are array coordinates from the cutout cube
         """
         coord = cutout_wcs.array_index_to_world(i, j)
@@ -591,19 +623,64 @@ def examine_area_solution():
         return cube.data[:, i, j]
 
     def get_gmodel_at(i, j):
+        """
+        Get the model object for parameters at this index
+        """
         return g_model(*param_array[:, i, j])
 
     def plot_spectrum(ax, spectrum, **kwargs):
-        ax.plot(spectrum.spectral_axis.to(u.km/u.s), spectrum.to_value(), **kwargs)
+        ax.plot(spectral_axis, spectrum.to_value(), **kwargs)
 
-    def plot_model(ax, any_cube, model, **kwargs):
-        x = any_cube.spectral_axis.to(u.km/u.s).to_value()
+    def plot_model(ax, model, **kwargs):
+        x = spectral_axis
         ax.plot(x, model(x), **kwargs)
 
-    def plot_model_separately(ax, any_cube, model, **kwargs):
-        x = any_cube.spectral_axis.to(u.km/u.s).to_value()
-        for i in range(model.n_submodels):
-            ax.plot(x, model[i](x), **kwargs)
+    def plot_model_separately(ax, model, **kwargs):
+        x = spectral_axis
+        for model_i in range(model.n_submodels):
+            ax.plot(x, model[model_i](x), label=f"Fit to: {model[model_i].name}", **kwargs)
+
+    def plot_single_model(ax, i, j, model, model_i, **kwargs):
+        x = spectral_axis
+        ax.plot(x, model[model_i](x), label=f"{model[model_i].name} at i, j {i}, {j}", **kwargs)
+
+    g_fit = get_gmodel_at(1, 1)
+    model_names = [g_fit[x].name for x in range(g_fit.n_submodels)]
+    del g_fit
+    img_to_plot = args.image
+    if any(x in img_to_plot for x in model_names):
+        param_index = [x in img_to_plot for x in model_names].index(True)*3
+        try:
+            param_subindex = [x in img_to_plot for x in ['amplitude', 'mean', 'stddev']].index(True)
+        except:
+            param_subindex = 0
+        param_index += param_subindex
+        img_to_plot = param_array[param_index, :, :]
+    elif 'to' in img_to_plot:
+        if 'res' in img_to_plot:
+            img = residuals_cube
+        elif 'spe':
+            img = model_intensity_cube + residuals_cube
+        else:
+            img = model_intensity_cube
+        vlims = [float(x)*u.km/u.s for x in [x for x in img_to_plot.split('_') if 'to' in x].pop().split('to')]
+        img_to_plot = img.spectral_slab(*vlims).moment0().to(u.K*u.km/u.s).to_value()
+    else:
+        img_to_plot = 'integrated'
+
+    def plot_ref_img(ax):
+        ax.imshow(img_to_plot, origin='lower')
+        ax.set_title("CII integrated intensity")
+
+    def plot_point_on_ref_img(ax, i, j, **kwargs):
+        ax.plot([j], [i], 'x', **kwargs)
+
+    def setup_spectrum_axis(ax):
+        ax.set_xlabel("v (km/s)")
+        ax.set_ylabel("T (K)")
+        ax.set_title("Original and fitted spectra")
+        if ylim is not None:
+            ax.set_ylim(ylim)
 
     i, j = 6, 18
     i, j = 20, 17
@@ -612,21 +689,336 @@ def examine_area_solution():
     i, j = 3, 8
     i, j = 3, 5
     i, j = 21, 3
+
+    gen_color_list = lambda : plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    plot_info = {}
+    plot_info['selected_is_model'] = True
+    plot_info['currently_overplotting'] = False
+    plot_info['colorcycle'] = cycle(gen_color_list())
+
+    def safe_cast_int(x):
+        try:
+            return int(x)
+        except:
+            return False
+
+    selected_component = args.component
+    g_fit = get_gmodel_at(1, 1)
+    submodel_names = [g_fit[x].name for x in range(g_fit.n_submodels)]
+    if selected_component.lower() in submodel_names:
+        plot_info['selected_is_model'] = True
+    elif 'spec' in selected_component.lower():
+        plot_info['selected_is_model'] = False
+        if 'nois' in selected_component:
+            selected_component = 'noisy spec'
+        else:
+            selected_component = 'smoothed spec'
+    elif 'res' in selected_component.lower():
+        plot_info['selected_is_model'] = False
+        if 'nois' in selected_component:
+            selected_component = 'noisy residual'
+        else:
+            selected_component = 'smoothed residual'
+    elif safe_cast_int(selected_component) and int(selected_component) in range(g_fit.n_submodels):
+        selected_component = int(selected_component)
+        plot_info['selected_is_model'] = True
+    else:
+        print(f"Couldn't understand input {selected_component}")
+        selected_component = 'pillar'
+
+    plot_info['selected_component'] = selected_component
+
+
+    plt.ion()
     fig, axes = plt.subplots(nrows=1, ncols=2)
+    plot_ref_img(axes[0])
 
-    axes[0].imshow(integrated, origin='lower')
-    axes[0].plot([j], [i], 'x', color='r')
+    def onclick(event):
+        try:
+            j, i = int(round(event.xdata)), int(round(event.ydata))
+        except Exception as e:
+            print(f"something went wrong... {e}")
+            return
+        if event.button == 1:
+            axes[0].clear()
+            axes[1].clear()
+            plot_ref_img(axes[0])
+            plot_point_on_ref_img(axes[0], i, j, color='r')
+            # Housekeeping
+            plot_info['currently_overplotting'] = False
 
-    spectrum1 = residuals_cube[:, i, j] + model_intensity_cube[:, i, j]
-    plot_spectrum(axes[1], spectrum1, color='k', linewidth=0.7)
-    spectrum2 = get_spectrum_at(i, j)
-    plot_spectrum(axes[1], spectrum2, color='r', linewidth=0.6, linestyle='--', alpha=0.4)
-    plot_spectrum(axes[1], residuals_cube[:, i, j], color='k', linewidth=0.7, alpha=0.7)
-    g_fit = get_gmodel_at(i, j)
-    print(g_fit)
-    plot_model_separately(axes[1], spectrum1, g_fit, color='g', linestyle='-.', linewidth=0.7)
-    # plot_model(axes[1], spectrum1, g_fit['pillar'], color='r')
+            # Plot the main smoothed spectrum
+            spectrum1 = get_respmodel_spectrum_at(i, j)
+            plot_spectrum(axes[1], spectrum1, color='k', linewidth=0.7, label='Smoothed data')
+            # Plot the original, noisy spectrum lightly behind it
+            spectrum2 = get_original_spectrum_at(i, j)
+            plot_spectrum(axes[1], spectrum2, color='r', linewidth=0.6, linestyle='--', alpha=0.4, label='Original data')
+            # Plot residuals
+            plot_spectrum(axes[1], residuals_cube[:, i, j], color='k', linewidth=0.7, alpha=0.7, label='Residuals')
+            # Get and plot the model, all components plotted separately
+            g_fit = get_gmodel_at(i, j)
+            plot_model_separately(axes[1], g_fit, color='g', linestyle='-.', linewidth=0.6)
+            setup_spectrum_axis(axes[1])
+            # Print out useful info about this pixel's fit
+            print(f"i, j = ({i}, {j})")
+            print(f"x, y = ({j+1}, {i+1})")
+            print(g_fit)
+            print()
+        elif event.button == 3:
+            selected_component = plot_info['selected_component']
+            if not plot_info['currently_overplotting']:
+                # Reset colors
+                plot_info['colorcycle'] = cycle(gen_color_list())
+                axes[0].clear()
+                axes[1].clear()
+                plot_ref_img(axes[0])
+                setup_spectrum_axis(axes[1])
+                axes[1].set_title("Plotting "+str(selected_component))
+                plot_info['currently_overplotting'] = True
+
+            # Add to the existing plot
+            color = next(plot_info['colorcycle'])
+            plot_point_on_ref_img(axes[0], i, j, color=color)
+            if plot_info['selected_is_model']:
+                g_fit = get_gmodel_at(i, j)
+                plot_single_model(axes[1], i, j, g_fit, selected_component, color=color, linewidth=0.7, linestyle='--')
+            else:
+                if 'spec' in selected_component:
+                    if 'nois' in selected_component:
+                        spectrum = get_original_spectrum_at(i, j)
+                    else:
+                        spectrum = get_respmodel_spectrum_at(i, j)
+                elif 'res' in selected_component:
+                    if 'nois' in selected_component:
+                        spectrum = get_original_spectrum_at(i, j) - model_intensity_cube[:, i, j]
+                    else:
+                        spectrum = residuals_cube[:, i, j]
+                plot_spectrum(axes[1], spectrum, color=color, linewidth=0.7, alpha=0.6)
+
+    return fig.canvas.mpl_connect('button_press_event', onclick)
+
+
+def setup_scaHist(fig_scaHist, figsize=(15, 15)):
+    """
+    Adopted from analyze_manticore.py! Modified since I know more now
+    fig_scaHist is some Figure identifier (not a Figure object)
+
+    Plot axes setup; from matplotlib example scatter_hist.html
+    """
+    anchor, width = 0.1, 0.62
+    anchor_h = anchor + width + 0.005
+    rect_scatter = [anchor, anchor, width, width]
+
+    rect_hist_X = [anchor, anchor_h, width, 0.22]
+    rect_hist_Y = [anchor_h, anchor, 0.2, width]
+
+    fig = plt.figure(fig_scaHist, figsize=figsize)
+    axSctr = fig.add_axes(rect_scatter)
+    axHist_X = fig.add_axes(rect_hist_X, sharex=axSctr)
+    axHist_Y = fig.add_axes(rect_hist_Y, sharey=axSctr)
+    axHist_X.tick_params(axis='x', labelbottom=False)
+    axHist_Y.tick_params(axis='y', labelleft=False)
+    return axSctr, axHist_X, axHist_Y
+
+
+def hist(xarr, yarr, axes=None, log=False, **kwargs):
+    """
+    Also adopted from analyze_manticore.py!
+    Assume xarr and yarr are multi-D and should be flattened
+    """
+    # Array prep (flatten, finite) function
+    prep_arr = lambda x: x[np.isfinite(x)].ravel()
+    # Figure out axes
+    if axes is None:
+        fig, axes = plt.subplots(ncols=2)
+    else:
+        fig = axes[0].figure
+    # Plot the first one
+    nX, bins, patches = axes[0].hist(prep_arr(xarr), bins=BINS, log=log,
+                                 histtype='step', fill=False,
+                                 orientation='vertical', **kwargs)
+    bin_centers = (bins[:-1]+bins[1:])/2
+    medX = bin_centers[nX == np.max(nX)]
+    nY, bins, patches = axes[1].hist(prep_arr(yarr), bins=BINS, log=log,
+                                 histtype='step', fill=False,
+                                 orientation='horizontal', **kwargs)
+    bin_centers = (bins[:-1]+bins[1:])/2
+    medY = bin_centers[nY == np.max(nY)]
+
+    return medX, medY  # returns medians of histograms
+
+
+def scatter(xarr, yarr, ax=None, skip=1, **kwargs):
+    """
+    Also adopted from analyze_manticore.py!
+    The skip keyword is for skipping every <skip> point, in case there's like
+    millions and it crowds the screen too badly. Shouldn't affect the meaning
+    of the display.
+    """
+    if ax is None:
+        fig = plt.figure()
+        ax = plt.subplot(111)
+    else:
+        fig = ax.figure
+    finite_mask = np.isfinite(xarr) & np.isfinite(yarr)
+    prep_arr = lambda x: x[finite_mask].ravel()
+    ax.plot(prep_arr(xarr), prep_arr(yarr), '.', **kwargs)
+
+
+def scatter_area_solution():
+    """
+    Doing those param-param scatter plot things I did for HELPSS way back in the
+    day. Those seemed to help designate "regions" in the image, regardless of
+    how realistic the parameter values are.
+
+    I think it's similar to saying "you could find complicated ways to write
+    inequalities or constraints on the data to designate certain regions" but
+    it's already been run through a "complicated" function, so you're revealing
+    different characteristics.
+
+    --cx bg_s --cy pillar_m
+    """
+    cube = cube_utils.CubeData(filenames[3])
+    filename_stub = "models/gauss_fit_4G_v2"
+    filename_stub = cube_utils.os.path.join(cube.directory, filename_stub)
+    residuals_cube = cube_utils.SpectralCube.read(f"{filename_stub}.resid.fits")
+    model_intensity_cube = cube_utils.SpectralCube.read(f"{filename_stub}.model.fits")
+    param_array = []
+    param_names = []
+    integrated = None
+    cutout_wcs = None
+    with fits.open(f"{filename_stub}.param.fits") as hdul:
+        for hdu in hdul:
+            if hdu.data is None:
+                cutout_wcs = WCS(hdu.header)
+            elif 'integrated' in hdu.header['EXTNAME']:
+                integrated = hdu.data
+            else:
+                param_array.append(hdu.data)
+                param_names.append(hdu.header['EXTNAME'])
+    param_array = np.array(param_array)
+
+    spectral_axis =  cube.data.spectral_axis.to(u.km/u.s).to_value()
+
+    component_lookup = ['ionized', 'pillar', 'bg', 'bg2']
+    param_lookup = ['a', 'm', 's']
+    param_names = ['amplitude', 'mean', 'stddev']
+
+    def get_param_name(param):
+        # param is a, m, or s
+        return param_names[param_lookup.index(param)]
+
+    def get_param(component, param):
+        index = component_lookup.index(component)*3 + param_lookup.index(param)
+        return param_array[index]
+
+    parser = argparse.ArgumentParser(description='View the component fits to the M16 data')
+    parser.add_argument('--cx', type=str, default='pillar_m', help='X value name. Like pillar_a')
+    parser.add_argument('--cy', type=str, default='pillar_s', help='Y value name')
+    args = parser.parse_args()
+
+    componentx, paramx = args.cx.split("_")
+    componenty, paramy = args.cy.split("_")
+    paramx_arr, paramy_arr = get_param(componentx, paramx), get_param(componenty, paramy)
+
+    axSctr, axHist_X, axHist_Y = setup_scaHist(1, figsize=(7, 7))
+    hist(paramx_arr, paramy_arr, axes=(axHist_X, axHist_Y), color='k')
+    scatter(paramx_arr, paramy_arr, ax=axSctr, label='Hey', color='k')
+
+    axSctr.set_xlabel(f"{componentx} {get_param_name(paramx)}")
+    axSctr.set_ylabel(f"{componenty} {get_param_name(paramy)}")
+
+    xlims = axSctr.get_xlim() #(np.min(paramx_arr), np.max(paramx_arr))
+    ylims = axSctr.get_ylim() #(np.min(paramy_arr), np.max(paramy_arr))
+    # axSctr.set_xlim(xlims)
+    # axSctr.set_ylim(ylims)
+    # axHist_X.set_xlim(xlims)
+    # axHist_X.set_ylim([0, 100])
+    # axHist_Y.set_ylim(ylims)
+    # axHist_Y.set_xlim([0, 100])
+
+    plt.show()
+
+def view_area_mask():
+    """
+    example:
+    --cx bg_s --cy 2.9
+    """
+    cube = cube_utils.CubeData(filenames[3])
+    filename_stub = "models/gauss_fit_4G_v2"
+    filename_stub = cube_utils.os.path.join(cube.directory, filename_stub)
+    residuals_cube = cube_utils.SpectralCube.read(f"{filename_stub}.resid.fits")
+    model_intensity_cube = cube_utils.SpectralCube.read(f"{filename_stub}.model.fits")
+    param_array = []
+    param_names = []
+    integrated = None
+    cutout_wcs = None
+    with fits.open(f"{filename_stub}.param.fits") as hdul:
+        for hdu in hdul:
+            if hdu.data is None:
+                cutout_wcs = WCS(hdu.header)
+            elif 'integrated' in hdu.header['EXTNAME']:
+                integrated = hdu.data
+            else:
+                param_array.append(hdu.data)
+                param_names.append(hdu.header['EXTNAME'])
+    param_array = np.array(param_array)
+
+    spectral_axis =  cube.data.spectral_axis.to(u.km/u.s).to_value()
+
+    component_lookup = ['ionized', 'pillar', 'bg', 'bg2']
+    param_lookup = ['a', 'm', 's']
+    param_names = ['amplitude', 'mean', 'stddev']
+
+    def get_param_name(param):
+        # param is a, m, or s
+        return param_names[param_lookup.index(param)]
+
+    def get_param(component, param):
+        index = component_lookup.index(component)*3 + param_lookup.index(param)
+        return param_array[index]
+
+    if False:
+        parser = argparse.ArgumentParser(description='View the component fits to the M16 data')
+        parser.add_argument('--cx', type=str, default='pillar_m', help='X value name. Like pillar_a')
+        parser.add_argument('--cy', type=str, default='pillar_s', help='Y value name')
+        args = parser.parse_args()
+
+        if '_' in args.cx:
+            componentx, paramx = args.cx.split("_")
+            xarr = get_param(componentx, paramx)
+            x_name = f"{componentx} {get_param_name(paramx)}"
+        else:
+            xarr = float(args.cx)
+            x_name = args.cx
+
+        if '_' in args.cy:
+            componenty, paramy = args.cy.split("_")
+            yarr = get_param(componenty, paramy)
+            y_name = f"{componenty} {get_param_name(paramy)}"
+        else:
+            yarr = float(args.cy)
+            y_name = args.cy
+
+        mask = (xarr > yarr)
+        plt.title(f"Integrated intensity where {x_name} > {y_name}")
+
+    elif True:
+        p = get_param('bg2', 'a')
+        # mask = (28.5 < p) & (p < 30.3)
+        mask = p > 0.5
+
+    p1 = get_param('bg2', 'm')
+    p2 = get_param('pillar', 'm')
+    img = p1 - p2
+
+    img[~mask] = np.nan
+
+    plt.imshow(img, origin='lower')
     plt.show()
 
 if __name__ == "__main__":
-    examine_area_solution()
+    # examine_area_solution()
+    # scatter_area_solution()
+    view_area_mask()
