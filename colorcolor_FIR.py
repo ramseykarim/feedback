@@ -7,6 +7,7 @@ import matplotlib.cm as cmx
 import pickle
 
 from astropy.io import fits
+from astropy.utils.console import ProgressBar
 
 from mantipython.physics import greybody, dust, instrument
 
@@ -23,6 +24,11 @@ if not os.path.isdir(fila_dir):
 readme = """## README ##
 This is a 3D grid of log10(tau(160micron)), T [K], beta
 Return value is a dictionary; check the keys
+
+tau_range = np.arange(-4.1, -0.398, 0.002)
+T_range = np.arange(6, 60.01, 0.05)
+b_range = np.array([1.675, 1.70, 1.725, 1.75, 1.775])
+
 ## END ##
 """
 print(readme)
@@ -35,7 +41,7 @@ filename = "tb_grid_kappa1Av.pkl"
 # filename = "tb_grid_t160-0.01.pkl"
 # filename = "tb_grid_t160-0.1.pkl"
 # filename = "tb_grid_t160-0.3.pkl"
-filename = "tb_grid_3D.pkl"
+filename = "tb_grid_3D_2020-10-08.pkl"
 
 filename = fila_dir + filename
 
@@ -54,17 +60,21 @@ def make_grid():
     # set up parameter grid
 
     # log10(Tau160) in logarithmic steps of 0.5%
-    tau_range = np.arange(np.log10(0.002), np.log10(0.4), np.log10(1.005))
+    tau_range = np.arange(-4.1, -0.398, 0.002)
     # Temperature from 5 to 150 in geometric steps of 3%
-    T_range = np.arange(5, 60, 0.05)
+    T_range = np.arange(6, 60.01, 0.05)
     # Beta in arithmetic steps of 0.1
-    b_range = np.arange(1.2, 2.4, 0.05)
+    b_range = np.array([1.675, 1.70, 1.725, 1.75, 1.775])
     """
     a 28 million element grid will take ~1.5-3 hours on one core
     I looked into this on June 12, 2020
     """
     print("Grid shape: (tau, T, beta)", tau_range.shape, T_range.shape, b_range.shape)
-
+    print(f"Total size:  {tau_range.size*T_range.size*b_range.size:.2E}")
+    print(f"logtau: {tau_range[0]} to {tau_range[-1]}")
+    print(f"T: {T_range[0]} to {T_range[-1]}")
+    print(f"beta: {b_range[0]} to {b_range[-1]}")
+    return
     #### If setting tau160 to a single value (2D grid)
     # N1Av = np.log10(1.1) + 21
     # kappa2 = dust.Dust(beta=2.0, k0=0.05625, nu0=750*1e9)
@@ -80,15 +90,13 @@ def make_grid():
     result = {d.name: np.full(TT.shape, np.nan).ravel() for d in herschel}
 
     total_i = TT.size
-
-    for i, t160, T, b in zip(range(TT.size), tt.flat, TT.flat, bb.flat):
-        for d in herschel:
-            # result[d.name][i] = d.detect(greybody.Greybody(T, N1Av, dust.Dust(beta=b, k0=0.05625, nu0=750*1e9)))
-            result[d.name][i] = d.detect(greybody.Greybody(T, t160, dust.TauOpacity(b)))
-            if (i % 5000 == 0):
-                sys.stdout.write(f"{float(i+1)*100/float(total_i):6.2f}\r")
-                sys.stdout.flush()
-    print()
+    print("Filling out T/tau/beta grid:")
+    with ProgressBar(total_i) as bar:
+        for i, t160, T, b in zip(range(TT.size), tt.flat, TT.flat, bb.flat):
+            for d in herschel:
+                # result[d.name][i] = d.detect(greybody.Greybody(T, N1Av, dust.Dust(beta=b, k0=0.05625, nu0=750*1e9)))
+                result[d.name][i] = d.detect(greybody.Greybody(T, t160, dust.TauOpacity(b)))
+            bar.update()
     for d in herschel:
         result[d.name] = result[d.name].reshape(TT.shape)
     result['tau160'] = tt
