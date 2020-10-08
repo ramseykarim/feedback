@@ -9,9 +9,11 @@ Created: June 2, 2020
 __author__ = "Ramsey Karim"
 
 import numpy as np
+from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from scipy.optimize import minimize
 from astropy import units as u
 
 from .. import utils
@@ -24,7 +26,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_st_parse_slashdash()
+    return test_STResolver_L()
 
 
 def plot_sptype_calibration_stuff():
@@ -85,6 +87,77 @@ def test_sttables():
     return stt1, stt2
 
 
+def test_L_vs_T_vs_g():
+    """
+    I want to see if I can use logL and T to map cleanly to log g
+    (Sept 23, 2020 for use with Cyg OB2)
+    """
+    df1, u1 = spectral.martins.load_tables_df() # dictionary of dfs
+    fig = plt.figure()
+    colors = {'I':'blue','III':'green','V':'red'}
+    ax = fig.add_subplot(111, projection='3d')
+    all_T, all_L, all_g = [], [], []
+    for lc in spectral.parse_sptype.luminosity_classes:
+        Teff = df1[lc]['Teff']/1000
+        all_T.extend(list(Teff))
+        logL = df1[lc]['log_L']
+        all_L.extend(list(logL))
+        log_g = df1[lc]['log_g']
+        all_g.extend(list(log_g))
+        ax.scatter(Teff, logL, log_g, c=colors[lc], marker='o')
+
+    tbl = spectral.powr.PoWRGrid('OB')
+    # Teff = tbl.grid_info['T_EFF']/1000.
+    # logL = tbl.grid_info['LOG_L']
+    # log_g = tbl.grid_info['LOG_G']
+    # ax.scatter(Teff, logL, log_g, c='k', marker='o')
+
+    Teff = np.arange(20., 50., 1.5)*1000
+    logL = np.linspace(4.4, 6.2, Teff.size)
+    tbl.interp_g(Teff[0], logL[0])
+    Teff, logL = np.meshgrid(Teff, logL, indexing='xy')
+    TL_grid = np.stack([np.log10(Teff), logL], axis=-1)
+    log_g = tbl.TL_interp(TL_grid)
+    Teff /= 1000
+    ax.plot_surface(Teff, logL, log_g, color='orange', alpha=0.3)
+    """
+    This interpolation is better than the plane fit below. It covers a much
+    larger area and reflects some of the curvature of the log_g surface.
+    But both are roughly consistent with each other!
+    """
+
+    ax.set_xlabel('Teff')
+    ax.set_ylabel('log L')
+    ax.set_zlabel('log g')
+
+    # From stackoverflow: https://stackoverflow.com/a/20700063
+    def plane(x, y, params):
+        a, b, d = params[:3]
+        z = a*x + b*y + d
+        return z
+
+    points = np.array([all_T, all_L, all_g])
+    def fit_plane(params):
+        residuals = points[2, :] - plane(points[0, :], points[1, :], params)
+        return np.sum(residuals**2)
+
+    res = minimize(fit_plane, [1, 1, 1])
+    print(res.x)
+    """
+    THE FIT IS:
+    [ 0.05727171 -0.65728093  5.20380702]
+    We only need to run this once!!
+    This is a fit to T/1000, logL for log_g
+    """
+
+    xx, yy = np.meshgrid(np.array([27, 45]), np.array([4.5, 6.1]))
+    zz = plane(xx, yy, res.x)
+
+    ax.plot_surface(xx, yy, zz, alpha=0.3)
+
+    plt.show()
+
+
 def test_leitherer_open():
     """
     open_tables works, as far as I can tell
@@ -116,7 +189,7 @@ def test_leitherer_grid_smoothness():
     Llabel = f"log L ({u1.loc['log_L', 'Units']})"
     z = df1['R']
     TL = np.array([T.values, L.values]).T
-    interp = spectral.leitherer.CloughTocher2DInterpolator(TL, z, fill_value=np.nan)
+    interp = utils.CloughTocher2DInterpolator(TL, z, fill_value=np.nan)
     print(u1)
     plt.subplot(121)
     plt.scatter(T, L, marker='o', c=z, vmin=np.min(z), vmax=np.max(z))
@@ -281,6 +354,34 @@ def testSuite_PoWR():
     tbl.plot_spectrum(*wf4, setup=False, xunit=u.eV, fuv=True, ylog=False)
 
 
+def test_powr_3param():
+    """
+    Check powr logL vs log g vs Teff
+
+    I move forward with this exploration in test_L_vs_T_vs_g
+    """
+    tbl = spectral.powr.PoWRGrid('OB')
+    print(tbl.grid_info)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    Teff = tbl.grid_info['T_EFF']/1000.
+    logL = tbl.grid_info['LOG_L']
+    log_g = tbl.grid_info['LOG_G']
+    ax.scatter(Teff, logL, log_g, c='k', marker='o')
+    ax.set_xlabel('Teff')
+    ax.set_ylabel('log L')
+    ax.set_zlabel('log g')
+    plt.show()
+
+
+def test_powr_retrieval_by_L():
+    tbl = spectral.powr.PoWRGrid('OB')
+    print(tbl.get_model_info(33040., 3.6))
+    print()
+    # This works!
+    print(tbl.get_model_info(33020., 5.2, 'L'))
+
+
 def test_STResolver_WR():
     spectral.stresolver.random.seed(1312)
     np.random.seed(1312)
@@ -312,25 +413,28 @@ def test_STResolver():
     #         return "[NO MODEL]"
     spectral.stresolver.random.seed(1312)
     np.random.seed(1312)
-    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in ('OB', "WNE", "WNL")}
+    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in spectral.powr.AVAILABLE_POWR_GRIDS}
     cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
     ltables = spectral.leitherer.LeithererTable()
     # cat = pd.read_pickle(f"{parse.catalog_directory}Ramsey/catalog_may5_2020.pkl")
     # print(cat.columns)
     # tests = cat.Spectral.values
     # print(tests)
-    tests = ['O5-6.5III+O3V', 'O4I/III', 'WN6ha', 'B1-2', 'C*', 'O4V+PMS']
+    tests = ['O5+O7+B1', 'O5-6.5III+O3V', 'O4I/III', 'B1-2', 'C*', 'O4V+PMS']
 
+    spectral.stresolver.UNCERTAINTY = False # toggle the half-type/sampling
     catr = spectral.stresolver.CatalogResolver(tests,
         calibration_table=cal_tables, leitherer_table=ltables,
         powr_dict=powr_grids)
     print(catr)
-    mdot, mdot_e = catr.get_mass_loss_rate(nsamples=10)
-    print(mdot)
-    print(mdot_e)
-    fluxes = catr.get_array_FUV_flux()
-    for f in fluxes:
-        print(f)
+    for s in catr.star_list:
+        print(s.spectral_types)
+    # mdot, mdot_e = catr.get_mass_loss_rate(nsamples=10)
+    # print(mdot)
+    # print(mdot_e)
+    # fluxes = catr.get_array_FUV_flux()
+    # for f in fluxes:
+    #     print(f)
 
     # count = 0
     # for t in tests:
@@ -352,6 +456,31 @@ def test_STResolver():
         # if count > 15:
         #     break
     # return s
+
+def test_STResolver_L():
+    spectral.stresolver.random.seed(1312)
+    np.random.seed(1312)
+    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in spectral.powr.AVAILABLE_POWR_GRIDS}
+    cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
+    ltables = spectral.leitherer.LeithererTable()
+
+    tests = ['O6', 'O6', 'O6']
+    TLs = [(30000., 5.2), (32050., 4.9), (28001., 5.1)]
+
+    spectral.stresolver.UNCERTAINTY = False # toggle the half-type/sampling
+    catr = spectral.stresolver.CatalogResolver(tests,
+        calibration_table=cal_tables, leitherer_table=ltables,
+        powr_dict=powr_grids)
+    for x in catr.get_array_FUV_flux():
+        print(x)
+    for x in catr.link_powr_grids(powr_grids, listof_TL_pair=TLs):
+        print(x)
+    catr.populate_FUV_flux() # needs to refresh the FUV flux array
+    for x in catr.get_array_FUV_flux():
+        print(x)
+
+
+
 
 def test_catalog():
     df = parse.load_final_catalog_df()

@@ -29,6 +29,7 @@ from . import vacca
 # 6 gives 17th and 83th percentiles, which is close to the +/- 34% of
 #  standard 1 sigma error on a normal distribution
 N_QUANTILE = 6
+UNCERTAINTY = True
 
 class STResolver:
     """
@@ -133,22 +134,28 @@ class STResolver:
               This allows for sampling of the WR parameter space, since we
               simply cannot sample the map like we do for OB stars.
             """
-            full_possibilities_list = []
-            for st_tuple in st_bc_possibilities_t:
-                if STResolver.isWR(st_tuple):
-                    # WR star case; add possibilities from wr_samples
-                    param_samples = STResolver.sample_WR(st_tuple)
-                    # Prepend the spectral type tuple to the parameter tuples
-                    full_possibilities_list.extend([st_tuple + ps for ps in param_samples])
-                elif STResolver.isMS(st_tuple):
-                    # OB star; add the original and adjacent possibilities
-                    # Adjacent list contains original, so we will have 2 copies of original
-                    # This is intentional, to weight towards original type
-                    full_possibilities_list.extend(parse_sptype.st_adjacent(st_tuple))
-                    full_possibilities_list.append(st_tuple)
-                else:
-                    # Nonstandard type; just throw it in, it won't matter
-                    full_possibilities_list.append(st_tuple)
+            # Can set UNCERTAINTY from other files; it works, I checked
+            if UNCERTAINTY:
+                # Do full-on sampling uncertainty
+                full_possibilities_list = []
+                for st_tuple in st_bc_possibilities_t:
+                    if STResolver.isWR(st_tuple):
+                        # WR star case; add possibilities from wr_samples
+                        param_samples = STResolver.sample_WR(st_tuple)
+                        # Prepend the spectral type tuple to the parameter tuples
+                        full_possibilities_list.extend([st_tuple + ps for ps in param_samples])
+                    elif STResolver.isMS(st_tuple):
+                        # OB star; add the original and adjacent possibilities
+                        # Adjacent list contains original, so we will have 2 copies of original
+                        # This is intentional, to weight towards original type
+                        full_possibilities_list.extend(parse_sptype.st_adjacent(st_tuple))
+                        full_possibilities_list.append(st_tuple)
+                    else:
+                        # Nonstandard type; just throw it in, it won't matter
+                        full_possibilities_list.append(st_tuple)
+            else:
+                # Do not do any uncertainty past binary components and slash/dashes
+                full_possibilities_list = st_bc_possibilities_t
             # Assign the full possibilities list to the spectral_types dictionary
             self.spectral_types[st_binary_component] = full_possibilities_list
         # Check if this instance is part of a CatalogResolver container
@@ -192,10 +199,13 @@ class STResolver:
         """
         self.leitherer_table = table
 
-    def link_powr_grids(self, powr_dict):
+    def link_powr_grids(self, powr_dict, TL_pair=None):
         """
         First, get the inputs to the PoWR grid using either the Vacca
             calibration or a hardcoded list of WR parameters
+        OR, provide a TL_pair (Teff [K], logL [L/Lsun]) for this star from elsewhere
+            This will trigger an interpolation for log g
+            Right now, this is only for OB stars. TL_pair is ignored otherwise
         These are paramx, paramy of the grid
         For OB stars, that's Teff and log_g
         For WR stars, that's Teff and R_trans
@@ -226,18 +236,30 @@ class STResolver:
                 # This is a WR; use hardcoded parameters
                 params = STResolver.get_WR_params(st_tuple)
             elif STResolver.isMS(st_tuple):
-                # This is an OB; use Martins calibration
-                paramx = self.calibration_table.lookup_characteristic('Teff', st_tuple)
-                paramy = self.calibration_table.lookup_characteristic('log_g', st_tuple)
-                params = (paramx, paramy)
+                # This is an OB
+                if TL_pair is None:
+                    # Use Martins calibration
+                    paramx = self.calibration_table.lookup_characteristic('Teff', st_tuple)
+                    paramy = self.calibration_table.lookup_characteristic('log_g', st_tuple)
+                    params = (paramx, paramy)
+                else:
+                    # We have T and logL from somewhere else (like a catalog)
+                    # Use "L" as an arg to tell PoWRGrid it's a luminosity
+                    params = (*TL_pair, 'L')
             else:
                 # Nonstandard star; nothing we can do
                 return None
-            # If the parameters are NaN, return None
-            if np.any(np.isnan(params)):
+            # If the (non-string) parameters are NaN, return None
+            # The string catch is solely for the "L" thing for TL pairs
+            if np.any(np.isnan([p for p in params if not isinstance(p, str)])):
+                return None
+            # Get the model info and check if it's None (if the log_g interp failed)
+            model_info = selected_grid.get_model_info(*params)
+            if model_info is None:
+                # Means this star was outside the CloughTocher2DInterpolator's convex hull
                 return None
             # Get the model (pandas df), cast as dict (this works, I checked)
-            model_info = dict(selected_grid.get_model_info(*params))
+            model_info = dict(model_info)
             # Attach the PoWR grid object so we can look up the flux
             model_info['grid'] = selected_grid
             return model_info
@@ -678,8 +700,11 @@ class STResolver:
                         return 'WNL-H50'
                     else:
                         return 'WNL'
+            elif 'C' in st_tuple[0]:
+                # As of Sept 22, 2020, we support WC
+                return 'WC'
             else:
-                # This is WC or WO or something
+                # This is WO or something
                 return None
         elif (len(st_tuple[0]) == 1) and (st_tuple[0] in 'OBAFGKM'):
             # This is an OB star
@@ -940,7 +965,7 @@ class CatalogResolver:
         """
         try:
             # See if the method exists
-            getattr(self.star_list[0], name)(nsamples=1)
+            getattr(self.star_list[0], name)
         except Exception as e:
             attrib_e = AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
             # Use the "from" statement to assign blame (cause)
@@ -950,31 +975,65 @@ class CatalogResolver:
             # We want a list of individual star values and uncertainties
             call_to_star = name.replace('get_array_', 'get_')
             reduce_cluster = False
-        else:
+        elif "get_" in name:
             # We want a single value and uncertainty combined across cluster
             call_to_star = name.replace('get_', 'get_array_')
             reduce_cluster = True
+        else:
+            # We might be calling something like link_*, not a populate_* method
+            call_to_star = name
+            reduce_cluster = False
+
         # Make a property getter function to be called upon return
-        def property_getter_method(**kwargs):
-            # kwargs can have "nsamples", "star_mask", or "map_function" arguments
+        def property_getter_method(*args, **kwargs):
+            """
+            kwargs can have "nsamples", "star_mask", or "map_function" arguments
+            There can ALSO be kwarg starting with "listof_", which will
+            trigger this function to unpack the value (a list) into elements
+            and pass each one as a kwarg (same name, minus "listof_") to
+            the STResolver method call
+            The lists passed this way HAVE to be the same length as the star_list
+            Even if you use a mask, just fill the masked-out entries with None or something
+            """
             # Get the star mask (this way we can select which stars to include
             # in calculations)
             star_mask = kwargs.pop('star_mask', None)
             if star_mask is None:
                 # Use all stars by default
                 star_mask = [True]*len(self.star_list) # Lazy "else" list creation
+
             # Check if we are mapping a function onto cluster realizations
             map_function = kwargs.pop('map_function', None)
+
+            # Handle kwarg lists
+            listof_kws = [k for k in kwargs.keys() if 'listof_' in k]
+            # listof_kws refers to kwarg keys that start with "listof_"
+            # NOT a list of kwargs/keywords (though it is also that...)
+            if listof_kws:
+                # Lengths must match
+                assert all(len(kwargs[k]) == len(self.star_list) for k in listof_kws)
+                # This IS a list of kwargs dicts
+                list_of_kwargs = [{k.replace('listof_', ''): kwargs[k][i] for k in listof_kws} for i in range(len(self.star_list))]
+                # Get rid of these kwargs from the primary kwargs dict
+                for k in listof_kws:
+                    kwargs.pop(k)
+            else:
+                # Empty list so the generator works fine
+                list_of_kwargs = []
+            # Make a generator that will return empty dictionaries if there aren't elements
+            iter_lok = iter(list_of_kwargs)
+            individual_kwargs = (next(iter_lok, {}) for x in range(len(self.star_list)))
+
             # Prepare to collect quantity arrays
             all_star_results = []
-            for msk, s in zip(star_mask, self.star_list):
+            for msk, s, extra_k in zip(star_mask, self.star_list, individual_kwargs):
                 if not msk:
                     # Star mask is False; skip
                     continue
                 # Pass off the bulk of the work to STResolver, using
                 # the "get_array_" prefix to signal returning sample arrays
                 # or the "get_" prefix to return values & uncertainties
-                star_result = getattr(s, call_to_star)(**kwargs)
+                star_result = getattr(s, call_to_star)(*args, **kwargs, **extra_k)
                 all_star_results.append(star_result)
             if reduce_cluster:
                 # We are reducing the cluster to value & uncertainty
@@ -1000,6 +1059,7 @@ class CatalogResolver:
         text = f"<CatalogResolver({len(self.star_list)})>"
         return text
 
+    @staticmethod
     def reduce_cluster(star_samples, reduce_func=np.sum):
         """
         Reduce a set of cluster realizations.
@@ -1018,6 +1078,7 @@ class CatalogResolver:
         return median_and_uncertainty(cluster_samples)
 
 
+    @staticmethod
     def map_and_reduce_cluster(star_samples, func_to_map, reduce_func=np.sum):
         """
         Map a function onto each cluster realization before reducing it and

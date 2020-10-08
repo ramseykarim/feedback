@@ -16,9 +16,6 @@ import numpy as np
 import pandas as pd
 from collections.abc import Sequence # abc = Abstract Base Class
 
-from scipy.interpolate import CloughTocher2DInterpolator
-from scipy.spatial import Delaunay # Hello, old friend
-
 from . import sttable
 from .. import utils
 
@@ -88,27 +85,6 @@ def open_tables():
     return tbl1, units_df
 
 
-def delaunay_triangulate(x, y):
-    """
-    Get the Delaunay triangulation of the x and y grid
-    """
-    xy = np.array([x, y]).T
-    return Delaunay(xy)
-
-
-def fit_characteristic(xy_delaunay, z):
-    """
-    Return an interpolation function.
-    This CloughTocher2DInterpolator function is pretty smart, so I don't have
-        to do much else with it.
-    :param xy_delaunay: should be the Delaunay triangulation of the XY grid
-    :param z: z array with same shape as x or y
-    """
-    interp_function = CloughTocher2DInterpolator(xy_delaunay, z, fill_value=np.nan)
-    return interp_function
-
-
-
 class LeithererTable:
     """
     Very similar to STTable, but handles the Leitherer tables.
@@ -120,7 +96,7 @@ class LeithererTable:
         self.table = tbl
         self.column_units = units_df
         # Make the XY Delaunay for quicker interpolation. Work in log T
-        self.xy_delaunay = delaunay_triangulate(np.log10(self.table['T_eff']),
+        self.xy_delaunay = utils.delaunay_triangulate(np.log10(self.table['T_eff']),
             self.table['log_L'])
         self.memoized_interpolations = {}
 
@@ -140,7 +116,7 @@ class LeithererTable:
         else:
             # Make one
             z = self.table[characteristic]
-            interp_function = fit_characteristic(self.xy_delaunay, z)
+            interp_function = utils.fit_characteristic(self.xy_delaunay, z)
             self.memoized_interpolations[characteristic] = interp_function
         # Work in log T
         result = interp_function(np.log10(T), logL)

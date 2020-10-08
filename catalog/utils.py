@@ -9,6 +9,9 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
+from scipy.interpolate import CloughTocher2DInterpolator
+from scipy.spatial import Delaunay # Hello, old friend
+
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
@@ -190,3 +193,28 @@ def distance_from_point_wcssep(point_coord, w, distance_los):
     ij_arrays = tuple(idx_grid.ravel() for idx_grid in np.mgrid[tuple(slice(0, shape_i) for shape_i in w.array_shape)])
     grid[ij_arrays] = w.array_index_to_world(*ij_arrays).separation(point_coord).to('rad').to_value() * distance_los
     return grid
+
+
+"""
+INTERPOLATION
+Originally from LeithererTable, but now used in PoWRGrid too
+"""
+
+def delaunay_triangulate(x, y):
+    """
+    Get the Delaunay triangulation of the x and y grid
+    """
+    xy = np.array([x, y]).T
+    return Delaunay(xy)
+
+
+def fit_characteristic(xy_delaunay, z):
+    """
+    Return an interpolation function.
+    This CloughTocher2DInterpolator function is pretty smart, so I don't have
+        to do much else with it.
+    :param xy_delaunay: should be the Delaunay triangulation of the XY grid
+    :param z: z array with same shape as x or y
+    """
+    interp_function = CloughTocher2DInterpolator(xy_delaunay, z, fill_value=np.nan)
+    return interp_function
