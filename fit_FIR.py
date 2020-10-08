@@ -32,8 +32,8 @@ if "350" in data_dir:
     width_i, width_j = 220, 280
 elif "160" in data_dir:
     i0, j0 = 2314, 1035
-    width_i, width_j = 1286, 1286
     width_i, width_j = 15, 15 # just the test region
+    width_i, width_j = 1286, 1286
 else:
     # 500 grid
     # i0, j0 = 519, 334 # OLD CUTOUT (retired as of March 9 2020)
@@ -42,7 +42,7 @@ else:
     width_i, width_j = 294, 294 # NEW CUTOUT (as of March 9 2020, include extended stuff to the W)
     width_i, width_j = 15, 15 # just the test region
 # decide whether or not this is parallel
-n_processes = 6
+n_processes = 10
 path = "/home/rkarim/Research/Feedback/rcw49_data/herschel/"
 if not os.path.isdir(path):
     path = "/home/ramsey/Documents/Research/Feedback/rcw49_data/herschel/"
