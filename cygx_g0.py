@@ -4,7 +4,7 @@ import os
 import glob
 
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 6}
+font = {'family': 'sans', 'weight': 'normal', 'size': 12}
 matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 
@@ -25,6 +25,7 @@ berlanas_table_filenames = {
 }
 mytable = os.path.join(data_dir, "cyg-ob2_all.pkl")
 mytable_html = os.path.join(data_dir, "cyg-ob2_all.html")
+header_file = os.path.join(data_dir, "kim_fits_header.txt")
 
 # Helper function for "Sample" column in both tables
 def find_cygob2(s):
@@ -153,15 +154,19 @@ def calc_fluxes(df, plot=False):
         # save these for plotting
         fuv_flux_1, uncertainty = zip(*catr.get_array_FUV_flux())
         fuv_flux_1 = catalog.spectral.stresolver.u.Quantity(fuv_flux_1)
+        Q_1, uncertainty = zip(*catr.get_array_ionizing_flux())
+        Q_1 = catalog.spectral.stresolver.u.Quantity(Q_1)
 
     # Get the T and L values from the DataFrame
     T = df.Teff.values
     L = df.LogL.values
     # Organize into a list of tuples
     TLs = list(zip(T, L))
+
     # Use that nifty kwargs functionality in CatalogResolver
     catr.link_powr_grids(powr_tables, listof_TL_pair=TLs)
     catr.populate_FUV_flux()
+    catr.populate_ionizing_flux()
     if not plot:
         return catr
     """
@@ -170,6 +175,8 @@ def calc_fluxes(df, plot=False):
 
     fuv_flux_2, uncertainty = zip(*catr.get_array_FUV_flux())
     fuv_flux_2 = catalog.spectral.stresolver.u.Quantity(fuv_flux_2)
+    Q_2, uncertainty = zip(*catr.get_array_ionizing_flux())
+    Q_2 = catalog.spectral.stresolver.u.Quantity(Q_2)
 
     xf = np.log10(fuv_flux_1.to_value())
     yf = np.log10(fuv_flux_2.to_value())
@@ -182,6 +189,7 @@ def calc_fluxes(df, plot=False):
     xf_f = xf[mask]
     yf_f = yf[mask]
 
+    """
     # Plot L vs T (HR diagram)
     fig1, ax1 = plt.subplots()
     ax1.scatter(T/1000, xf, color='r', marker='o', alpha=0.2, label="(FUV) from spectral types")
@@ -203,8 +211,78 @@ def calc_fluxes(df, plot=False):
     ax2.plot(xvals, xvals)
     ax2.set_xlabel("log L (L/Lsun)")
     ax2.set_ylabel("log FUV L (L/Lsun)")
+    """
 
-    plt.show()
+    def lookup_Q(star):
+        # To operate on STResolver
+        def find_Q(st_tuple, model_info):
+            Q_unit = 1/u.s
+            if model_info is None:
+                Q = np.nan
+            elif star.isWR(st_tuple):
+                Q = np.nan # for now
+            else:
+                Q = 10**(star.calibration_table.lookup_characteristic('Qo', st_tuple))
+            return Q*Q_unit
+        return star.resolve_uncertainty(star.map_to_components(find_Q, (star.spectral_types, star.powr_models)), nsamples=3)[0]
+    Q_martins_array = u.Quantity(catr.map(lookup_Q))
+
+    fig3, axes = plt.subplots(nrows=2, sharex=True)
+    ax3, ax3b = axes
+    xq = np.log10(Q_1.to_value())
+    yq = np.log10(Q_2.to_value())
+    print(yq)
+
+    zq = np.log10(Q_martins_array.to_value())
+    ax3.scatter(T/1000, xq, color='r', marker='o', alpha=0.2, label='from spectral types')
+    ax3.scatter(T/1000, yq, color='b', marker='x', alpha=0.2, label='from T and L')
+    ax3.scatter(T/1000, zq, color='g', marker='+', alpha=0.2, label='M05')
+    ax3.legend()
+    ax3.set_ylabel("Q")
+    ax3.invert_xaxis()
+    ax3.tick_params('x', labelbottom=False)
+
+    ax3b.scatter(T/1000, xq-yq, color='k', marker='o', alpha=0.2, label='ST to TL')
+    ax3b.scatter(T/1000, zq-yq, color='b', marker='x', alpha=0.2, label='M05 to TL')
+    ax3b.scatter(T/1000, zq-xq, color='r', marker='+', alpha=0.2, label='M05 to ST')
+    ax3b.legend()
+    ax3b.set_xlabel("T (kK)")
+    ax3b.set_ylabel("ratio (dex)")
+
+    def get_st_number(star):
+        # This function to operate on a STResolver object
+        # First, map st_to_number onto all the spectral type tuples
+        # Then reduce them, taking means instead of sums, and select only the value, not the error
+        # Take a small number of samples
+        return star.resolve_uncertainty(star.map_to_components(catalog.spectral.parse_sptype.st_to_number, (star.spectral_types,)), dont_add=True, nsamples=3)[0]
+    st_numbers = u.Quantity(catr.map(get_st_number)).to_value()
+
+    def lookup_T(star):
+        # To operate on STResolver
+        def find_T(st_tuple, model_info):
+            if model_info is None:
+                T = np.nan
+            elif star.isWR(st_tuple):
+                T = np.nan # for now
+            else:
+                T = star.calibration_table.lookup_characteristic('Teff', st_tuple)
+            return T
+        return star.resolve_uncertainty(star.map_to_components(find_T, (star.spectral_types, star.powr_models)), nsamples=3)[0]
+    T_martins_array = u.Quantity(catr.map(lookup_T))
+
+    fig4, axes = plt.subplots(nrows=2, sharex=True)
+    ax4, ax4b = axes
+    ax4.scatter(T/1000, T_martins_array/1000, color='k', marker='o', alpha=0.2)
+    ax4.set_xlabel("T [B18] (K)")
+    ax4.set_ylabel("T [M05] (K)")
+    ax4.plot([0, 40], [0, 40], '--', color='k', alpha=0.3)
+    ax4b.scatter(T/1000, st_numbers, color='k', marker='o', alpha=0.2)
+    ax4b.set_xlabel("T [B18] (K)")
+    ax4b.set_ylabel("Spectral type")
+    ax4.invert_xaxis()
+    ax4.invert_yaxis()
+
+    # plt.show()
     """
     These plots confirm:
     1) there is some resemblance to an HR diagram, that's good
@@ -229,34 +307,74 @@ def create_cygx_wcs(df):
     return WCS(hdr), hdr
 
 
-def make_g0_plot(df, catr, wcs_obj):
-    val, uncertainty = calc_g0(df, catr, wcs_obj, 1.4*u.kpc)
+def load_cygx_wcs():
+    """
+    Load from the txt file that Kim sent
+    """
+    hdr = fits.Header.fromfile(header_file, sep='\n', endcard=False, padding=False)
+    additional_kws = dict(COMMENT="Ionizing photon flux map around Cygnus OB2",
+        DATE='Oct 7, 2020', CREATOR="Ramsey Karim", BUNIT="cm-2 s-1")
+    wcs_obj = WCS(hdr)
+    new_hdr = wcs_obj.to_header()
+    new_hdr.update(additional_kws)
+    return wcs_obj, new_hdr
+
+
+
+def make_g0_plot(df, catr, wcs_obj, **kwargs):
+    val, uncertainty = calc_g0(df, catr, wcs_obj, 1.4*u.kpc, **kwargs)
     try:
-        print(type(val))
-        print(val.unit)
         val = val.to_value()
     except:
         print("!!", type(val))
+    try:
+        uncertainty = u.Quantity(uncertainty)
+    except:
+        print("!!!!!", type(uncertainty))
     fig = plt.figure(figsize=(8, 10))
     ax = plt.subplot(111, projection=wcs_obj)
     val_log = np.log10(val)
-    im = ax.imshow(val_log, origin='lower', vmin=1, vmax=5, cmap='nipy_spectral')
-    c = ax.contour(val, levels=[50, 100, 500, 1000, 5000], linewidths=0.5, colors='k')
-    ax.clabel(c, [50, 100, 500, 1000, 5000], inline=True, fontsize=6, fmt='%d')
+    im = ax.imshow(val_log, origin='lower', cmap='nipy_spectral')
+    # try:
+    #     c = ax.contour(val, levels=[50, 100, 500, 1000, 5000], linewidths=0.5, colors='k')
+    #     ax.clabel(c, [50, 100, 500, 1000, 5000], inline=True, fontsize=6, fmt='%d')
+    # except Exception as e:
+    #     print("Problem with countours: ", e)
     fig.colorbar(im, ax=ax)
-    ax.set_title("G0 around Cyg OB2 $-$ ROUGH DRAFT")
-    fig.savefig(os.path.join(data_dir, "cyg-ob2_g0_2020-09-25.png"))
+    ax.set_title("$q_0$ around Cyg OB2 $-$ ROUGH DRAFT")
+    fig.savefig(os.path.join(data_dir, "cyg-ob2_q0_2020-10-07.png"))
+    plt.show()
+    return val, uncertainty
+
+
+def save_g0_fits(array, hdr):
+    """
+    Already built array and header
+    """
+    hdu = fits.PrimaryHDU(data=array, header=hdr)
+    hdu.writeto(os.path.join(data_dir, "cyg-ob2-q0_2020-10-07.fits"), overwrite=True)
+    print("Done")
 
 
 df = pd.read_pickle(mytable)
 
+"""
 # df.drop(columns=['SkyCoord'], inplace=True)
 # df['Teff'] = df['Teff']/1000
 # df.sort_values(by=['Teff'], inplace=True, ascending=False)
 # # df = df.loc[df['Teff'] > 40]
 # df.to_html(mytable_html, na_rep="")
+"""
+
+catr = calc_fluxes(df, plot=False)
+
+Q = catalog.spectral.stresolver.u.Quantity(tuple(zip(*catr.get_array_ionizing_flux()))[0])
+print(catr.get_ionizing_flux(nsamples=3))
 
 
-catr = calc_fluxes(df)
-wcs_obj, hdr = create_cygx_wcs(df)
-make_g0_plot(df, catr, wcs_obj)
+wcs_obj, hdr = load_cygx_wcs()
+
+val, uncert = make_g0_plot(df, catr, wcs_obj, extremely_large=True, fuv_or_ionizing='ionizing', nsamples=3, catalog_mask=np.isfinite(np.log10(Q.to_value())))
+save_g0_fits(val, hdr)
+
+# load_cygx_wcs()

@@ -96,9 +96,12 @@ def check_stretch(stretch):
         return valid_stretches[stretch]
     elif callable(stretch):
         try:
-            stretch(np.ones((2, 2), dtype=np.float64))
-        except:
-            raise RuntimeError(f"Your stretch function doesn't work right.")
+            result = stretch(np.ones((2, 2), dtype=np.float64))
+            assert result.shape == (2, 2)
+        except AssertionError:
+            raise RuntimeError("Your stretch function changes the data shape.")
+        except Exception as e:
+            raise RuntimeError(f"Your stretch function doesn't work right: {e}")
         else:
             return stretch
     else:

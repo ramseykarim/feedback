@@ -16,8 +16,11 @@ __author__ = "Ramsey Karim"
 
 import numpy as np
 import random
+import sys
+import os
 
 from astropy import units as u
+from astropy import constants as cst
 
 from ... import misc_utils
 
@@ -78,6 +81,7 @@ class STResolver:
         'momentum_flux': 'mv_flux',
         'mechanical_luminosity': 'lmech',
         'FUV_flux': 'fuv',
+        'ionizing_flux': 'ionizing',
         'stellar_mass': 'mass',
         'bolometric_luminosity': 'lum',
     }
@@ -87,6 +91,8 @@ class STResolver:
     """
     # Set up FUV memoization dictionary to avoid too much computation
     fuv_memoization = {}
+    # Set up ionizing photon memoization
+    ioniz_memoization = {}
     # Set up WR uncertainty sampling dictionary; keys are the same as above
     wr_samples = {}
 
@@ -435,6 +441,32 @@ class STResolver:
                 STResolver.fuv_memoization[model_identifier] = integrated_flux
                 return integrated_flux
         self.fuv = STResolver.map_to_components(find_FUV_flux, (self.powr_models,), f_list=u.Quantity)
+
+    def populate_ionizing_flux(self):
+        """
+        Get the UV > 13.6 eV photon flux of the star/binary
+        Populate self.ionizing with possibilities
+        Same rules as FUV flux for missing values
+        """
+        def find_ionizing_photon_flux(model_info):
+            # Nearly identical to find_FUV_flux function
+            if model_info is None:
+                return np.nan / u.s
+            # Get a unique model ID for memoization
+            model_identifier = model_info['grid'].grid_name + model_info['MODEL']
+            if model_identifier in STResolver.ioniz_memoization:
+                # Check if we have it memoized
+                return STResolver.ioniz_memoization[model_identifier]
+            else:
+                # Calculate it
+                wlflux = model_info['grid'].get_model_spectrum(model_info)
+                def flux_to_photon_rate(wl, flux):
+                    return flux / wl.to(u.erg, equivalencies=u.spectral())
+                integrated_photon_flux = powr.PoWRGrid.integrate_flux(wlflux, f=flux_to_photon_rate, low=13.6, high=None, result_unit=(1/u.s))
+                # Memoize it
+                STResolver.ioniz_memoization[model_identifier] = integrated_photon_flux
+                return integrated_photon_flux
+        self.ionizing = STResolver.map_to_components(find_ionizing_photon_flux, (self.powr_models,), f_list=u.Quantity)
 
     def populate_stellar_mass(self):
         """
@@ -862,7 +894,6 @@ class STResolver:
                 return median_and_uncertainty(samples_array)
                 # I used to correct for missing binary component,
                 #   but I don't think it helps or matters
-                return final_value, (lo_err, hi_err) # Lower bar is negative
 
     """
     Stuff for printing
@@ -1005,6 +1036,11 @@ class CatalogResolver:
             # Check if we are mapping a function onto cluster realizations
             map_function = kwargs.pop('map_function', None)
 
+            # Extremeley large data?
+            extremely_large = kwargs.pop('extremely_large', False)
+            # Reduce function?
+            reduce_func = kwargs.pop('reduce_func', None)
+
             # Handle kwarg lists
             listof_kws = [k for k in kwargs.keys() if 'listof_' in k]
             # listof_kws refers to kwarg keys that start with "listof_"
@@ -1040,10 +1076,11 @@ class CatalogResolver:
                 # Make 2D Quantity, 0th dimension is stars, 1st is realizations
                 all_star_results = u.Quantity(all_star_results)
                 # Get the desired reduction function
-                reduce_func = np.mean if ('velocity' in name) else np.sum
+                if reduce_func is None:
+                    reduce_func = np.mean if ('velocity' in name) else np.sum
                 # Check map_function argument and decide which function to use
                 if map_function is not None:
-                    return CatalogResolver.map_and_reduce_cluster(all_star_results, map_function, reduce_func=reduce_func)
+                    return CatalogResolver.map_and_reduce_cluster(all_star_results, map_function, reduce_func=reduce_func, extremely_large=extremely_large)
                 else:
                     return CatalogResolver.reduce_cluster(all_star_results, reduce_func=reduce_func)
             else:
@@ -1058,6 +1095,27 @@ class CatalogResolver:
     def __repr__(self):
         text = f"<CatalogResolver({len(self.star_list)})>"
         return text
+
+    def map(self, f, star_mask=None):
+        """
+        Map a function onto every star in the list (except those masked out)
+        Return the list of results. If you want it reduced, you'll have to
+        do that yourself.
+        :param f: some function that accepts just one argument, the STResolver
+            star object. It can return anything; the return values from each
+            star will be placed in a list and returned in order
+        :param star_mask: (optional) a boolean list where "False" means to skip
+            the star at that index. If it's included, it must be ordered the
+            same as the star_list in this class if it's to mean anything.
+        """
+        if star_mask is None:
+            star_mask = [True]*len(self.star_list)
+        all_star_results = []
+        for msk, s in zip(star_mask, self.star_list):
+            if not msk:
+                continue
+            all_star_results.append(f(s))
+        return all_star_results
 
     @staticmethod
     def reduce_cluster(star_samples, reduce_func=np.sum):
@@ -1079,7 +1137,8 @@ class CatalogResolver:
 
 
     @staticmethod
-    def map_and_reduce_cluster(star_samples, func_to_map, reduce_func=np.sum):
+    def map_and_reduce_cluster(star_samples, func_to_map, reduce_func=np.sum,
+        extremely_large=False):
         """
         Map a function onto each cluster realization before reducing it and
         sampling from those cluster realizations. This function expects (though
@@ -1105,33 +1164,67 @@ class CatalogResolver:
             realization axis. Other dimensions, if they exist, are not touched,
             and will be passed through the reduction and median/uncertainty
             processes.
+            If extremely_large is True, then this should return numpy arrays,
+            not Quantities. It should still expect the same argument.
         :param reduce_func: function used to reduce cluster. Default is sum.
             Needs to be a numpy function that can operate on arrays
+            If you already wrote this into the func_to_map, you can set
+            reduce_func to None. This might be if you want to be very memory-
+            conscious.
+        :param extremely_large: if True, this triggers an extra level of memory
+            thriftiness. First of all, each cluster realization result is stored
+            in a numpy memory map (np.memmap) instead of a list.
+            It is worth noting that, if you use this, you should also rewrite
+            your func_to_map to be maximally memory efficient as well, since
+            even just one realization can eat up a lot of space.
         :returns: value or array of shape u.Quantity(star_samples).shape[2:]
             In other words, shape of the "other dimensions" if they exist.
         """
         # Prepare cluster_samples list
-        cluster_samples = []
+        cluster_samples = {}
+        memmap_fn = "/home/ramsey/Downloads/STRESOLVER_MEMMAP_oktodelete.dat"
+        if extremely_large:
+            """
+            Uses numpy.memmap, extremely large data
+            """
+            def add_to_cluster_samples(cluster_samples, sample, j):
+                if not cluster_samples:
+                    cluster_samples['data'] = np.memmap(memmap_fn, dtype=np.float64, mode='w+', shape=(star_samples.shape[1], *sample.shape))
+                # Note the difference in which index is the "sample" index
+                cluster_samples['data'][j, :] = sample[:]
+            def finalize_cluster_samples(cluster_samples):
+                return cluster_samples['data']
+        else:
+            """
+            Uses memory, small data
+            """
+            cluster_samples['data'] = []
+            def add_to_cluster_samples(cluster_samples, sample, *args):
+                cluster_samples['data'].append(sample)
+            def finalize_cluster_samples(cluster_samples):
+                return u.Quantity(cluster_samples['data'])
+
         # Loop through realizations (j dimension)
         for j in range(star_samples.shape[1]):
             # Extract a single cluster realization, len == number of stars
             single_realization = star_samples[:, j] # 1D array
             # Apply function to the realization array
             single_realization = func_to_map(single_realization) # (n+1)D
-            # Reduce the realization and add to the list
-            single_realization = reduce_func(single_realization, axis=0) # nD
-            cluster_samples.append(single_realization)
+            if reduce_func is not False:
+                # Reduce the realization and add to the list
+                single_realization = reduce_func(single_realization, axis=0) # nD
+            add_to_cluster_samples(cluster_samples, single_realization, j)
         # Cast to a 1+D Quantity array (more manageable than 2+D)
-        cluster_samples = u.Quantity(cluster_samples)
+        cluster_samples = finalize_cluster_samples(cluster_samples)
         # Return the median value and error bars
-        return median_and_uncertainty(cluster_samples)
+        return median_and_uncertainty(cluster_samples, extremely_large=extremely_large)
 
 
 """
 Functions used by both STResolver and CatalogResolver
 """
 
-def median_and_uncertainty(realizations_array):
+def median_and_uncertainty(realizations_array, extremely_large=False):
     """
     Find the median value and error bars.
     Error bars use first and last quantiles.
@@ -1139,13 +1232,50 @@ def median_and_uncertainty(realizations_array):
     :param realizations_array: Quantity array, collection of cluster values.
         The shape doesn't matter as long as the 0th axis is the realization
         axis.
+    :param extremely_large: linked to the same keyword in map_and_reduce_cluster
+        Expects realizations_array to be a numpy memmap, not Quantity
+
+        Right now, does not return uncertainty at all (returns None)
+
     :returns: value, (lower_error_bar, upper_error_bar)
         Each of these has the shape realizations_array.shape[1:]
     """
-    value = np.median(realizations_array, axis=0)
-    # Get upper and lower bounds, convert to uncertainties
-    # flquantiles is built for 0th sample axis
-    lower, upper = misc_utils.flquantiles(realizations_array, N_QUANTILE)
-    lo_err, hi_err = lower - value, upper - value # lower bound < 0
-    # Return median, (lower_bound, upper_bound) of samples
-    return value, (lo_err, hi_err)
+    if not extremely_large:
+        value = np.median(realizations_array, axis=0)
+        # Get upper and lower bounds, convert to uncertainties
+        # flquantiles is built for 0th sample axis
+        lower, upper = misc_utils.flquantiles(realizations_array, N_QUANTILE)
+        lo_err, hi_err = lower - value, upper - value # lower bound < 0
+        # Return median, (lower_bound, upper_bound) of samples
+        return value, (lo_err, hi_err)
+    else:
+        """
+        Extremely large data; numpy memmap realizations_array, so divide this
+        up in blocks
+        """
+        original_shape = realizations_array.shape
+        new_shape = (original_shape[0], realizations_array.size//original_shape[0])
+        realizations_array.shape = new_shape
+        # This calculation adopted from planck.py in helpss scripts
+        MiB = 1024*1024
+        step_size = 128*MiB // new_shape[0]
+        n_steps = new_shape[1] // step_size
+        remainder = new_shape[1] % step_size
+        print_threshold = 3
+        if n_steps > print_threshold:
+            print(f"Using step size {step_size} of {new_shape[1]} total columns, for {n_steps} steps and {remainder} left over.")
+        value = np.zeros(new_shape[1])
+        for i in range(n_steps):
+            start, end = i*step_size, (i+1)*step_size
+            value[start:end] = np.median(realizations_array[:, start:end], axis=0)
+            if n_steps > print_threshold:
+                sys.stdout.write(f"Calculating [{start:10d} : {end:10d}] of {new_shape[1]:10d}\r")
+                sys.stdout.flush()
+        # Do remainder
+        start, end = n_steps*step_size, new_shape[1]
+        value[start:end] = np.median(realizations_array[:, start:end], axis=0)
+        if n_steps > print_threshold:
+            print("\nCalculated remainder, and done!")
+        del realizations_array
+        value.shape = original_shape[1:]
+        return value, None

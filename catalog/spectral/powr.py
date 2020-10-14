@@ -58,10 +58,29 @@ def trim_logRt(Rt):
     return round(Rt, ndigits=1)
 
 
-def FUV_nonionizing_mask(wl_A):
-    # wl_A should be a scipy.units quantity
-    energy_eV = wl_A.to(u.eV, equivalencies=u.spectral()).to_value()
-    return (energy_eV > 6) & (energy_eV < 13.6)
+@u.quantity_input(wl_A=u.Angstrom, equivalencies=u.spectral())
+def bandpass_mask(wl_A, low=6.0, high=13.6):
+    """
+    Generalized replacement for FUV_nonionizing_mask
+    If run with only the wl_A argument, works exactly like FUV_nonionizing_mask
+    Makes a mask of the wavelength array that is True within low and high
+    :param wl_A: Quantity, wavelength or other similar spectral axis
+    :param low: Quantity or float (assumed eV), low limit on wavelength array
+        If None, then no lower limit
+    :param high: Quantity or float, same rules as low. None means no upper limit
+    """
+    energy_eV = wl_A.to(u.eV).to_value()
+    # Initialize all-True mask
+    mask = np.ones_like(energy_eV, dtype=bool)
+    if low is not None:
+        if hasattr(low, 'unit'):
+            low = low.to(u.eV).to_value()
+        mask &= energy_eV > low
+    if high is not None:
+        if hasattr(high, 'unit'):
+            high = high.to(u.eV).to_value()
+        mask &= energy_eV < high
+    return mask
 
 
 class PoWRGrid:
@@ -263,7 +282,7 @@ class PoWRGrid:
             if ylim:
                 plt.ylim(ylim)
         if fuv:
-            mask = FUV_nonionizing_mask(wl)
+            mask = bandpass_mask(wl)
             wl, flux = wl[mask], flux[mask]
         if xunit:
             wl = wl.to(xunit, equivalencies=u.spectral())
@@ -280,16 +299,33 @@ class PoWRGrid:
             plt.show()
 
     @staticmethod
-    def integrate_flux(*args):
+    def integrate_flux(*args, result_unit=u.solLum, **kwargs):
+        """
+        Integrate flux using a mask defined in kwargs ("low", "high")
+        Return the result_unit, and warn if it's not compatible (but continue)
+        Can also apply a function (kwarg "f") to the flux before integration
+            Function must take 2 arguments: wl (Angstrom) and flux (those units)
+        """
         if len(args) == 2:
             wl, flux = args
         else:
             wl, flux = args[0]
-        # integrates flux from 6 to 13.6 eV
-        # wl is in Angstroms
-        mask = FUV_nonionizing_mask(wl)
-        lum = np.trapz(flux[mask], x=wl[mask]).to('solLum')
-        return lum
+        if 'f' in kwargs:
+            integrand = kwargs.pop('f')(wl, flux)
+            try:
+                # See if the new units are compatible with the assigned result_unit
+                (integrand.unit * wl.unit).to(result_unit)
+            except u.UnitConversionError as e:
+                print(f"Assigned result_unit ({result_unit.unit}) incompatible with the actual units ({integrand.unit}); {e}")
+                # Just decompose the units and return that
+                # The "1" there makes it a Quantity, so your CompositeUnit doesn't have scale after decomposition
+                result_unit = (1*integrand.unit * wl.unit).decompose().unit
+        else:
+            integrand = flux
+        mask = bandpass_mask(wl, **kwargs)
+        # Generalized variable name
+        result = np.trapz(integrand[mask], x=wl[mask]).to(result_unit)
+        return result
 
     @staticmethod
     def calculate_Rt(Rstar, Mdot, vinf, D):

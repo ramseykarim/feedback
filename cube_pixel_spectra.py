@@ -43,7 +43,7 @@ Created: August 5, 2020
     (while listening to Cristian's SOFIA talk on optically thick CII)
 Updated: September 9, 2020
     (after listening to that CO-dark gas SOFIA talk)
-    I want to try overlaying other spectral from further out, like the image
+    I want to try overlaying other spectra from further out, like the image
     I made in DS9, in 9-09-20-work/
     I also want to try a sort of "spectrum cross cut". Like, same idea as a PV
     diagram, but with more emphasis on the spectra, and averaged over a small

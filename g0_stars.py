@@ -7,6 +7,7 @@ __author__ = "Ramsey Karim"
 
 import datetime
 import sys
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -16,6 +17,7 @@ from astropy.io import fits
 from astropy import units as u
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
+from astropy.utils.console import ProgressBar
 
 from . import misc_utils
 from . import catalog
@@ -131,7 +133,7 @@ def filter_by_only_WR(catalog_df):
     return catalog_df
 
 
-def calc_g0(catalog_df, catr, wcs_obj, distance_los, catalog_mask=None):
+def calc_g0(catalog_df, catr, wcs_obj, distance_los, fuv_or_ionizing='fuv', catalog_mask=None, extremely_large=False, **kwargs):
     """
     Create an array of G0 in Habing units (average 1-D ISRF) given the catalog
         with FUV fluxes and a WCS object for the array
@@ -143,43 +145,109 @@ def calc_g0(catalog_df, catr, wcs_obj, distance_los, catalog_mask=None):
         be in parsecs
     :param catalog_mask: pandas Series or something that can get passed right
         into catalog_df.loc[catalog_mask]
+    :param extremely_large: calculation of this map is expected to be very
+        memory intensive. Take measures to mitigate this
     :returns: val, lo, hi as arrays
     """
     # Habing unit
     radfield1d = 1.6e-3 * u.erg / (u.cm*u.cm * u.s)
     # Mask the catalog_df and prepare a star_mask for the CatalogResolver
     if catalog_mask is not None:
-        star_mask = list(catalog_mask.values)
+        if hasattr(catalog_mask, 'values'):
+            star_mask = list(catalog_mask.values)
+        else:
+            star_mask = list(catalog_mask)
         catalog_df = catalog_df.loc[catalog_mask]
     else:
         star_mask = None
+
     # Make distance array function
     def inv_dist_f(coord):
         return 1./(4*np.pi * catalog.utils.distance_from_point_pixelgrid(coord, wcs_obj, distance_los)**2.)
-    # Get inverse distance array AND INCLUDE 4PI (I think)
-    # If I rewrote distance_from_point_, I could maybe do this with SkyCoord arrays.
-    # As it's written now, this needs to be done as DataFrame.apply to each SkyCoord
-    # inv_dist will be a 3D array
-    inv_dist = u.Quantity(list(catalog_df['SkyCoord'].apply(inv_dist_f).values))
-    """
-    This could be a good place to look at the effects of distance uncertainties too
-    """
-    # Make fuv function to send to CatalogResolver.map_and_reduce_cluster
-    def illumination_distance(fuv_flux_array):
+        # Get inverse distance array AND INCLUDE 4PI (I think)
+        # If I rewrote distance_from_point_, I could maybe do this with SkyCoord arrays.
+        # As it's written now, this needs to be done as DataFrame.apply to each SkyCoord
+        # inv_dist will be a 3D array
+    if not extremely_large:
         """
-        :param fuv_flux_array: Quantity array in power units,
-            should be the same shape as the inv_dist.shape[0]
+        Normal sized map
         """
-        return inv_dist * fuv_flux_array[:, np.newaxis, np.newaxis]
+        relevant_units = None
+        extra_kwargs = {}
+        inv_dist = u.Quantity(list(catalog_df['SkyCoord'].apply(inv_dist_f).values))
+        """
+        This could be a good place to look at the effects of distance uncertainties too
+        """
+        # Make fuv function to send to CatalogResolver.map_and_reduce_cluster
+        def illumination_distance(fuv_flux_array):
+            """
+            :param fuv_flux_array: Quantity array in power units,
+                should be the same shape as the inv_dist.shape[0]
+            """
+            return inv_dist * fuv_flux_array[:, np.newaxis, np.newaxis]
+    else:
+        """
+        Extremely large map
+        """
+        memmap_fn = "/home/ramsey/Downloads/INVDIST_MEMMAP_oktodelete.dat"
+        relevant_units = {'inv_dist': None, 'flux': None}
+        coords = list(catalog_df['SkyCoord'])
+        if os.path.exists(memmap_fn):
+            print("Found existing memory mapped inverse distance grid, using that.")
+            inv_dist = np.memmap(memmap_fn, dtype=np.float64, mode='r', shape=(len(catalog_df), *wcs_obj.array_shape))
+            dummy_wcs = WCS(wcs_obj.to_header())
+            dummy_wcs.array_shape = 2, 2
+            relevant_units['inv_dist'] = (1./catalog.utils.distance_from_point_pixelgrid(coords[0], dummy_wcs, distance_los)**2.).unit
+        else:
+            inv_dist = np.memmap("/home/ramsey/Downloads/INVDIST_MEMMAP_oktodelete.dat", dtype=np.float64, mode='w+', shape=(len(catalog_df), *wcs_obj.array_shape))
+            print(f"Solving inverse distance for {len(coords)} stars over a {wcs_obj.array_shape} grid:")
+            with ProgressBar(len(coords)-1) as bar:
+                for i, c in enumerate(coords[:-1]):
+                    inv_dist[i, :] = inv_dist_f(c).to_value()
+                    bar.update()
+            # Do last one manually and grab units
+            x = inv_dist_f(coords[-1])
+            inv_dist[i, :] = x.to_value()
+            relevant_units['inv_dist'] = x.unit
+            del x
+        def illumination_distance(fuv_flux_array):
+            """
+            Same as above, but memory conscious
+            """
+            result = np.zeros(wcs_obj.array_shape, dtype=np.float64)
+            step_size = 3
+            if relevant_units['flux'] is None:
+                relevant_units['flux'] = fuv_flux_array.unit
+            print(f"Summing gridded quantity \"{fuv_or_ionizing}\" over all stars:")
+            for i in ProgressBar(range(0, len(catalog_df), step_size)):
+                result += np.sum(inv_dist[i:i+step_size, :, :] * fuv_flux_array[i:i+step_size, np.newaxis, np.newaxis].to_value(), axis=0)
+            return result
+        extra_kwargs = {'reduce_func': False}
+
     # Get the median radiation field value and uncertainty
-    val, uncertainty = catr.get_FUV_flux(map_function=illumination_distance, star_mask=star_mask)
-    lo, hi = uncertainty
-    # Fix the units: divide by 1D radiation field and decompose units
-    quick_fix_units = lambda x: (x / radfield1d).decompose()
+    if fuv_or_ionizing == 'fuv':
+        val, uncertainty = catr.get_FUV_flux(map_function=illumination_distance, star_mask=star_mask, extremely_large=extremely_large, **extra_kwargs, **kwargs)
+        quick_fix_units = lambda x: (x / radfield1d).decompose()
+    elif fuv_or_ionizing == 'ionizing':
+        val, uncertainty = catr.get_ionizing_flux(map_function=illumination_distance, star_mask=star_mask, extremely_large=extremely_large, **extra_kwargs, **kwargs)
+        quick_fix_units = lambda x: x.to(1/(u.cm**2 * u.s))
+    if extremely_large:
+        # Fix units
+        val = u.Quantity(val, relevant_units['inv_dist']*relevant_units['flux'], copy=False)
     val = quick_fix_units(val)
-    lo, hi = quick_fix_units(lo), quick_fix_units(hi)
-    # Returns val, (lo_bar, hi_bar)
-    return val, (lo, hi)
+
+    if not extremely_large:
+        lo, hi = uncertainty
+        # Fix the units: divide by 1D radiation field and decompose units
+        lo, hi = quick_fix_units(lo), quick_fix_units(hi)
+        # Returns val, (lo_bar, hi_bar)
+        return val, (lo, hi)
+    else:
+        stresolver_memmap = "/home/ramsey/Downloads/STRESOLVER_MEMMAP_oktodelete.dat"
+        if os.path.exists(stresolver_memmap):
+            os.remove(stresolver_memmap)
+        # Uncertainty is None
+        return val, None
 
 
 def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False,

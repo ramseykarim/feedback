@@ -26,7 +26,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_STResolver_L()
+    return test_STResolver_Q()
 
 
 def plot_sptype_calibration_stuff():
@@ -432,9 +432,10 @@ def test_STResolver():
     # mdot, mdot_e = catr.get_mass_loss_rate(nsamples=10)
     # print(mdot)
     # print(mdot_e)
-    # fluxes = catr.get_array_FUV_flux()
-    # for f in fluxes:
-    #     print(f)
+    fluxes = catr.get_array_FUV_flux()
+    fluxes = catr.get_array_ionizing_flux()
+    for f in fluxes:
+        print(f"{f[0]:.2E}, ({f[1][0]:.2E}, {f[1][1]:.2E})")
 
     # count = 0
     # for t in tests:
@@ -461,7 +462,7 @@ def test_STResolver_L():
     spectral.stresolver.random.seed(1312)
     np.random.seed(1312)
     powr_grids = {x: spectral.powr.PoWRGrid(x) for x in spectral.powr.AVAILABLE_POWR_GRIDS}
-    cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
+    cal_tables = spectral.sttable.STTable(*spectral.martins.load_tables_df())
     ltables = spectral.leitherer.LeithererTable()
 
     tests = ['O6', 'O6', 'O6']
@@ -480,7 +481,38 @@ def test_STResolver_L():
         print(x)
 
 
+def test_STResolver_Q():
+    spectral.stresolver.random.seed(1312)
+    np.random.seed(1312)
+    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in spectral.powr.AVAILABLE_POWR_GRIDS}
+    cal_tables = spectral.sttable.STTable(*spectral.martins.load_tables_df())
+    ltables = spectral.leitherer.LeithererTable()
 
+    st_numbers = np.arange(3., 13., 0.5)
+    st_tuples = [spectral.parse_sptype.sanitize_tuple(spectral.parse_sptype.number_to_st(x)) for x in st_numbers]
+    tests = ["".join(x) for x in st_tuples]
+
+    spectral.stresolver.UNCERTAINTY = False # toggle the half-type/sampling
+    catr = spectral.stresolver.CatalogResolver(tests,
+        calibration_table=cal_tables, leitherer_table=ltables,
+        powr_dict=powr_grids)
+    Q = catr.get_array_ionizing_flux()
+    Q_array = np.log10(np.array([f[0].to(1/u.s).to_value() for f in Q]))
+
+    Q_martins_array = np.array([cal_tables.lookup_characteristic('Qo', st_tuple) for st_tuple in st_tuples])
+
+    plt.subplot(121)
+    plt.plot(st_numbers, 10**(Q_martins_array - Q_array))
+    plt.xlabel("Spectral Type")
+    plt.ylabel("M05/PoWR")
+
+    plt.subplot(122)
+    plt.plot(st_numbers, Q_martins_array, label='M05')
+    plt.plot(st_numbers, Q_array, label='PoWR')
+    plt.xlabel("Spectral Type")
+    plt.ylabel("$Q_0$")
+    plt.legend()
+    plt.show()
 
 def test_catalog():
     df = parse.load_final_catalog_df()

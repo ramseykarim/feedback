@@ -25,6 +25,8 @@ from . import cube_utils
 """
 Testing SpectralCube and pvextractor and making PV diagrams
 Created: March 24th, 2020 (in the midst of the quarantine)
+It looks like I made heavy edits around July 22, Aug 1, and Aug 27, 2020.
+I am making more edits on October 8, 2020 (still quarantine obvi)
 """
 __author__ = "Ramsey Karim"
 
@@ -40,14 +42,6 @@ filenames = ["apex/M16_12CO3-2.fits", "apex/M16_13CO3-2.fits",
     "sofia/M16_CII_U.fits",
     ]
 fn = filenames[3]
-
-# I should move this to the name==main block
-# with fits.open(fn) as hdul:
-#     h = hdul[0].header
-#     w = WCS(h)
-#     wflat = WCS(h, naxis=2)
-#     # MEMORY PROBLEM WITH APEX M16 HERE
-#     data = hdul[0].data * (u.K / (u.m / u.s))
 
 """
 ### July 22, 2020: I just learned that the units should be K, not K/(km/s)
@@ -857,10 +851,32 @@ def run_vectors_from_ds9(filename):
     del cube
 
 
+"""
+Adding some stuff, Oct 8, 2020, more M16 PV diagrams
+This time my big idea is to emphasize use of contours, to help the eye see
+the intensity of the lines, and to reproject PV diagrams onto other grids.
+"""
+
+# These are kinda useful
+# I want to keep this import statement down here so I avoid "circular dependencies"
+# https://stackabuse.com/python-circular-imports/
+from . import cube_pixel_spectra as cps1
+from . import cube_pixel_spectra_2 as cps2
+
+
+def try_reproject_pv(filename):
+    """
+    Modeling this function on the plot_pv function from compressed_CO_pv.py
+    """
+    reg_filename = catalog.utils.search_for_file("catalog/eagpvcuts3.reg")
+    path_list = path_from_ds9(reg_filename, None, width=m16_allpillars_series_kwargs['pvpath_width'])
+    subcube = cps2.cutout_subcube(data_filename=filename, reg_filename=reg_filename)
+    ########### LEFT OFF HERE
 
 
 if __name__ == "__main__":
-    run_series_from_ds9(filenames[3])
+
+    pass
     # for i in range(len(filenames)):
     # for i in [3,]:
     #     cube = cube_utils.CubeData(filenames[i])

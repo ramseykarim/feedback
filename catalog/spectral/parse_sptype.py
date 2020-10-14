@@ -300,7 +300,9 @@ def sanitize_tuple(spectral_type_tuple):
     """
     if re.search(nonstandard_types_re, spectral_type_tuple[0]):
         return False
-    if not re.search(roman_num_re, spectral_type_tuple[2]):
+    if len(spectral_type_tuple) == 2:
+        return spectral_type_tuple + ('V',)
+    elif not re.search(roman_num_re, spectral_type_tuple[2]):
         spectral_type_tuple = list(spectral_type_tuple)
         spectral_type_tuple[2] = 'V'
         return tuple(spectral_type_tuple)
