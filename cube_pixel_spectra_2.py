@@ -207,42 +207,49 @@ def fit_live_interactive(cube):
             g_spcube_array = g_spcube(spectral_axis)
             g_hybrid_array = g_hybrid(spectral_axis)
 
-            g_manual.amplitude.min = A*0.99
-            g_manual.amplitude.max = A*1.03
+            # g_manual.amplitude.min = A*0.99
+            # g_manual.amplitude.max = A*1.03
             if np.abs(mean_spcube - mean_manual) < min(std_manual, 1.5):
                 mean = mean_spcube
             else:
                 mean = mean_manual
-            g_manual.mean.min = mean*0.95
             g_manual.mean = mean
-            g_manual.mean.max = mean*1.05
+            # g_manual.mean.min = mean*0.95
+            # g_manual.mean.max = mean*1.05
 
             # Standard deviation
             std = std_manual
             if std < 0.5 or std > 3:
                 std = 1.5
             g_manual.stddev = std
-            g_manual.stddev.min = std - 0.8
-            g_manual.stddev.max = std + 0.8
+            # g_manual.stddev.min = std - 0.8
+            # g_manual.stddev.max = std + 0.8
             masked_spectrum_val = masked_cube.filled_data[:, i, j].to_value()
-            g_fit_werr = fitter(g_manual, spectral_axis, masked_spectrum_val, verblevel=1, weights=(masked_spectrum_val/(5*1.3))) # 1.3 from an estimate of < 10 km/s
+            """
+            astropy modeling does NOT like NaNs. That's weird! They should!
+            """
+            fit_x, fit_y = spectral_axis[np.isfinite(masked_spectrum_val)], masked_spectrum_val[np.isfinite(masked_spectrum_val)]
+            weights = np.abs(fit_y)
+            weights[weights < 1.3] = 1.3
+            weights = (weights/np.max(weights))/1.3
+            g_fit_werr = fitter(g_manual, fit_x, fit_y, verblevel=1, weights=weights) # 1.3 from an estimate of < 10 km/s
             g_fit_werr_array = g_fit_werr(spectral_axis)
 
             spectrum = cube[:, i, j]
-            ax_spectr.plot(spectral_axis, spectrum, color='k', linewidth=0.7, label='Data', marker='o', alpha=0.5)
-            ax_spectr.plot(spectral_axis, masked_spectrum_val, color='Indigo', marker='x', linewidth=2, linestyle='dotted', alpha=0.9)
+            ax_spectr.plot(spectral_axis, spectrum, color='k', linewidth=0.7, label='Data', marker='o', alpha=0.2, markersize=3)
+            ax_spectr.plot(spectral_axis, masked_spectrum_val, color='Indigo', marker='x', linewidth=2, linestyle='dotted', alpha=0.9, label='Data fitted to')
 
             # ax_spectr.plot(spectral_axis, g_manual_array, color='r', linewidth=0.7, label=g_manual.name)
             # ax_spectr.plot(spectral_axis, g_spcube_array, color='b', linewidth=0.7, label=g_spcube.name)
             # ax_spectr.plot(spectral_axis, g_hybrid_array, color='purple', linewidth=0.7, label=g_hybrid.name)
 
-            ax_spectr.plot(spectral_axis, g_fit_werr_array, color='orange', linestyle='dotted', linewidth=0.7, label="Fitted w/ error", alpha=0.9)
-            ax_spectr.plot(spectral_axis, spectrum.to_value() - g_fit_werr_array, color='k', linewidth=0.7, label='Residuals w/ error', alpha=0.6)
+            ax_spectr.plot(spectral_axis, g_fit_werr_array, color='orange', linestyle='dotted', linewidth=1, label="Fitted", alpha=0.9)
+            ax_spectr.plot(spectral_axis, spectrum.to_value() - g_fit_werr_array, color='k', linewidth=0.7, label='Residuals', alpha=0.6)
 
             # Metric; sum over this for a number that, if large, means the fit isn't good
             metric = -(spectrum.to_value() - g_fit_werr_array)*np.sign(spectrum.to_value())
             metric[metric < 0] = 0
-            ax_spectr.plot(spectral_axis, metric, color='Indigo', marker='+', alpha=0.3, label='metric')
+            # ax_spectr.plot(spectral_axis, metric, color='Indigo', marker='+', alpha=0.3, label='metric')
 
             ax_spectr.set_xlabel("v (km/s)")
             ax_spectr.set_ylabel("T (K)")
@@ -536,12 +543,12 @@ def calculate_noise(cube):
 
 
 if __name__ == "__main__":
-    subcube = cutout_subcube(length_scale_mult=8)
+    subcube = cutout_subcube(length_scale_mult=4)
     # try_mask_above_half_power(subcube, xpower=2)
-    # fit_live_interactive(subcube)
+    fit_live_interactive(subcube)
     # make_wing_moments(subcube)
     # fit_image_to_file(subcube)
 
     # calculate_noise(subcube)
 
-    investigate_fit()
+    # investigate_fit()
