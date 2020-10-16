@@ -26,14 +26,16 @@ from . import pvdiagrams
 from . import crosscut
 # This is where I "started" this task, some functions might be useful
 from . import cube_pixel_spectra as cps1
-
 """
+
 A sequel to cube_pixel_spectra.py. Looking closer at the M16 line data,
 fitting things to the spectra, etc.
 The goal remains the same, I'm just still working on it.
 
 Created: September 25, 2020
     (while listening to the Front Bottoms on a pleasant, rainy Friday evening)
+Major reorganization October 14, 2020
+    shortly after realizing I missed the AAS abstract deadline yesterday!
 """
 __author__ = "Ramsey Karim"
 
@@ -80,7 +82,7 @@ def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
             None, None, pvpath_width=10*u.arcsec, points_not_paths=True
         )
 
-    img, w = crosscut.DataLayer("CII", data_filename, cube=True, alpha=0.7, vlims=(5, 40)).load()
+    img, w = crosscut.DataLayer("", data_filename, cube=True, alpha=0.7, vlims=(5, 40)).load()
     img_cutout = Cutout2D(img, global_center_coord, [length_scale*length_scale_mult]*2, wcs=w, mode='partial', fill_value=np.nan)
 
     cube = cube_utils.CubeData(data_filename)
@@ -99,6 +101,11 @@ def mask_above_xpower(cube, xpower, additional_cutoff=0):
     For example, if xpower=2 and additional_cutoff=6, then each spectrum will
     be masked out below half power in that spectrum. Also, spectra whose half
     power is less than 6 (flux units) will be completely masked out.
+
+    SUPER IMPORTANT: to actually use the masked thing, you need to use
+    filled_data.
+    Methods of SpectralCube seems to work ok, like moment(), they use the mask
+    without explicitly being told to
     """
     half_power = np.max(cube, axis=0)/xpower
     mask = (cube > half_power) & (half_power > additional_cutoff*cube.unit)
@@ -106,76 +113,147 @@ def mask_above_xpower(cube, xpower, additional_cutoff=0):
     return masked_cube
 
 
-def try_mask_above_half_power(cube, xpower=2):
+def mask_with_best_setting(cube):
     """
-    Per Lee's recommendation in our Sept 25, 2020 Friday meeting
-    For each spatial pixel, I will mask out spectral pixels that are below
-    the half-power (or 1/3, or something) level of that spectrum.
-    Then, I can make a moment 0 or 1 or whatever image with that.
-
-    SpectralCube offers pretty good masking capability, so I'll make the most
-    of that.
-
-    xpower is something to DIVIDE the max by for the  mask. If you want below
-    half power masked out, then xpower = 2. If you want below 1/3, then it's 3
+    Use mask_above_xpower with the current best recipe
     """
-    kms = u.km/u.s
-    kkms = u.K*u.km/u.s
-    moment = 2
-    moment_units = [kkms, kms, kms*kms][moment]
-    masked_cube = mask_above_xpower(cube, xpower, additional_cutoff=6.5)
-    fig = plt.figure(figsize=(10, 8))
-    # 'x' 'y' 50 came from astropy documentation; 50 i think doesn't specifically matter
-    ax0 = plt.subplot2grid((2, 2), (0, 0), fig=fig, projection=cube.wcs, slices=('x','y', 50))
-    ax1 = plt.subplot2grid((2, 2), (0, 1), fig=fig, projection=cube.wcs, slices=('x','y', 50))
-    ax2 = plt.subplot2grid((2, 2), (1, 0), fig=fig)#, projection=cube.wcs, slices=(50, 50, 'x'))
-    ax3 = plt.subplot2grid((2, 2), (1, 1), fig=fig)#, projection=cube.wcs, slices=(50, 50, 'x'))
-    # for ax in (ax2, ax3):
-    #     ra, dec, vel = ax.coords
-    #     vel.set_format_unit(kms)
-    img = cube.moment(order=moment).to(moment_units).to_value()
-    im = ax0.imshow((img), origin='lower')
-    fig.colorbar(im, ax=ax0)
-    img = masked_cube.moment(order=moment).to(moment_units).to_value()
-    im = ax1.imshow((img), origin='lower', vmax=4)
-    fig.colorbar(im, ax=ax1)
-    ax2.plot(cube.spectral_axis.to_value(), cube.mean(axis=(1, 2)).to(u.K).to_value(), linewidth=0.7)
-    ax3.plot(masked_cube.spectral_axis.to_value(), masked_cube.mean(axis=(1, 2)).to(u.K).to_value(), linewidth=0.7)
-    ax3.set_xlim(ax2.get_xlim())
-    ax2.set_title("Mean spectrum, unmasked")
-    ax3.set_title(f"Mean spectrum, masked above 1/{xpower} power")
-    plt.show()
+    if 'apex' in cube_info['dir']:
+        return mask_above_xpower(cube, 2, additional_cutoff=0)
+    elif 'sofia' in cube_info['dir']:
+        return mask_above_xpower(cube, 3, additional_cutoff=2.5)
 
+
+def prepare_initial_conditions(unmasked_cube, masked_cube):
+    """
+    Return a dictionary with useful initial condition arrays, like moment1 and
+    stuff.
+    :param unmasked_cube: the UNMASKED cube
+    :param masked_cube: the ALREADY masked cube, masked however you want, the
+        way you'll use it for fitting
+    :returns: dict with keys that describe everything in it
+        full_power_loc is in units of km/s, though just float array
+    """
+    # "Manual" mean guess
+    full_power_loc = unmasked_cube.spectral_axis[unmasked_cube.argmax(axis=0)].to_value()
+    # SpectralCube mean guess
+    moment1 = masked_cube.moment(order=1).to_value()
+    # Amplitude
+    full_power = unmasked_cube.max(axis=0).to_value()
+    # Standard deviation
+    linewidth_manual = linewidth_fwhm(unmasked_cube)
+    linewidth_spectralcube = masked_cube.linewidth_fwhm().to_value()
+    # Moment 0
+    moment0 = masked_cube.moment(order=0).to_value()
+    # Spectral Axis
+    spectral_axis = unmasked_cube.spectral_axis.to_value()
+    # Gather in dictionary
+    return_dict = {
+        'full_power_loc': full_power_loc,
+        'moment0': moment0, 'moment1': moment1,
+        'linewidth_manual': linewidth_manual, 'linewidth_spectralcube': linewidth_spectralcube,
+        'full_power': full_power, 'spectral_axis': spectral_axis,
+    }
+    return return_dict
+
+
+def initialize_gaussian(init_conds, g, ij):
+    """
+    :param init_conds: dictionary returned by prepare_initial_conditions
+    :param g: a Gaussian1D object to reuse. Can be None, in which case a new
+        one is created
+    :param ij: tuple array indices
+    """
+    i, j = ij
+    # Amplitude
+    A = init_conds['full_power'][i, j]
+    A_bounds = (A*0.95, A*1.05)
+    # Standard deviation
+    std_manual = init_conds['linewidth_manual'][i, j] / 2.355
+    std_spcube = init_conds['linewidth_spectralcube'][i, j] / 2.355
+    if std_manual < 0.3 or std_manual > 2.5:
+        std = 1.5
+    else:
+        std = std_manual
+    std_bounds = (0.5, 3)
+    # Mean
+    mean_manual = init_conds['full_power_loc'][i, j]
+    mean_spcube = init_conds['moment1'][i, j]
+    if np.abs(mean_spcube - mean_manual) < min(std, 1.5):
+        # Well behaved case
+        mean = mean_spcube
+    else:
+        # Intervention case
+        mean = mean_manual
+    mean_bounds = (mean*0.95, mean*1.05)
+    if g is None:
+        g = models.Gaussian1D(A, mean, std, bounds={
+            'amplitude': A_bounds,
+            'mean': mean_bounds,
+            'stddev': std_bounds,
+        })
+    else:
+        g.amplitude = A
+        g.amplitude.bounds = A_bounds
+        g.mean = mean
+        g.mean.bounds = mean_bounds
+        g.stddev = std
+        g.stddev.bounds = std_bounds
+    return g
+
+
+def fit_gaussian(init_conds, masked_cube, g, ij, fitter, verblevel=1):
+    """
+    :param init_conds: return dict of prepare_initial_conditions
+    :param masked_cube: already masked SpectralCube
+    :param g: Gaussian1D already initialized
+    :param ij: tuple array indices
+    :param fitter: some kind of astropy.modeling.fitting fitter
+    :returns: fitted Gaussian1D and the resulting model array
+    """
+    i, j = ij
+    masked_spectrum_val = masked_cube.filled_data[:, i, j].to_value()
+    masked_spectrum_mask = masked_cube.get_mask_array()[:, i, j]
+    new_spectrum_mask = identify_longest_run(masked_spectrum_mask)
+    masked_spectrum_val[~new_spectrum_mask] = np.nan
+
+    # astropy.modeling does not like NaNs!!!
+    finite_mask = np.isfinite(masked_spectrum_val)
+    if np.sum(finite_mask.astype(int)) > 3:
+        fit_x, fit_y = init_conds['spectral_axis'][finite_mask], masked_spectrum_val[finite_mask]
+        weights = np.abs(fit_y)
+        weights[weights < 1.3] = 1.3
+        weights = (weights/np.max(weights))/1.3
+        g_fit = fitter(g, fit_x, fit_y, weights=weights, verblevel=verblevel)
+        g_fit_array = g_fit(init_conds['spectral_axis'])
+        return g_fit, g_fit_array, masked_spectrum_val
+    else:
+        nan_array = np.full(masked_cube.shape[0], np.nan)
+        return None, nan_array, nan_array
 
 def fit_live_interactive(cube):
     # INTERACTIVE
-    masked_cube = mask_above_xpower(cube, 3, additional_cutoff=2.5)
-    full_power_loc = cube.argmax(axis=0)
-    full_power = cube.max(axis=0).to_value()
-    linewidth_manual = linewidth_fwhm(cube)
 
-    linewidth_spectralcube = masked_cube.linewidth_fwhm().to_value()
-    moment1 = masked_cube.moment(order=1).to_value()
-    moment0 = masked_cube.moment(order=0).to_value()
-
-    spectral_axis = masked_cube.spectral_axis.to_value()
+    masked_cube = mask_with_best_setting(cube)
+    init_conds = prepare_initial_conditions(cube, masked_cube)
+    spectral_axis = init_conds['spectral_axis']
 
     plt.ion()
-    fig = plt.figure(figsize=(10, 8))
+    fig = plt.figure(figsize=(6, 3.5))
     ax_manual = plt.subplot2grid((2, 5), (0, 0), colspan=2, fig=fig, projection=cube.wcs, slices=('x', 'y', 50))
     ax_spcube = plt.subplot2grid((2, 5), (1, 0), colspan=2, fig=fig, projection=cube.wcs, slices=('x', 'y', 50), sharex=ax_manual, sharey=ax_manual)
     ax_manual.tick_params(axis='x', labelbottom=False)
     ax_spectr = plt.subplot2grid((2, 5), (0, 2), colspan=3, rowspan=2, fig=fig)
 
-    ax_manual.imshow(moment0, origin='lower')
+    ax_manual.imshow(init_conds['moment0'], origin='lower')
     ax_manual.set_title("Moment 0 (masked)")
-    ax_spcube.imshow(moment1, origin='lower')
+    ax_spcube.imshow(init_conds['moment1'], origin='lower')
     ax_spcube.set_title("Moment 1 (masked)")
 
     ax_spectr.plot(spectral_axis, masked_cube.mean(axis=(1, 2)).to(u.K).to_value(), linewidth=0.7)
+    ax_spectr.set_xlim((spectral_axis[0], spectral_axis[-1]))
 
     fitter = fitting.SLSQPLSQFitter()
-    xs = {'x1': None, 'x2': None}
+    plot_info_dict = {'x1': None, 'x2': None}
 
     def onclick(event):
         try:
@@ -185,69 +263,35 @@ def fit_live_interactive(cube):
             return
         if event.button == 1 and (event.inaxes is ax_manual or event.inaxes is ax_spcube):
             ax_spectr.clear()
-            if xs['x1'] is not None:
-                ax_manual.lines.remove(xs['x1'])
-                ax_spcube.lines.remove(xs['x2'])
+            if plot_info_dict['x1'] is not None:
+                ax_manual.lines.remove(plot_info_dict['x1'])
+                ax_spcube.lines.remove(plot_info_dict['x2'])
 
-            xs['x1'], = ax_manual.plot([j], [i], 'x', color='red')
-            xs['x2'], = ax_spcube.plot([j], [i], 'x', color='red')
+            plot_info_dict['x1'], = ax_manual.plot([j], [i], 'x', color='red')
+            plot_info_dict['x2'], = ax_spcube.plot([j], [i], 'x', color='red')
 
-            A = full_power[i, j]
-
-            mean_manual = spectral_axis[full_power_loc[i, j]]
-            mean_spcube = moment1[i, j]
-
-            std_manual = linewidth_manual[i, j]/2.355
-            std_spcube = linewidth_spectralcube[i, j]/2.355
-
-            g_manual = models.Gaussian1D(A, mean_manual, std_manual, name='manual')
-            g_spcube = models.Gaussian1D(A, mean_spcube, std_spcube, name='spectral_cube')
-            g_hybrid = models.Gaussian1D(A, mean_spcube, std_manual, name='hybrid')
-            g_manual_array = g_manual(spectral_axis)
-            g_spcube_array = g_spcube(spectral_axis)
-            g_hybrid_array = g_hybrid(spectral_axis)
-
-            # g_manual.amplitude.min = A*0.99
-            # g_manual.amplitude.max = A*1.03
-            if np.abs(mean_spcube - mean_manual) < min(std_manual, 1.5):
-                mean = mean_spcube
-            else:
-                mean = mean_manual
-            g_manual.mean = mean
-            # g_manual.mean.min = mean*0.95
-            # g_manual.mean.max = mean*1.05
-
-            # Standard deviation
-            std = std_manual
-            if std < 0.5 or std > 3:
-                std = 1.5
-            g_manual.stddev = std
-            # g_manual.stddev.min = std - 0.8
-            # g_manual.stddev.max = std + 0.8
-            masked_spectrum_val = masked_cube.filled_data[:, i, j].to_value()
+            g_init = initialize_gaussian(init_conds, None, (i, j))
             """
             astropy modeling does NOT like NaNs. That's weird! They should!
             """
-            fit_x, fit_y = spectral_axis[np.isfinite(masked_spectrum_val)], masked_spectrum_val[np.isfinite(masked_spectrum_val)]
-            weights = np.abs(fit_y)
-            weights[weights < 1.3] = 1.3
-            weights = (weights/np.max(weights))/1.3
-            g_fit_werr = fitter(g_manual, fit_x, fit_y, verblevel=1, weights=weights) # 1.3 from an estimate of < 10 km/s
-            g_fit_werr_array = g_fit_werr(spectral_axis)
+            g_fit, g_fit_array, masked_spectrum_val = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter)
+            if g_fit is not None:
+                print("Parameter [MIN : init_val/fitted_val : MAX]")
+                print(f"Ampl [{g_fit.amplitude.min:6.2f} {g_init.amplitude.value:6.2f}/{g_fit.amplitude.value:6.2f} {g_fit.amplitude.max:6.2f}]")
+                print(f"Mean [{g_fit.mean.min:6.2f} {g_init.mean.value:6.2f}/{g_fit.mean.value:6.2f} {g_fit.mean.max:6.2f}]")
+                print(f"Stdd [{g_fit.stddev.min:6.2f} {g_init.stddev.value:6.2f}/{g_fit.stddev.value:6.2f} {g_fit.stddev.max:6.2f}]")
+            else:
+                print("No fit was made")
 
-            spectrum = cube[:, i, j]
+            spectrum = cube[:, i, j].to_value()
             ax_spectr.plot(spectral_axis, spectrum, color='k', linewidth=0.7, label='Data', marker='o', alpha=0.2, markersize=3)
             ax_spectr.plot(spectral_axis, masked_spectrum_val, color='Indigo', marker='x', linewidth=2, linestyle='dotted', alpha=0.9, label='Data fitted to')
 
-            # ax_spectr.plot(spectral_axis, g_manual_array, color='r', linewidth=0.7, label=g_manual.name)
-            # ax_spectr.plot(spectral_axis, g_spcube_array, color='b', linewidth=0.7, label=g_spcube.name)
-            # ax_spectr.plot(spectral_axis, g_hybrid_array, color='purple', linewidth=0.7, label=g_hybrid.name)
-
-            ax_spectr.plot(spectral_axis, g_fit_werr_array, color='orange', linestyle='dotted', linewidth=1, label="Fitted", alpha=0.9)
-            ax_spectr.plot(spectral_axis, spectrum.to_value() - g_fit_werr_array, color='k', linewidth=0.7, label='Residuals', alpha=0.6)
+            ax_spectr.plot(spectral_axis, g_fit_array, color='orange', linestyle='dotted', linewidth=1, label="Fitted", alpha=0.9)
+            ax_spectr.plot(spectral_axis, spectrum - g_fit_array, color='k', linewidth=0.7, label='Residuals', alpha=0.6)
 
             # Metric; sum over this for a number that, if large, means the fit isn't good
-            metric = -(spectrum.to_value() - g_fit_werr_array)*np.sign(spectrum.to_value())
+            metric = -(spectrum - g_fit_array)*np.sign(spectrum)
             metric[metric < 0] = 0
             # ax_spectr.plot(spectral_axis, metric, color='Indigo', marker='+', alpha=0.3, label='metric')
 
@@ -275,7 +319,10 @@ def linewidth_fwhm(cube, masked_already=False, flux_cutoff=6.5):
     # Apply this mask to all spatial and spectral pixels
     # This selects out the main peak (above the flux_cutoff)
     if not masked_already:
-        masked_cube = mask_above_xpower(cube, 2, additional_cutoff=flux_cutoff)
+        if 'apex' in cube_info['dir']:
+            masked_cube = mask_above_xpower(cube, 2, additional_cutoff=0)
+        elif 'sofia' in cube_info['dir']:
+            masked_cube = mask_above_xpower(cube, 2, additional_cutoff=flux_cutoff)
     else:
         masked_cube = cube
     underlying_mask = masked_cube.get_mask_array()
@@ -305,6 +352,34 @@ def fwhm_from_mask(spec_mask, spectral_axis=None):
     """
     if not np.any(spec_mask):
         return 0.
+    elif np.all(spec_mask):
+        return 0.
+    elif np.sum(spec_mask.astype(int)) > 50:
+        return 0.
+    if spectral_axis is None:
+        xarr = np.arange(spec_mask.size)
+    else:
+        xarr = spectral_axis
+    spec_mask = np.hstack(([False], spec_mask, [False]))
+    diffs = np.diff(spec_mask.astype(int))
+    # Starts are the indices of "False" right BEFORE the True
+    run_starts, = np.where(diffs > 0)
+    # Ends are the LAST indices of "True" BEFORE the False
+    run_ends, = np.where(diffs < 0)
+    # Lengths are calculated from the x axis (spectral_axis)
+    run_lengths = xarr[run_ends-1] - xarr[run_starts]
+    max_length = run_lengths.max()
+    return max_length
+
+
+def identify_longest_run(spec_mask, spectral_axis=None):
+    """
+    Similar to fwhm_from_mask, but just identify the longest run of True values
+    in the array, and make a mask of those
+    """
+    spec_mask = np.hstack(([False], spec_mask, [False]))
+    if not np.any(spec_mask):
+        return 0.
     if spectral_axis is None:
         xarr = np.arange(spec_mask.size)
     else:
@@ -312,13 +387,19 @@ def fwhm_from_mask(spec_mask, spectral_axis=None):
     diffs = np.diff(spec_mask.astype(int))
     # Starts are the indices of "False" right BEFORE the True
     run_starts, = np.where(diffs > 0)
+    run_starts += 1 # Bump up to first True
     # Ends are the LAST indices of "True" BEFORE the False
     run_ends, = np.where(diffs < 0)
+    run_ends += 1 # Bump up to first False
     # Lengths are calculated from the x axis (spectral_axis)
-    run_lengths = xarr[run_ends] - xarr[run_starts+1]
-    max_length = run_lengths.max()
-    # return np.full_like(spec, max_length)
-    return max_length
+    run_lengths = xarr[run_ends] - xarr[run_starts]
+    max_loc = run_lengths.argmax()
+    # Subtract 2 from size to account for first and last False padding
+    return_mask = np.full(spec_mask.size-2, False, dtype=bool)
+    # Subtract 1 from indices to account for padded False at beginning
+    return_mask[run_starts[max_loc]-1:run_ends[max_loc]-1] = True
+    return return_mask
+
 
 
 def subtract_hybrid_gaussian(cube):
@@ -332,18 +413,14 @@ def fit_image_to_file(cube):
     """
     Do the big fit but only on stuff above half power, and only one Gaussian1D
     """
-    spectral_axis = cube.spectral_axis.to_value()
+    masked_cube = mask_with_best_setting(cube)
+    init_conds = prepare_initial_conditions(cube, masked_cube)
+    spectral_axis = init_conds['spectral_axis']
     fitter = fitting.SLSQPLSQFitter()
     g_init = models.Gaussian1D(25, 26, 1, bounds={'amplitude': (0, 50), 'mean': (22, 28), 'stddev': (1, 3.5)})
-    xpower, additional_cutoff = 3, 2.5
-    masked_cube = mask_above_xpower(cube, xpower, additional_cutoff=additional_cutoff)
+    n_params = len(g_init.param_names)
 
-    full_power_loc = masked_cube.argmax(axis=0)
-    full_power = masked_cube.max(axis=0).to_value()
-    moment1 = masked_cube.moment(order=1).to_value()
-    linewidth_manual = linewidth_fwhm(cube)
-
-    results = np.zeros((len(g_init.param_names)*2, *masked_cube.shape[1:]))
+    results = np.zeros((n_params*2, *masked_cube.shape[1:]))
     residuals_array = np.zeros(masked_cube.shape)
     models_array = np.zeros(masked_cube.shape)
 
@@ -356,37 +433,16 @@ def fit_image_to_file(cube):
     for flat_idx in range(masked_cube.shape[1]*masked_cube.shape[2]):
         # Convert the flat index to the 2D image index
         i, j = np.unravel_index(flat_idx, masked_cube.shape[1:])
-        spectrum = masked_cube.filled_data[:, i, j].to_value()
 
-        # Get some initial guesses and inform the boundaries
-        # Amplitude
-        A = full_power[i, j]
-        g_init.amplitude = A
-        g_init.amplitude.min = A*0.99
-        g_init.amplitude.max = A*1.03
+        g_init = initialize_gaussian(init_conds, g_init, (i, j))
+        g_fit, fitted_spectrum, _ = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter, verblevel=0)
 
-        # Standard deviation
-        std = linewidth_manual[i, j]/2.355
-        if std < 0.5 or std > 3:
-            std = 1.5
-        g_init.stddev = std
-        g_init.stddev.min = std - 0.8
-        g_init.stddev.max = std + 0.8
-
-        # Mean
-        mean = moment1[i, j]
-        mean_manual = spectral_axis[full_power_loc[i, j]]
-        if np.abs(mean - mean_manual) > min(std, 1.5):
-            mean = mean_manual
-        g_init.mean = mean
-        g_init.mean.min = mean*0.95
-        g_init.mean.max = mean*1.05
-
-        g_fit = fitter(g_init, spectral_axis, spectrum, verblevel=0, weights=(spectrum/(5*1.3))) # is arbitrary, just normalizing to SNR=5
-        results[:len(g_init.param_names), i, j] = g_init.param_sets[:, 0]
-        results[len(g_init.param_names):, i, j] = g_fit.param_sets[:, 0]
-        fitted_spectrum = g_fit(spectral_axis)
-        residuals_array[:, i, j] = masked_cube[:, i, j].to_value() - fitted_spectrum
+        results[:n_params, i, j] = g_init.param_sets[:, 0]
+        if g_fit is not None:
+            results[n_params:, i, j] = g_fit.param_sets[:, 0]
+        else:
+            results[n_params:, i, j] = np.nan
+        residuals_array[:, i, j] = cube[:, i, j].to_value() - fitted_spectrum
         models_array[:, i, j] = fitted_spectrum
         # Logging again
         current_count = int(round(flat_idx * count_coeff))
@@ -399,23 +455,23 @@ def fit_image_to_file(cube):
     print(f"Finished at {datetime.datetime.now(datetime.timezone.utc).astimezone().ctime()}")
     print(f"Time elapsed: {str(datetime.timedelta(seconds=(timing_t1-timing_t0)))}")
 
-    filename_stub = "models/gauss_fit_above_1G_v2"
+    filename_stub = "models/gauss_fit_above_1G_v3"
     param_units = ['K', 'km / s', 'km / s']
     wcs_flat = cube.moment(order=0).wcs
     to_header = lambda : wcs_flat.to_header()
     phdu = fits.PrimaryHDU(header=to_header())
     phdu.header['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
     phdu.header['CREATOR'] = f"Ramsey, {__file__}"
-    phdu.header['COMMENT'] = f"Fit above 1/{xpower:.1f} x max power, which must also be > {additional_cutoff:.1f}."
-    phdu.header['COMMENT'] = "Using weights of spectrum/1.3 (1.3 K rms estimate)"
-    phdu.header['COMMENT'] = "Cutout with length_scale_mult 8"
+    phdu.header['COMMENT'] = f"Fit with best masking settings right now."
+    phdu.header['COMMENT'] = "Using a confusing weight scheme.."
+    phdu.header['COMMENT'] = "Cutout with length_scale_mult 4"
     hdu_list = [phdu]
-    for i in range(len(g_init.param_names)):
+    for i in range(n_params):
         hdu = fits.ImageHDU(data=results[i], header=to_header())
         hdu.header['EXTNAME'] = g_init.param_names[i] + "_INIT"
         hdu.header['BUNIT'] = param_units[i]
         hdu_list.append(hdu)
-        hdu = fits.ImageHDU(data=results[i+len(g_init.param_names)], header=to_header())
+        hdu = fits.ImageHDU(data=results[i+n_params], header=to_header())
         hdu.header['EXTNAME'] = g_init.param_names[i] + "_FIT"
         hdu.header['BUNIT'] = param_units[i]
         hdu_list.append(hdu)
@@ -427,8 +483,6 @@ def fit_image_to_file(cube):
     phdu.header['CREATOR'] = f"Ramsey, {__file__}"
     phdu.header['BUNIT'] = 'K'
     phdu.header['COMMENT'] = 'Data - Model residuals'
-    phdu.header['COMMENT'] = f"Fit above 1/{xpower:.1f} x max power"
-    phdu.header['COMMENT'] = "Cutout with length_scale_mult 8"
     phdu.writeto(cube_utils.os.path.join(cube_info['dir'], f"{filename_stub}.resid.fits"), overwrite=True)
 
     phdu = fits.PrimaryHDU(data=models_array, header=cube.wcs.to_header())
@@ -436,8 +490,6 @@ def fit_image_to_file(cube):
     phdu.header['CREATOR'] = f"Ramsey, {__file__}"
     phdu.header['BUNIT'] = 'K'
     phdu.header['COMMENT'] = 'Model intensity'
-    phdu.header['COMMENT'] = f"Fit above 1/{xpower:.1f} x max power"
-    phdu.header['COMMENT'] = "Cutout with length_scale_mult 8"
     phdu.writeto(cube_utils.os.path.join(cube_info['dir'], f"{filename_stub}.model.fits"), overwrite=True)
 
     print("Done!")
@@ -448,7 +500,7 @@ def investigate_fit():
     Investiate the fit made in the previous function
     """
 
-    filename_stub = "models/gauss_fit_above_1G_v2"
+    filename_stub = "models/gauss_fit_above_1G_v3"
     param_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".param.fits")
     resid_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".resid.fits")
     model_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".model.fits")
@@ -462,18 +514,19 @@ def investigate_fit():
     spectral_axis = resid_cube.spectral_axis.to(u.km/u.s)
 
     vlo, vhi = 25, 30
-    resid_int = resid_cube.spectral_slab(vlo*u.km/u.s, vhi*u.km/u.s).moment(order=0).to(u.K*u.km/u.s)
+    resid_mom0 = resid_cube.spectral_slab(vlo*u.km/u.s, vhi*u.km/u.s).moment(order=0).to(u.K*u.km/u.s).to_value()
 
     plt.ion()
-    fig = plt.figure()
+    fig = plt.figure(figsize=(6, 3.5))
     ax_img = plt.subplot2grid((1, 5), (0, 0), colspan=2, fig=fig, projection=resid_cube.wcs, slices=('x', 'y', 0))
     ax_spectr = plt.subplot2grid((1, 5), (0, 2), colspan=3, fig=fig)
 
-    im = ax_img.imshow(resid_int.to_value(), origin='lower', vmin=0, vmax=35)
-    fig.colorbar(im, ax=ax_img)
-    ax_img.set_title(f"integrated residuals, [{vlo}, {vhi}] km/s")
+    im = ax_img.imshow(resid_mom0, origin='lower', vmin=0, vmax=35)
+    cbar = fig.colorbar(im, ax=ax_img)
+    cax = cbar.ax
+    ax_img.set_title(f"Integrated residuals, [{vlo:4.1f}, {vhi:4.1f}] km/s")
 
-    xs = {'x1': None}
+    plot_info_dict = {'x1': None, 'xij': None, 'currently_selecting': False}
 
     def onclick(event):
         try:
@@ -483,47 +536,89 @@ def investigate_fit():
             return
         if event.button == 1 and event.inaxes is ax_img:
             ax_spectr.clear()
-            if xs['x1'] is not None:
-                ax_img.lines.remove(xs['x1'])
-            xs['x1'], = ax_img.plot([j], [i], 'x', color='red')
+            if plot_info_dict['x1'] is not None:
+                ax_img.lines.remove(plot_info_dict['x1'])
+            plot_info_dict['x1'], = ax_img.plot([j], [i], 'x', color='red')
+            plot_info_dict['xij'] = (i, j)
             A = hdul['amplitude_INIT'].data[i, j]
             mean = hdul['mean_INIT'].data[i, j]
             stddev = hdul['stddev_INIT'].data[i, j]
             resid_spectr = resid_cube[:, i, j]
             model_spectr = model_cube[:, i, j]
-            ax_spectr.plot(spectral_axis, model_spectr, label='model', linewidth=0.7)
-            ax_spectr.plot(spectral_axis, resid_spectr, label='resid', linewidth=0.7)
-            ax_spectr.plot(spectral_axis, resid_spectr+model_spectr, color='k', label='original', linewidth=0.7, marker='o', alpha=0.5)
+            ax_spectr.plot(spectral_axis, resid_spectr+model_spectr, color='k', label='original', linewidth=0.7, marker='o', alpha=0.2, markersize=3)
+            ax_spectr.plot(spectral_axis, model_spectr, color='Indigo', label='model', linewidth=0.7, alpha=0.6)
+            ax_spectr.plot(spectral_axis, resid_spectr, color='orange', label='resid', linewidth=0.7, alpha=0.7)
             ax_spectr.legend()
             # ax_spectr.set_xlim()
             ax_spectr.set_xlabel("v (km/s)")
             ax_spectr.set_ylabel("T (K)")
-
-    # hdul.close()
+            plot_info_dict['currently_selecting'] = False
+        elif event.button == 1 and event.inaxes is ax_spectr:
+            if not plot_info_dict['currently_selecting']:
+                plot_info_dict['vel_bound'] = event.xdata
+                plot_info_dict['intensity_bound'] = event.ydata
+                plot_info_dict['currently_selecting'] = True
+            else:
+                velocity_bound2 = event.xdata
+                intensity_bound2 = event.ydata
+                velocity_bound1 = plot_info_dict.pop('vel_bound')
+                intensity_bound1 = plot_info_dict.pop('intensity_bound')
+                ilo = min(intensity_bound1, intensity_bound2)
+                ihi = max(intensity_bound1, intensity_bound2)
+                vlo = min(velocity_bound1, velocity_bound2)
+                vhi = max(velocity_bound1, velocity_bound2)
+                # Convert from K to (average) K km/s
+                vspan = vhi - vlo
+                ilo *= vspan
+                ihi *= vspan
+                # Integrate
+                print(f"Integrated between {vlo:.1f} and {vhi:.1f} km/s. Intensity limits: {ilo:.1f}, {ihi:.1f}")
+                resid_mom0 = resid_cube.spectral_slab(vlo*u.km/u.s, vhi*u.km/u.s).moment(order=0).to(u.K*u.km/u.s).to_value()
+                ax_img.clear()
+                cax.clear()
+                im = ax_img.imshow(resid_mom0, origin='lower', vmin=ilo, vmax=ihi)
+                fig.colorbar(im, cax=cax)
+                ax_img.set_title(f"Integrated residuals, [{vlo:4.1f}, {vhi:4.1f}] km/s")
+                if plot_info_dict['x1'] is not None:
+                    i, j = plot_info_dict['xij']
+                    plot_info_dict['x1'], = ax_img.plot([j], [i], 'x', color='red')
+                plot_info_dict['currently_selecting'] = False
+        elif event.button == 3:
+            hdul.close()
+            plt.ioff()
+            plt.close()
     return fig.canvas.mpl_connect('button_press_event', onclick)
+
 
 def make_wing_moments(cube):
     """
     Check emission between [20, 21.5] and [28.5, 30]
     """
     kms = u.km/u.s
-    integrated = cube.spectral_slab(21.5*kms, 28.5*kms).moment(order=0).to_value()
-    contour_args = (integrated,)
+    vel_bounds = 20*kms, 30*kms
+    original_mom0 = cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
+    contour_args = (original_mom0,)
     contour_kwargs = dict(levels=[30, 60, 90, 120, 150], linewidths=0.5, colors='k', alpha=0.5)
 
-    blue_slab = cube.spectral_slab(20*kms, 21.5*kms)
-    red_slab = cube.spectral_slab(28.5*kms, 30*kms)
+    filename_stub = "models/gauss_fit_above_1G_v3"
+    param_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".param.fits")
+    resid_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".resid.fits")
+    model_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".model.fits")
+    resid_cube = cube_utils.SpectralCube.read(resid_fn)
+
+    blue_slab = resid_cube.spectral_slab(20*kms, 25*kms)
+    red_slab = resid_cube.spectral_slab(25*kms, 30*kms)
     blue_integrated = blue_slab.moment(order=0).to_value()
     red_integrated = red_slab.moment(order=0).to_value()
     fig = plt.figure(figsize=(12, 10))
     ax1 = plt.subplot(121, projection=cube.wcs, slices=('x', 'y', 50))
-    ax1.imshow(np.arcsinh(blue_integrated), origin='lower')
-    ax1.set_title("Blue wing, integrated [20, 21.5] km/s")
+    ax1.imshow(blue_integrated, origin='lower', vmin=0)
+    ax1.set_title("Blue wing, integrated [20, 25] km/s")
     ax1.contour(*contour_args, **contour_kwargs)
 
     ax2 = plt.subplot(122, projection=cube.wcs, slices=('x', 'y', 50), sharex=ax1, sharey=ax1)
-    ax2.imshow(np.arcsinh(red_integrated), origin='lower')
-    ax2.set_title("Red wing, integrated [28.5, 30] km/s")
+    ax2.imshow(red_integrated, origin='lower', vmin=0)
+    ax2.set_title("Red wing, integrated [25, 30] km/s")
     ax2.contour(*contour_args, **contour_kwargs)
     plt.show()
 
@@ -542,13 +637,51 @@ def calculate_noise(cube):
     plt.show()
 
 
+def check_if_wings_trace_peak_emission(cube):
+    """
+    I need the original cube as arg, and then I can load the fitted stuff
+    """
+    kms = u.km/u.s
+    vel_bounds = 20*kms, 30*kms
+    original_mom0 = cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
+    contour_args = (original_mom0,)
+    contour_kwargs = dict(levels=[30, 60, 90, 120, 150], linewidths=0.5, colors='k', alpha=0.5)
+
+    filename_stub = "models/gauss_fit_above_1G_v3"
+    param_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".param.fits")
+    resid_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".resid.fits")
+    model_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".model.fits")
+    resid_cube = cube_utils.SpectralCube.read(resid_fn)
+    resid_mom0 = resid_cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
+
+    fig = plt.figure(figsize=(12, 10))
+    ax1 = plt.subplot(121, projection=cube.wcs, slices=('x', 'y', 50))
+    ax2 = plt.subplot(122, projection=cube.wcs, slices=('x', 'y', 50), sharex=ax1, sharey=ax1)
+
+    im = ax1.imshow(resid_mom0/original_mom0, origin='lower', vmin=-0.2, vmax=0.3)
+    ax1.set_title("Residuals/Original moment 0 ([20, 30] km/s)")
+    ax1.contour(*contour_args, **contour_kwargs)
+    fig.colorbar(im, ax=ax1)
+
+    metric = (-resid_cube.spectral_slab(*vel_bounds).unmasked_data[:]*np.sign(cube.spectral_slab(*vel_bounds).unmasked_data[:])).to_value()
+    metric[metric < 0] = 0
+    metric = metric.sum(axis=0)
+    im = ax2.imshow(metric, origin='lower', vmin=0, vmax=40)
+    ax2.set_title("Sum of negative residuals (x -1) [20, 30]")
+    ax2.contour(*contour_args, **contour_kwargs)
+    fig.colorbar(im, ax=ax2)
+
+    plt.show()
+
+
 if __name__ == "__main__":
-    subcube = cutout_subcube(length_scale_mult=4)
+    subcube = cutout_subcube(length_scale_mult=4)#, data_filename="apex/M16_13CO3-2.fits")
+    subcube = subcube.spectral_slab(0*u.km/u.s, 45*u.km/u.s)
+
     # try_mask_above_half_power(subcube, xpower=2)
     fit_live_interactive(subcube)
     # make_wing_moments(subcube)
     # fit_image_to_file(subcube)
+    # investigate_fit()
 
     # calculate_noise(subcube)
-
-    # investigate_fit()
