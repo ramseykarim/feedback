@@ -1,7 +1,7 @@
 import os, sys
 import numpy as np
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 7}
+font = {'family': 'sans', 'weight': 'normal', 'size': 10}
 matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 
@@ -16,11 +16,14 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
 from spectral_cube import SpectralCube
 from reproject import reproject_interp
+import pvextractor
+import regions
 
 from .mantipython import physics
 from . import misc_utils
 from . import catalog
 from . import geometric_model as geomodel
+from . import cube_utils
 
 
 dust_path = f"{catalog.utils.feedback_path}misc_data/dust/"
@@ -41,7 +44,8 @@ Hmass = cst.m_u * H_mass_amu * 1e3 # kg->g
 Other useful global variables
 """
 # Some standard tau160 map
-fit2p_filename = "RCW49large_2p_2BAND_beta2.0.fits"
+# fit2p_filename = "RCW49large_2p_2BAND_beta2.0.fits"
+fit2p_filename = "RCW49large_2p_2BAND_160grid_beta2.0.fits"
 
 # Unsure what I was using this for
 # This is the SIMBAD coordinate, so at least there's that
@@ -166,6 +170,108 @@ def make_C_plots(d=None):
     plt.show()
 
 
+
+"""
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+    Masks
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
+"""
+
+def cii_combined_channel_mask(test_mask=False):
+    # # Load in CII -12,-8
+    # cii_img_blue, cii_w = catalog.utils.load_cii(1)
+    # # Load in CII -8,-4
+    # cii_img_red, cii_w = catalog.utils.load_cii(2)
+
+    cii_cube = cube_utils.CubeData("sofia/rcw49-cii.fits")
+    kms = u.km/u.s
+
+    red_interval = (-6*kms, -5*kms)
+    red_str = f"[{red_interval[0]:.0f}, {red_interval[1]:.0f}]"
+    cii_img_red = cii_cube.data.spectral_slab(*red_interval).moment0()
+    cii_w = cii_img_red.wcs
+    cii_img_red = cii_img_red.to_value()
+
+    blue_interval = (-7*kms, -6*kms)
+    blue_str = f"[{blue_interval[0]:.0f}, {blue_interval[1]:.0f}]"
+    cii_img_blue = cii_cube.data.spectral_slab(*blue_interval).moment0().to_value()
+
+    # This doesn't work great, I should swap in my better convolution function
+    cii_img_blue = smooth_image(cii_img_blue, kernel_length=10, std=1.5)
+    cii_img_red = smooth_image(cii_img_red, kernel_length=10, std=1.5)
+    # Load tau
+    tau160, tau160_h = load_tau()
+    tau160_w = WCS(tau160_h)
+    # Project CII onto tau
+    # cii_img_blue, cii_img_red = (reproject_interp((cii_img, cii_w), tau160_w, tau160.shape, return_footprint=False) for cii_img in (cii_img_blue, cii_img_red))
+    tau160_cii = reproject_interp((tau160, tau160_w), cii_w, cii_img_red.shape, return_footprint=False)
+    mask_vals = []
+    masks = []
+    for cii_img in (cii_img_blue, cii_img_red):
+        cii_img[np.isnan(cii_img)] = 0
+        valid_mask = cii_img > 0
+        mask_val = np.median(cii_img[valid_mask]) + np.std(cii_img[valid_mask])
+        print(mask_val)
+        mask_vals.append(mask_val)
+        masks.append(cii_img > mask_val)
+    plt.figure(figsize=(10, 5))
+    ax = plt.subplot(121, projection=cii_w)
+    plt.imshow(tau160_cii, origin='lower', cmap='cividis', vmin=-2.6, vmax=-1)
+    plt.title(blue_str+" (blue)")
+    plt.colorbar()
+    lw = 0.4
+    plt.contour(cii_img_blue, levels=[mask_vals[0]], colors='cyan', linewidths=lw)
+    plt.contour(cii_img_red, levels=[mask_vals[1]], colors='red', linewidths=lw)
+
+    plt.subplot(122, projection=cii_w, sharex=ax, sharey=ax)
+    plt.imshow(np.all(masks, axis=0).astype(int), origin='lower', cmap='cividis')#, vmin=-2.6, vmax=-1)
+    plt.title(red_str+" (red)")
+    plt.colorbar()
+    lw = 1.2
+    plt.contour(cii_img_blue, levels=[mask_vals[0]], colors='cyan', linewidths=lw)
+    plt.contour(cii_img_red, levels=[mask_vals[1]], colors='red', linewidths=lw)
+    plt.show()
+    # plt.savefig("/home/ramsey/Pictures/10-20-20-work/mask_at_-6_tau_v2.png")
+
+
+def ellipse_region_mask(shape=None, w=None, test_mask=False, savemask=False,
+    half=False):
+    if shape is None or w is None:
+        # Load in CII map and WCS (we need WCS)
+        cii_img, cii_w = catalog.utils.load_cii(2)
+        shape = cii_img.shape
+        w = cii_w
+    # Load the regions file
+    reg_sky_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/ellipse_mask.reg"))
+    # Convert to pixel regions
+    reg_pix_list = [reg.to_pixel(w) for reg in reg_sky_list]
+    # Make masks
+    mask_list = [reg.to_mask().to_image(shape).astype(bool) for reg in reg_pix_list]
+    # Difference the masks
+    mask = mask_list[0] ^ mask_list[1]
+
+    if half:
+        # Make a half shell; keep only the Eastern (left) half of the shell
+        center_j = reg_pix_list[0].center.x
+        ii, jj = np.meshgrid(*(np.arange(x) for x in shape), indexing='ij')
+        mask &= jj < center_j
+    if test_mask:
+        plt.imshow(mask, origin='lower')
+        plt.show()
+    if savemask:
+        m = mask.copy()
+        plt.imshow(m, origin='lower')
+        plt.show()
+        hdr = cii_w.to_header()
+        hdr['COMMENT'] = 'ellipse mask, tentative, Nov 3, 2020'
+        hdu = fits.PrimaryHDU(data=m.astype(float), header=hdr)
+        hdu.writeto('/home/ramsey/Downloads/half_ellipse_shell_mask.fits', overwrite=True)
+        return
+    return mask
+
+
 """
 %&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
 %&%&%&%&%&%&%&%&%&%&%&% Integration functions %&%&%&%&%&%&%&%&%&%&%&%&%&%&%&
@@ -245,47 +351,58 @@ def integrate_shell_by_hand():
     print(f"Total number of H atoms: {totalNH:.2E}, implying N(H) = {NH:.2E}")
 
 
-def integrate_shell_on_image():
-    d = Draine_data(3.1)
+def integrate_shell_on_image(use_background=False, plot_anything=False):
+    """
+    This used to use the "geometric_model" module; see commits prior to
+    Nov 3 2020 to see that version
+    """
+    Rv = 3.1
+    d = Draine_data(Rv)
     wl = get_wl(d)
     Cext = get_C(d)
     kabs = get_k(d)
-    Cabs = convert_ktoC(kabs)
-    Cabs160 = get_val_at(160., wl, Cabs)
-    kabs160 = get_val_at(160., wl, kabs)
-
+    # k will produce slightly higher mass since g-to-d includes He
+    # Albedo is 0 so ext = abs (no sca)
+    Cext160 = get_val_at(160., wl, Cext)
+    # Distance is the Vargas-Alvarez value
     losD = 4.16*1000
 
-    w = get_wcs(filename="RCW49large_2p.fits")
-    # tau = get_tau(filename="RCW49large_2p.fits", chisq_cut=7.0, flux_cut=2e3)
-    tau = get_tau(filename="RCW49large_2p.fits")
-
-    estimated_center_pixel = (103, 138)
-    radius_deg = 0.09
-    thickness_deg = 0.05
-    pixel_scale_deg = misc_utils.get_pixel_scale(w).to_value()
+    tau160, tau160_h = load_tau()
+    tau160 = 10.**tau160
+    tau160_w = WCS(tau160_h)
+    if use_background:
+        # Subtract an optical depth background
+        # Has a factor of ~2 effect on the mass
+        tau160_background = 10**(-2.6) # np.nanmedian(tau160) is really high
+        print(f"Using a tau160 background of {tau160_background:.2E}")
+        tau160 -= tau160_background
 
     # mask to just the shell
-    half_shell_mask = geomodel.half_shell_mask_2d(tau, pixel_scale_deg, radius_deg, thickness_deg, estimated_center_pixel, ang=70)
-    tau[~half_shell_mask] = np.nan
+    ellipse_mask = ellipse_region_mask(shape=tau160.shape, w=tau160_w, half=1)
+    tau160[~ellipse_mask] = np.nan
 
-    N = convert_tautoN_C(tau, Cabs160)
-    mass = convert_tautomass_k(tau, kabs160) * u.g / (u.cm*u.cm)
-    pixel_area = get_physical_area_pixel(tau, w, losD)
-    total_mass = pixel_area * np.sum(mass[np.isfinite(mass)])
-    print(f"{total_mass.to('solMass'):.3E}")
+    N = convert_tautoN_C(tau160, Cext160)
+    pixel_area = get_physical_area_pixel(tau160, tau160_w, losD)
+    total_mass = pixel_area * np.sum(N[np.isfinite(N)]) * Hmass * u.g / (u.cm**2)
+    print(f"Mass under mask {total_mass.to('solMass'):.3E}")
+    geometric_correction_3d = 2.5
+    extended_shell_correction = 7./6
+    total_mass *= geometric_correction_3d * extended_shell_correction
+    print(f"Total corrected mass {total_mass.to('solMass'):.3E}")
 
-    extent_arrays = get_physical_image_axes(N, w, losD)
-    ext = (extent_arrays[1][0], extent_arrays[1][-1], extent_arrays[0][0], extent_arrays[0][-1])
-    print(ext)
+    # extent_arrays = get_physical_image_axes(N, tau160_w, losD)
+    # ext = (extent_arrays[1][0], extent_arrays[1][-1], extent_arrays[0][0], extent_arrays[0][-1])
+    # print(ext)
 
-    plt.imshow(np.log10(N), origin='lower', extent=ext)
-    plt.title("column density N(H) (cm-2)")
-    plt.colorbar()
-    plt.show()
+    if plot_anything:
+        plt.imshow(np.log10(N), origin='lower')
+        plt.title("column density N(H) (cm-2)")
+        plt.colorbar()
+        plt.show()
 
 
-def integrate_shell_cii_mask(n=2, test_mask=False, use_background=False, plot_anything=False, Rv=3.1):
+def integrate_shell_cii_mask(n=2, test_mask=False, use_background=False, plot_anything=False, Rv=3.1,
+    savemask=False):
     """
     Use a [CII]-based mask to integrate the dust optical depth across the image
     and come up with a mass estimate
@@ -310,16 +427,29 @@ def integrate_shell_cii_mask(n=2, test_mask=False, use_background=False, plot_an
     cii_new[np.isnan(cii_new)] = 0
 
     # Mask value; needs to be sort of hand-picked
-    mask_val = {2: 2e4, 3: 4.5e4}[n]
-    label_stub = {2: "-8,-4", 3: "-25,0"}[n]
+    mask_val = {1: 2e4, 2: 2e4, 3: 4.5e4}[n]
+    mask_val = np.median(cii_new[cii_new > 0]) + np.std(cii_new[cii_new > 0])
+    print("Mask value:", mask_val)
+    label_stub = {1: "-12,-8", 2: "-8,-4", 3: "-25,0"}[n]
+
+    if savemask:
+        m = cii_img > mask_val
+        plt.imshow(m, origin='lower')
+        plt.show()
+        hdr = cii_w.to_header()
+        hdr['COMMENT'] = f'cii mask from [{label_stub}] km/s'
+        hdu = fits.PrimaryHDU(data=m.astype(float), header=hdr)
+        hdu.writeto('/home/ramsey/Downloads/cii_shell_mask.fits')
+        return
 
     if plot_anything:
         # Show the tau map, the CII map reprojected onto tau, and an example mask
         plt.figure(figsize=(13, 5))
-        plt.subplot(121, projection=tau160_w)
+        plt.subplot(121 if not test_mask else 111, projection=tau160_w)
         plt.imshow(cii_new, origin='lower')
         plt.title(f"[CII] [{label_stub}] km/s")
         plt.colorbar()
+        plt.contour(cii_new, levels=[mask_val], colors='w', linewidths=0.4)
 
     if test_mask:
         plt.show()
@@ -368,6 +498,7 @@ def integrate_shell_cii_mask(n=2, test_mask=False, use_background=False, plot_an
     # Done! Show the plots
     plt.show()
     # plt.savefig(f"./figures/circa_may10_2020/dustmass_ciimask{label_stub}.png")
+
 
 
 """
@@ -479,9 +610,11 @@ def prepare_img_for_plot(img, scale=np.arcsinh, low_cutoff=np.nanmedian):
 
 
 if __name__ == "__main__":
-    # integrate_shell_cii_mask(n=2, Rv=3.1, plot_anything=1, use_background=True)
-    integrate_shell_cii_mask(n=3, Rv=3.1, plot_anything=1, use_background=False)
-
+    # ellipse_region_mask(savemask=True, half=True)
+    print("CII")
+    integrate_shell_cii_mask(n=2)
+    print("ELLIPSE")
+    integrate_shell_on_image()
     # m1_old, m2_old = 2.42e4*u.solMass, 4.02e4*u.solMass
     # m1_new, m2_new = 1.79e4*u.solMass, 2.82e4*u.solMass
     # print(m1_new/m1_old)

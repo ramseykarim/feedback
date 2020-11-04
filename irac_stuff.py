@@ -1,15 +1,22 @@
 """
 I want to quickly make some IRAC ratio maps
 Created: May 22, 2020
+Edited: October 22, 2020
+Name changed to irac_stuff.py
+I'm going to mosaic the M16 IRAC images here
 """
 __author__ = "Ramsey Karim"
 
 import numpy as np
+import os
+import glob
+import datetime
 
 from astropy.io import fits
 from astropy.wcs import WCS
 
 from . import catalog
+from . import mosaic_vlt
 
 norm_functions = {
     'sqrt': np.sqrt, 'log10': np.log10, 'arcsinh': np.arcsinh,
@@ -60,6 +67,8 @@ def make_irac_mask(*args, **kwargs):
     """
     Edit this function to make masks based on ratios
     Passes all args and kwargs to make_ratio_between
+    Example:
+    make_irac_mask(2, 1, nfunc='arcsinh', mfunc='log10')
     """
     data_n, data_m, ratio, header, filename = make_ratio_between(*args, **kwargs, write=False, return_all_info=True)
     mask1 = ratio < 2.8
@@ -70,6 +79,31 @@ def make_irac_mask(*args, **kwargs):
     print("wrote the mask: ", header['HISTORY'])
 
 
+def mosaic_irac(n):
+    """
+    Mosaic the IRAC maps. Put them all onto the same grid, SPITZER_I4
+    """
+    ref_filename = catalog.utils.search_for_file("spitzer/SPITZER_I3_6049792_0000_5_E8698528_maic.fits")
+    spitzer_dir = os.path.dirname(ref_filename)
+    ref_filename = glob.glob(os.path.join(spitzer_dir, f"SPITZER_I{n}*.fits")).pop()
+    # Get the larger IRAC filenames for this band
+    tile_filenames = glob.glob(os.path.join(spitzer_dir, f"*I{n}.fits"))
+    # Get the header from the reference image
+    with fits.open(ref_filename) as hdul:
+        assert len(hdul) == 1
+        ref_hdr = hdul[0].header
+    result, result_fp = mosaic_vlt.reproject_and_coadd(tile_filenames,
+        ref_hdr, reproject_function=mosaic_vlt.reproject_interp)
+    new_hdr = WCS(ref_hdr).to_header()
+    new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    new_hdr['ORIGIN'] = "UMD Astronomy"
+    new_hdr['CREATOR'] = f"Ramsey Karim, {__file__}"
+    for kw in ['INSTRUME', 'CHNLNUM', 'AOT_TYPE', 'AORLABEL', 'OBJECT', 'BUNIT']:
+        new_hdr[kw] = ref_hdr[kw]
+    new_hdr['LATPOLE'] = 90.
+    new_hdr['LONPOLE'] = 180.
+    hdu = fits.PrimaryHDU(data=result, header=new_hdr)
+    hdu.writeto(os.path.join(spitzer_dir, f"SPITZER_I{n}_mosaic.fits"))
+
 if __name__ == "__main__":
-    pass
-    make_irac_mask(2, 1, nfunc='arcsinh', mfunc='log10')
+    mosaic_irac(4)

@@ -45,6 +45,7 @@ def m16_stars():
     catalog_df = catalog_df.drop(columns=["RAJ2000", "DEJ2000"])
     catalog_df_OB = catalog_df[catalog_df['SpType'].apply(lambda s: ('O' in s) or ('B' in s))]
     catalog_df_OB = catalog_df_OB[['SkyCoord', 'SpType']] # reduce to important columns
+
     del catalog_df, sptype_catalog # save memory
     # Make the PoWR objects
     powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNL-H50', 'WNL', 'WNE')}
@@ -55,9 +56,14 @@ def m16_stars():
     # Create CatalogResolver instance
     catr = catalog.spectral.stresolver.CatalogResolver(catalog_df_OB['SpType'].values,
         calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
-    fuv_flux_array = [x[0] for x in catr.get_array_FUV_flux()]
-    catalog_df_OB['FUV_flux'] = fuv_flux_array
-    fuv_flux_array = np.array(u.Quantity(fuv_flux_array).to_value())
+    fuv_flux_array = u.Quantity([x[0] for x in catr.get_array_FUV_flux()])
+    fuv_flux_unit = fuv_flux_array.unit
+    fuv_flux_array = np.array(fuv_flux_array.to_value())
+    catalog_df_OB['log10FUV_flux_'+str(fuv_flux_unit).replace(' ', '')] = np.log10(fuv_flux_array)
+
+    catalog_df_OB.to_html(f"{catalog.utils.m16_data_path}catalogs/hillenbrand_stars.html")
+    print("Stopping here")
+    return
 
     # Use LogNorm to normalize
     min_nonzero_flux = np.min(fuv_flux_array[fuv_flux_array > 0])
