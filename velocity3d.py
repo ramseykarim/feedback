@@ -10,6 +10,14 @@ import pandas as pd
 from mayavi import mlab
 
 
+"""
+Looks like this is the script I used to plot the 3D PV plots
+which I turned into GIFs
+
+This appears to be pre-SpectralCube knowledge, so maybe if I return to this,
+I can redo it with Spectral cube?
+"""
+
 def load_fits(filename):
     # Load FITS cube
     data, hdr = fits.getdata(filename, header=True)

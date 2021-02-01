@@ -8,8 +8,9 @@ __author__ = "Ramsey Karim"
 
 import numpy as np
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 4}
-matplotlib.rc('font', **font)
+if __name__ == "__main__":
+    font = {'family': 'sans', 'weight': 'normal', 'size': 4}
+    matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import copy

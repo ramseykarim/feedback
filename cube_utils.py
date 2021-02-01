@@ -14,7 +14,10 @@ from astropy import modeling
 
 from spectral_cube import SpectralCube
 from spectral_cube.spectral_cube import Beam
-import MontagePy.main as montage
+try:
+    import MontagePy.main as montage
+except ModuleNotFoundError:
+    montage = None
 
 from . import catalog
 
@@ -24,6 +27,8 @@ def beam_area(theta_a, theta_b):
     at the major and minor axes. Inputs should be Quantites.
     I am using the equation given in:
     https://science.nrao.edu/facilities/vla/proposing/TBconv
+    EDIT: there's a whole package for radio beams, so I probably shouldn't
+        try to reinvent any wheels and risk messing up
     :param theta_a: half-power full width along major axis, though order of
         major/minor doesn't actually matter. Quantity, angular
     :param theta_b: same as above for minor axis, though order doesn't matter.
@@ -38,6 +43,7 @@ class CubeData:
     Pretty much just wraps up SpectralCube and hides some peculiarities of
     data (like the BIMA 4-D cube...)
     Written July 21-22, 2020
+    Updated November 16, 2020 to take CARMA data
     """
     def __init__(self, filename):
         self.full_path = catalog.utils.search_for_file(filename)
@@ -47,11 +53,11 @@ class CubeData:
         with fits.open(self.full_path) as hdul:
             self.header = hdul[0].header
             self.wcs = WCS(self.header, naxis=3)
-            self.wcs_flat = WCS(self.header, naxis=2)
         self.data = SpectralCube.read(self.full_path)
         if self.data.unit == u.one:
             self.data._unit = u.K
-
+        self.wcs_flat = self.data[0, :, :].wcs
+        self.equivalencies = None
         ### Is there any way I can save memory??
         # tmp = self.data.spectral_slab(-15*u.km/u.s, +75*u.km/u.s)
         # del self.data
@@ -80,9 +86,13 @@ class CubeData:
         """
         if self.telescope.lower() == 'sofia':
             line_description = "[12CII]"
-        else:
+        elif self.telescope.lower() == 'bima':
             filename_components = self.basename.replace('.fits', '').split('_')
             line_description = [x for x in filename_components if 'CO' in x].pop()
+        elif self.telescope.lower() == 'carma':
+            line_description = self.basename.split('.')[2].upper().replace('P', '+')
+        else:
+            raise NotImplementedError(self.telescope)
         return f"{self.telescope.upper()} {line_description}"
 
     def filename_stub(self):
@@ -98,6 +108,35 @@ class CubeData:
 
     def __repr__(self):
         return f"<CubeData wrapper around {self.data.__repr__()}>"
+
+    def equivalency(self):
+        if self.equivalencies is None:
+            if 'beam' in str(self.data.unit).lower():
+                # BIMA
+                try:
+                    restfrq = self.header['RESTFREQ'] * u.Hz
+                except:
+                    print(self.header)
+                    raise NotImplementedError
+                beam = self.data.beam
+                beam_area = 2.*np.pi*beam.major*beam.minor/2.355**2
+                self.equivalencies = u.brightness_temperature(restfrq, beam_area)
+            else:
+                print(f"\'beam\' not in unit: {str(self.data.unit).lower()}")
+                raise NotImplementedError("Why's this happening?")
+        return self.equivalencies
+
+    def convert_to_K(self):
+        if self.data.unit != u.K:
+            self.data = self.data.to(u.K, equivalencies=self.equivalency())
+
+    def refresh_wcs(self):
+        """
+        Reassign the WCS attributes
+        """
+        self.wcs = self.data.wcs
+        self.wcs_flat = self.data[0, :, :].wcs
+
 
 
 def montage_ProjectCube(filename_cube, filename_target):

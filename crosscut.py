@@ -1,8 +1,9 @@
 import sys
 import numpy as np
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 6}
-matplotlib.rc('font', **font)
+if __name__ == "__main__":
+    font = {'family': 'sans', 'weight': 'normal', 'size': 6}
+    matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 from matplotlib import patches
 
@@ -14,10 +15,12 @@ from astropy.nddata.utils import Cutout2D
 from scipy.interpolate import interpn
 from math import ceil
 
-from . import misc_utils
-from . import catalog
-from . import cube_utils
 from . import pvdiagrams
+misc_utils = pvdiagrams.misc_utils
+catalog = pvdiagrams.catalog
+cube_utils = pvdiagrams.cube_utils
+mpl_cm = pvdiagrams.mpl_cm
+mpl_colors = pvdiagrams.mpl_colors
 
 """
 Functions and script to make a cross-cut plot using several different data sources
@@ -177,11 +180,16 @@ def coords_from_region(reg_file_name, index=0):
     """
     Use the path_from_ds9 function in pvdiagrams.py to get linear paths
     The index shouldn't count non-line/vector regions in the file.
+    Nov 12, 2020: updated to return list of paths if path_from_ds9 returns list
+        this would happen if index==None
     """
     # Load the vector or line at the given index (defaults to the first one)
     p = pvdiagrams.path_from_ds9(reg_file_name, index)
     # Pull the coordinates from the line/vector and return SkyCoord tuple
-    return tuple(SkyCoord(x) for x in p._coords)
+    if isinstance(p, list):
+        return [tuple(SkyCoord(x) for x in path._coords) for path in p]
+    else:
+        return tuple(SkyCoord(x) for x in p._coords)
 
 
 file_info = {
@@ -218,7 +226,7 @@ class DataLayer:
     """
 
     def __init__(self, name, filepath, cube=False, extension=0, f_to_apply=None,
-        alpha=0.9, offset=False, vlims=None):
+        alpha=0.9, offset=False, vlims=None, color=None, linestyle='-', norm=None, linewidth=0.7):
         self.name = name
         if isinstance(filepath, str):
             # Direct load from filepath method
@@ -235,6 +243,15 @@ class DataLayer:
         self.extension = extension
         self.f_to_apply = f_to_apply
         self.alpha = alpha # For plotting
+        self.color = color # For plotting
+        self.linestyle = linestyle
+        self.linewidth = linewidth
+        self.norm_coeff = 1
+        if misc_utils.is_number(norm):
+            self.norm = True
+            self.norm_coeff = norm
+        else:
+            self.norm = norm
         if offset:
             # Some kind of vertical offsetting procedure
             if callable(offset):
@@ -249,6 +266,9 @@ class DataLayer:
         # Set personal velocity limits; defaults to None
         assert (vlims is None) or (hasattr(vlims, '__len__') and len(vlims) == 2)
         self.vlims = vlims
+        # A way to save moment images and stuff that isn't that memory intensive
+        # Format will be [img, wcs, vlims], and only saves one at a time
+        self.img_to_reuse = None
 
 
     def load(self, vmin=None, vmax=None):
@@ -268,12 +288,23 @@ class DataLayer:
         if self.vlims is not None:
             vmin, vmax = self.vlims
         if self.is_cube:
-            if self.cube_obj is None:
-                img, wcs = load_cube(self.filepath, vmin, vmax)
+            if self.img_to_reuse is not None and (vmin, vmax) == self.img_to_reuse[2]:
+                # We have a moment image cached
+                img, wcs = self.img_to_reuse[:2]
             else:
-                km_s = u.km / u.s
-                img = self.cube_obj.data.spectral_slab(vmin*km_s, vmax*km_s).moment(order=0).to_value()
-                wcs = self.cube_obj.wcs_flat
+                # No saved img for these vlims, make a new moment0
+                if self.cube_obj is None:
+                    img, wcs = load_cube(self.filepath, vmin, vmax)
+                else:
+                    km_s = u.km / u.s
+                    mom0 = self.cube_obj.data.spectral_slab(vmin*km_s, vmax*km_s).moment(order=0)
+                    try:
+                        img = mom0.to(u.K*km_s).to_value()
+                    except:
+                        img = ((mom0/km_s).to(u.K, equivalencies=self.cube_obj.equivalency())*km_s).to_value()
+                    wcs = self.cube_obj.wcs_flat
+                # Cache the image for later
+                self.img_to_reuse = [img, wcs, (vmin, vmax)]
         else:
             img, wcs = load_image(self.filepath, ext=self.extension)
         if self.f_to_apply is not None:
@@ -318,6 +349,8 @@ class CrossCut:
     """
     This class will manage an entire cross-cut figure.
     Written: July 6-7, 2020
+    Nov 12 2020 Note: i should rewrite this so I can efficiently plot several
+        cuts
     """
     def __init__(self, xcut_coords, vlims=None, log=False):
         """
@@ -382,7 +415,7 @@ class CrossCut:
         plt.sca(self.axes[subplot_name])
         return self.axes[subplot_name]
 
-    def update_plot(self):
+    def update_plot(self, norm=True, legend=True):
         """
         Add any layers that haven't been plotted already
         """
@@ -403,13 +436,14 @@ class CrossCut:
                 angle_array = np.log10(angle_array[1:])
             # Normalize/offset the array
             cut_array = layer.offset(cut_array)
-            if not self.log:
-                cut_array = normalize_crosscut(cut_array)
+            if (not self.log) and (norm if layer.norm is None else layer.norm):
+                cut_array = normalize_crosscut(cut_array) * layer.norm_coeff
             plt.plot(angle_array, cut_array, label=layer.label(self),
-                linestyle='-', marker=None, alpha=layer.alpha, lw=0.7)
+                marker=None, alpha=layer.alpha, lw=layer.linewidth, color=layer.color, linestyle=layer.linestyle)
             # Record that we already did this
             self.already_plotted.add(layer.name)
-        plt.legend()
+        if legend:
+            plt.legend()
 
     def overplot_power_law(self, exponent=-3, x_intercept=9., exp_label=None,
         end_x=5, linestyle='--', alpha=0.5, **plot_kwargs):
@@ -432,35 +466,41 @@ class CrossCut:
 
 
     def plot_image(self, layer_to_plot, vlims=None, stretch='arcsinh',
-        subplot_number=122):
+        subplot_number=122, line_color='r', cmap='Greys_r', cutout=True):
         """
         Plot an image with a superimposed arrow illustrating the cross cut`
         :param layer_to_plot: the layer name of the layer to use.
             If it's a cube, it'll be the moment 0 map with limits described here
         :param vlims: visual limits for plotting the image, specified in linear
         """
-        layer = self.layers[layer_to_plot]
-        img, wcs = layer.load(**self.vlim_kwargs())
-        # Make a cutout about 2x the length of the cross cut
-        width = 2 * self.len
-        img_cutout = Cutout2D(img, self.approx_midpoint, [width, width], wcs=wcs,
-            mode='partial', fill_value=np.nan)
-        # Find the specified stretch, or confirm callable
-        stretch = misc_utils.check_stretch(stretch)
-        # Use specified stretch
-        stretched_image = stretch(img_cutout.data)
-        # Use flquantiles for min, max unless we specified through vlims
-        if vlims is None:
-            lo, hi = misc_utils.flquantiles(stretched_image[np.isfinite(stretched_image)].flatten(), 10000)
-        else:
-            lo, hi = stretch(np.array(vlims))
-        self.axes['img'] = plt.subplot(subplot_number, projection=img_cutout.wcs)
-        plt.imshow(stretched_image, origin='lower', vmin=lo, vmax=hi, cmap='Greys_r')
+        if isinstance(layer_to_plot, str):
+            layer = self.layers[layer_to_plot]
+            img, wcs = layer.load(**self.vlim_kwargs())
+            if cutout:
+                # Make a cutout about 2x the length of the cross cut
+                width = 2 * self.len
+                img_cutout = Cutout2D(img, self.approx_midpoint, [width, width], wcs=wcs,
+                    mode='partial', fill_value=np.nan)
+                img = img_cutout.data
+                wcs = img_cutout.wcs
+            # Find the specified stretch, or confirm callable
+            stretch = misc_utils.check_stretch(stretch)
+            # Use specified stretch
+            stretched_image = stretch(img)
+            # Use flquantiles for min, max unless we specified through vlims
+            if vlims is None:
+                lo, hi = misc_utils.flquantiles(stretched_image[np.isfinite(stretched_image)].flatten(), 10000)
+            else:
+                lo, hi = stretch(np.array(vlims))
+            self.axes['img'] = plt.subplot(subplot_number, projection=wcs)
+            plt.imshow(stretched_image, origin='lower', vmin=lo, vmax=hi, cmap=cmap)
+        elif isinstance(layer_to_plot, CrossCut):
+            layer_to_plot.switch_axes('img')
         # Prepare to plot the line or arrow showing the cross cut
-        plot_kwargs = dict(color='r', transform=catalog.utils.get_transform())
+        plot_kwargs = dict(color=line_color, transform=catalog.utils.get_transform())
         coord_start_xcut, coord_end_xcut = self.coords
-        arrow = True # can think about this later
-        line_arrow_alpha = 0.2
+        arrow = False # can think about this later
+        line_arrow_alpha = 0.8
         if arrow:
             x, y = coord_start_xcut.ra.deg, coord_start_xcut.dec.deg
             dx = (coord_end_xcut.ra - coord_start_xcut.ra).deg
@@ -474,7 +514,7 @@ class CrossCut:
         else:
             plt.plot([coord_start_xcut.ra.deg, coord_end_xcut.ra.deg],
                 [coord_start_xcut.dec.deg, coord_end_xcut.dec.deg],
-                **plot_kwargs, alpha=line_arrow_alpha)
+                **plot_kwargs, alpha=line_arrow_alpha, lw=3)
 
     def mark_radius(self, radius, label=False, **plot_kwargs):
         """
@@ -699,6 +739,86 @@ def plot_m16():
     cross_cut_obj.switch_axes('img')
     plt.title("IRAC 3 image, cross cut overlaid")
     plt.show()
+
+
+def setup_paths(n, select=0):
+    """
+    Helper function, November 13, 2020
+    Feels ok to put it in crosscut.py, everything's already so mixed up it doesn't
+    really matter at this point.
+    This is a good central location to handle hardcoding different reg files.
+    Just handles the hardcoding I have to do for setup for all the regions
+    n =
+        0: across_each_pillar
+        1: p3_shelves
+        2: across all pillars (Jan 29 2021 image)
+    select: depends on the region, means different things
+        n=0: the pillar number (0-indexed)
+        n=1: ??
+        n=2: which across-all path (0 and 2 are good candidates)
+    """
+    if n == 0:
+        # Colors
+        cmap = mpl_cm.get_cmap('autumn')
+        colors = [mpl_colors.to_hex(cmap(x)) for x in (0, 0.33, 0.66, 0.99)]
+        # Load coord pairs
+        reg_filename = catalog.utils.search_for_file("catalogs/across_each_pillar.reg") # 5 regions in this now
+        path_list = coords_from_region(reg_filename, index=None)
+        # Specific to across_each_pillar; select pillar
+        selected_pillar = select
+        pillar_names = ['Pillar 1', 'Pillar 2', 'Pillar 3']
+        region_name = pillar_names[selected_pillar]
+        # Gather 4 (or 3) paths for each possible selected pillar
+        path_name = ['North', 'Mid-N', 'Mid', 'South']
+        path_list = path_list[selected_pillar*4:(selected_pillar+1)*4]
+        if selected_pillar == 2:
+            path_name.pop(1)
+        else:
+            path_name[2] += '-S'
+        # Vlims for this cut
+        vlims = (23, 27)
+        # Number of paths -> grid shape
+        grid_shape = (len(path_list), 2)
+    elif n == 1:
+        # Colors
+        cmap = mpl_cm.get_cmap('autumn')
+        colors = [mpl_colors.to_hex(cmap(x)) for x in (0, 0.33, 0.66, 0.99)]
+        # Load coord pairs
+        reg_filename = catalog.utils.search_for_file("catalogs/p3_shelves.reg")
+        path_list = coords_from_region(reg_filename, index=None)
+        # Select region
+        selected_region = select # can be 0 1 2 3
+        region_names = ["P3 West Tail", "P3 East Tail", "Southern Shelf 1", "Southern Shelf 2"]
+        region_name = region_names[selected_region]
+        # If 0 or 1, include the 0th region
+        if selected_region == 0:
+            path_list = path_list[:4]
+        elif selected_region == 1:
+            path_list = [path_list[0]] + path_list[4:7]
+        elif selected_region == 2:
+            path_list = path_list[7:9]
+        else:
+            path_list = path_list[9:]
+        # Vlims for this cut
+        vlims = (19, 24)
+        grid_shape = (len(path_list), 2)
+        path_name = [str(x) for x in range(1, 1+len(path_list))]
+    elif n == 2:
+        # Colors
+        colors = ['g']
+        # Load coord pairs and select path
+        reg_filename = catalog.utils.search_for_file("catalogs/across_all_pillars.reg")
+        path_list = [coords_from_region(reg_filename, index=select)]
+        region_name = "M16 pillars"
+        path_name = [region_name]
+        vlims = (20, 28)
+        grid_shape = (1, 2) # subplot2grid
+    else:
+        raise NotImplementedError("I haven't set that reg file up yet")
+    return colors, path_list, path_name, vlims, grid_shape, region_name
+
+
+
 
 if __name__ == '__main__':
     plot_m16()

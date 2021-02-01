@@ -1,9 +1,11 @@
 import os, sys
 import numpy as np
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 10}
-matplotlib.rc('font', **font)
+if __name__ == "__main__":
+    font = {'family': 'sans', 'weight': 'normal', 'size': 11}
+    matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import scipy.constants as cst
 from scipy.interpolate import interp1d
@@ -14,6 +16,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
+from astropy.nddata import Cutout2D
 from spectral_cube import SpectralCube
 from reproject import reproject_interp
 import pvextractor
@@ -355,6 +358,11 @@ def integrate_shell_on_image(use_background=False, plot_anything=False):
     """
     This used to use the "geometric_model" module; see commits prior to
     Nov 3 2020 to see that version
+    This is now the LATEST version of the mass estimate, using a half ellipse
+    I use a geometric correction of 7/6 to account for the azimuthal extent
+    I also use the same geometric correction as before (I should justify that)
+    I will also plot the mask here, against the column density map
+    Feb 1, 2021: improved to zoom more on the shell, per ref's comments
     """
     Rv = 3.1
     d = Draine_data(Rv)
@@ -370,35 +378,122 @@ def integrate_shell_on_image(use_background=False, plot_anything=False):
     tau160, tau160_h = load_tau()
     tau160 = 10.**tau160
     tau160_w = WCS(tau160_h)
+    tau160_background = 10**(-2.6) # np.nanmedian(tau160) is really high
     if use_background:
         # Subtract an optical depth background
         # Has a factor of ~2 effect on the mass
-        tau160_background = 10**(-2.6) # np.nanmedian(tau160) is really high
         print(f"Using a tau160 background of {tau160_background:.2E}")
         tau160 -= tau160_background
 
     # mask to just the shell
     ellipse_mask = ellipse_region_mask(shape=tau160.shape, w=tau160_w, half=1)
+    tau160_copy = tau160.copy()
     tau160[~ellipse_mask] = np.nan
 
     N = convert_tautoN_C(tau160, Cext160)
     pixel_area = get_physical_area_pixel(tau160, tau160_w, losD)
     total_mass = pixel_area * np.sum(N[np.isfinite(N)]) * Hmass * u.g / (u.cm**2)
-    print(f"Mass under mask {total_mass.to('solMass'):.3E}")
+    print(f"Mass under mask: {total_mass.to('solMass'):.3E}")
     geometric_correction_3d = 2.5
     extended_shell_correction = 7./6
-    total_mass *= geometric_correction_3d * extended_shell_correction
-    print(f"Total corrected mass {total_mass.to('solMass'):.3E}")
+    total_mass *= geometric_correction_3d
+    print(f"Mass with 3D geometric correction only: {total_mass.to('solMass'):.3E}")
+    print(f"Total corrected mass: {(total_mass*extended_shell_correction).to('solMass'):.3E}")
+
+    print()
+    A = 77*u.pc**2
+    print(f"If the quarter-spheroid surface area is {A:.1f}, then")
+    N_thru_shell = (total_mass / A / u.M_p).to(u.cm**-2)
+    N_Av = 1.9e21*u.cm**-2
+    print(f"Column density thru shell {N_thru_shell:.2E}, Av {(N_thru_shell/N_Av).decompose().to_value():.1f}")
+
+    print("Column density samples:")
+    tau160_sample_1 = 10.**(-2.2) * u.cm**-2
+    tau160_sample_2 = 10.**(-1.6) * u.cm**-2
+    tau160_background = tau160_background * u.cm**-2
+    N_sample_1 = convert_tautoN_C(tau160_sample_1, Cext160)
+    N_sample_2 = convert_tautoN_C(tau160_sample_2, Cext160)
+    N_background = convert_tautoN_C(tau160_background, Cext160)
+    print(f"Low: {N_sample_1:.2E}, Av {(N_sample_1/N_Av).decompose().to_value():.1f}")
+    print(f"High: {N_sample_2:.2E}, Av {(N_sample_2/N_Av).decompose().to_value():.1f}")
+    print(f"Background: {N_background:.2E}, Av {(N_background/N_Av).decompose().to_value():.1f}")
 
     # extent_arrays = get_physical_image_axes(N, tau160_w, losD)
     # ext = (extent_arrays[1][0], extent_arrays[1][-1], extent_arrays[0][0], extent_arrays[0][-1])
     # print(ext)
 
     if plot_anything:
-        plt.imshow(np.log10(N), origin='lower')
-        plt.title("column density N(H) (cm-2)")
-        plt.colorbar()
-        plt.show()
+        cmap = 'inferno'
+        cbar_tick_labelsize = 12
+        cbar_labelsize = 12
+        cbar_labelpad = -70
+        T, T_h = load_T()
+        fig = plt.figure(figsize=(16, 9))
+        axT = plt.subplot(121, projection=tau160_w)
+        caxT = inset_axes(axT, width="100%", height="5%", loc='lower center',
+            bbox_to_anchor=(0, 1.01, 1, 1), bbox_transform=axT.transAxes, borderpad=0)
+        im = axT.imshow(T, origin='lower', vmin=15, vmax=55, cmap=cmap)
+        cbarT = fig.colorbar(im, cax=caxT, orientation='horizontal',
+            ticks=[20, 30, 40, 50])
+        cbarT.set_label("Dust temperature (K)", labelpad=cbar_labelpad, fontsize=cbar_labelsize)
+        caxT.xaxis.set_ticks_position('top')
+        caxT.tick_params(labelsize=cbar_tick_labelsize)
+        axT.tick_params(axis='x', direction='in')
+        axT.tick_params(axis='y', direction='in')
+        # cbarT.outline.set_edgecolor("white")
+        axT.set_xlabel("Right Ascension")
+        axT.set_ylabel("Declination")
+
+        axN = plt.subplot(122, projection=tau160_w)
+        caxN = inset_axes(axN, width="100%", height="5%", loc='lower center',
+            bbox_to_anchor=(0, 1.01, 1, 1), bbox_transform=axN.transAxes, borderpad=0)
+        N = np.log10(convert_tautoN_C(tau160_copy, Cext160))
+        im = axN.imshow(N, origin='lower', vmin=21.5, vmax=23.5, cmap=cmap)
+        cbarN = fig.colorbar(im, cax=caxN, orientation='horizontal',
+            ticks=[22, 22.5, 23])
+        caxN.set_xticklabels(['22', '23.5', '23'])
+        cbarN.set_label("Hydrogen nucleus column density [cm$^{-2}$]", labelpad=cbar_labelpad-2, fontsize=cbar_labelsize)
+        caxN.xaxis.set_ticks_position('top')
+        caxN.tick_params(labelsize=cbar_tick_labelsize)
+        axN.tick_params(axis='x', direction='in')
+        axN.tick_params(axis='y', direction='in')
+        axN.set_xlabel(" ")
+        axN.tick_params(axis='y', labelleft=False)
+        # axN.tick_params(axis='x', labelbottom=False)
+
+        # inset_img = Cutout2D(N, (600, 500), (400, 300), wcs=tau160_w) # 300:700, 450:750 (pixel ranges)
+        inset_img = Cutout2D(N, (585, 515), (280, 280), wcs=tau160_w) # modified because ref wanted more zoom (feb 1, 2021)
+        ellipse_mask = ellipse_region_mask(shape=inset_img.shape, w=inset_img.wcs, half=1)
+
+        mask_contour = ellipse_mask.astype(float)
+        mask_contour_kw = dict(linewidths=1, colors='k', levels=[0.5], alpha=0.9)
+        def add_mask_contour(ax):
+            ax.contour(mask_contour, **mask_contour_kw)
+
+
+        insetaxkwargs = dict(width="42%", height="42%", loc='upper right')
+        # insetaxN = inset_axes(axN, width="36%", height="48%", loc='upper right')
+        insetaxN = inset_axes(axN, **insetaxkwargs) # modified because ref wanted more zoom (feb 1, 2021)
+        insetaxN.tick_params(axis='x', labelbottom=False)
+        insetaxN.tick_params(axis='y', labelleft=False)
+        insetaxN.set_xticks([])
+        insetaxN.set_yticks([])
+        N = N[inset_img.slices_original]
+        insetaxN.imshow(N, origin='lower', vmin=21.5, vmax=23.5, cmap=cmap)
+        add_mask_contour(insetaxN)
+
+        insetaxT = inset_axes(axT, **insetaxkwargs)
+        insetaxT.tick_params(axis='x', labelbottom=False)
+        insetaxT.tick_params(axis='y', labelleft=False)
+        insetaxT.set_xticks([])
+        insetaxT.set_yticks([])
+        T = T[inset_img.slices_original]
+        insetaxT.imshow(T, origin='lower', vmin=15, vmax=55, cmap=cmap)
+        add_mask_contour(insetaxT)
+
+        plt.subplots_adjust(wspace=0, bottom=0, top=0.92, left=0.1, right=0.95)
+        fig.savefig("/home/ramsey/Pictures/2021-02-01-imgs/dust_mask_zoomed_4.png")
+        # plt.show()
 
 
 def integrate_shell_cii_mask(n=2, test_mask=False, use_background=False, plot_anything=False, Rv=3.1,
@@ -521,6 +616,17 @@ def load_tau():
     return img, h
 
 
+def load_T():
+    """
+    Load the image and header
+    """
+    with fits.open(f"{herschel_path}{fit2p_filename}") as hdul:
+        img = hdul['solutionT'].data
+        h = hdul['solutionT'].header
+    return img, h
+
+
+
 def make_cii_mom0():
     """
     Make & save these moment 0 maps:
@@ -611,10 +717,10 @@ def prepare_img_for_plot(img, scale=np.arcsinh, low_cutoff=np.nanmedian):
 
 if __name__ == "__main__":
     # ellipse_region_mask(savemask=True, half=True)
-    print("CII")
-    integrate_shell_cii_mask(n=2)
+    # print("CII")
+    # integrate_shell_cii_mask(n=2)
     print("ELLIPSE")
-    integrate_shell_on_image()
+    integrate_shell_on_image(plot_anything=True)
     # m1_old, m2_old = 2.42e4*u.solMass, 4.02e4*u.solMass
     # m1_new, m2_new = 1.79e4*u.solMass, 2.82e4*u.solMass
     # print(m1_new/m1_old)

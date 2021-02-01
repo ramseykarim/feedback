@@ -1,8 +1,13 @@
 import numpy as np
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 6}
-matplotlib.rc('font', **font)
+if __name__ == "__main__":
+    font = {'family': 'sans', 'weight': 'normal', 'size': 11}
+    matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
+import matplotlib.colors as mpl_colors
+import matplotlib.cm as mpl_cm
+import matplotlib.patches as mpatches
+import matplotlib.transforms as mpl_transforms
 import sys
 import os
 
@@ -852,63 +857,9 @@ def run_vectors_from_ds9(filename):
     del cube
 
 
-"""
-Adding some stuff, Oct 8, 2020, more M16 PV diagrams
-This time my big idea is to emphasize use of contours, to help the eye see
-the intensity of the lines, and to reproject PV diagrams onto other grids.
-"""
-
-# These are kinda useful
-# I want to keep this import statement down here so I avoid "circular dependencies"
-# https://stackabuse.com/python-circular-imports/
-from . import cube_pixel_spectra as cps1
-from . import cube_pixel_spectra_2 as cps2
-
-
-def try_reproject_pv():
-    """
-    Modeling this function on the plot_pv function from compressed_CO_pv.py
-    """
-    colors = ['DarkGreen', 'DarkOrchid', 'DarkOrange']
-    reg_filename = catalog.utils.search_for_file("catalogs/across_all_pillars.reg")
-    path_list = path_from_ds9(reg_filename, None, width=m16_allpillars_series_kwargs['pvpath_width'])
-    # subcube = cps2.cutout_subcube(data_filename=filename, reg_filename=reg_filename)
-    ########### LEFT OFF HERE
-
-
-    subcubes = cps2.get_all_subcubes()
-    path = path_list[0]
-    sl_list = [None]*3
-    for idx, subcube in enumerate(subcubes):
-        sl = pvextractor.extract_pv_slice(subcube, path)
-        sl_list[idx] = sl
-
-    selected_index = 1
-    sl_cii_wcs = WCS(sl_list[selected_index].header)
-    fig = plt.figure(figsize=(8, 7))
-    ax = plt.subplot(111, projection=sl_cii_wcs)
-    im = plt.imshow(sl_list[selected_index].data, origin='lower', aspect=(sl_list[selected_index].data.shape[1]/sl_list[selected_index].data.shape[0]))
-
-    plt.show()
-
-    contour_args_list = [None]*3
-    contour_kwargs_list = [None]*3
-    for idx, sl in enumerate(sl_list):
-        if idx == 0:
-            continue
-        else:
-            sl_wcs = WCS(sl.header)
-            sl_reproj = reproject_interp((sl.data, sl_wcs), sl_cii_wcs, sl_list[0].data.shape, return_footprint=False)
-            contour_args_list[idx] = (sl_reproj,)
-            contour_kwargs_list[idx] = dict(linewidths=0.7, colors=colors[idx], alpha=1)
-
-            ax.contour(*contour_args_list[idx], **contour_kwargs_list[idx])
-
-    plt.show()
-
 
 if __name__ == "__main__":
-    try_reproject_pv()
+    print("nothing here")
     # for i in range(len(filenames)):
     # for i in [3,]:
     #     cube = cube_utils.CubeData(filenames[i])

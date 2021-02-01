@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 8}
-matplotlib.rc('font', **font)
+if __name__ == "__main__":
+    font = {'family': 'sans', 'weight': 'normal', 'size': 8}
+    matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 import sys
 import warnings
@@ -26,8 +27,8 @@ from math import ceil
 from . import misc_utils
 from . import catalog
 from . import cube_utils
-from . import pvdiagrams
 from . import crosscut
+pvdiagrams = crosscut.pvdiagrams
 # This is where I "started" this task, some functions might be useful
 from . import cube_pixel_spectra as cps1
 """
@@ -46,7 +47,7 @@ __author__ = "Ramsey Karim"
 cube_info = {}
 
 def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
-    length_scale=None, global_center_coord=None, reg_index=0):
+    length_scale=None, global_center_coord=None, reg_index=0, return_cutout=False):
     """
     This is just the first few lines of cps1.area_fit_attempt
     I think this subcube will be useful, so I'll keep using it.
@@ -86,17 +87,31 @@ def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
             None, None, pvpath_width=10*u.arcsec, points_not_paths=True
         )
 
-    if length_scale_mult is not None:
-        img, w = crosscut.DataLayer("", data_filename, cube=True, alpha=0.7, vlims=(5, 40)).load()
-        img_cutout = Cutout2D(img, global_center_coord, [length_scale*length_scale_mult]*2, wcs=w, mode='partial', fill_value=np.nan)
-
     cube = cube_utils.CubeData(data_filename)
     cube_info['dir'] = cube.directory
     if length_scale_mult is None:
         return cube.data.with_spectral_unit(u.km/u.s)
 
-    # Make a subcube using those slices. This has good WCS (even though it doesn't look like it)
-    subcube = cube.data[:, img_cutout.slices_original[0], img_cutout.slices_original[1]]
+    if length_scale_mult is not None:
+        try:
+            img = cube.data.moment0()
+            w = img.wcs
+            img = img.to_value()
+            # img, w = crosscut.DataLayer("", data_filename, cube=True, alpha=0.7, vlims=(5, 40)).load()
+            img_cutout = Cutout2D(img, global_center_coord, [length_scale*length_scale_mult]*2, wcs=w, mode='partial', fill_value=np.nan)
+        except:
+            print("(cutout_subcube) failed to get WCS info for the cube")
+            img = w = img_cutout = None
+
+    # just return the Cutout2D
+    if return_cutout:
+        return img_cutout
+
+    if img_cutout is not None:
+        # Make a subcube using those slices. This has good WCS (even though it doesn't look like it)
+        subcube = cube.data[:, img_cutout.slices_original[0], img_cutout.slices_original[1]]
+    else:
+        subcube = cube.data
     return subcube.with_spectral_unit(u.km/u.s)
 
 
@@ -211,13 +226,55 @@ def initialize_gaussian(init_conds, g, ij):
     return g
 
 
-def fit_gaussian(init_conds, masked_cube, g, ij, fitter, verblevel=1):
+def initialize_double_gaussian(init_conds, g, ij):
+    """
+    :param init_conds: dictionary returned by prepare_initial_conditions
+    :param g: a SINGLE Gaussian1D object, ALREADY FITTED, to base initial
+        conditions on
+    :param ij: tuple array indices
+    """
+    i, j = ij
+    # Amplitude
+    A = g.amplitude/2
+    A_bounds = (A*0.85, A*1.15)
+    # Standard deviation
+    std_manual = init_conds['linewidth_manual'][i, j] / 2.355
+    std_spcube = init_conds['linewidth_spectralcube'][i, j] / 2.355
+    if std_manual < 0.3 or std_manual > 2.5:
+        std = 1.5
+    else:
+        std = std_manual
+    std_bounds = (0.2, 3)
+    # Mean
+    mean_0 = g.mean - 1.4
+    mean_1 = g.mean + 1
+    mean_bounds = (g.mean*0.85, g.mean*1.15)
+    # Create the double Gaussian
+    doubleG = models.Gaussian1D() + models.Gaussian1D()
+    doubleG.amplitude_0 = A
+    doubleG.amplitude_1 = A
+    # doubleG.amplitude_1.tied = lambda m: m.amplitude_0
+    doubleG.amplitude_0.bounds = A_bounds
+    doubleG.amplitude_1.bounds = A_bounds
+    doubleG.mean_0 = mean_0
+    doubleG.mean_1 = mean_1
+    doubleG.mean_0.bounds = mean_bounds
+    doubleG.mean_1.bounds = mean_bounds
+    doubleG.stddev_0 = std
+    doubleG.stddev_1 = std
+    doubleG.stddev_0.bounds = std_bounds
+    doubleG.stddev_1.bounds = std_bounds
+    return doubleG
+
+
+def fit_gaussian(init_conds, masked_cube, g, ij, fitter, verblevel=1, double=False):
     """
     :param init_conds: return dict of prepare_initial_conditions
     :param masked_cube: already masked SpectralCube
     :param g: Gaussian1D already initialized
     :param ij: tuple array indices
     :param fitter: some kind of astropy.modeling.fitting fitter
+    :param double: fit 2 Gaussian1Ds near the peak of the single Gaussian
     :returns: fitted Gaussian1D and the resulting model array
     """
     i, j = ij
@@ -238,13 +295,19 @@ def fit_gaussian(init_conds, masked_cube, g, ij, fitter, verblevel=1):
         weights[weights < 1.3] = 1.3
         weights = (weights/np.max(weights))/1.3
         g_fit = fitter(g, fit_x, fit_y, weights=weights, verblevel=verblevel)
+
+        if double:
+            doubleG = initialize_double_gaussian(init_conds, g_fit, ij)
+            g_fit = fitter(doubleG, fit_x, fit_y, weights=weights, verblevel=verblevel)
+
         g_fit_array = g_fit(init_conds['spectral_axis'])
         return g_fit, g_fit_array, masked_spectrum_val
     else:
         nan_array = np.full(masked_cube.shape[0], np.nan)
         return None, nan_array, nan_array
 
-def fit_live_interactive(cube):
+
+def fit_live_interactive(cube, double=False):
     # INTERACTIVE
 
     masked_cube = mask_with_best_setting(cube)
@@ -258,9 +321,13 @@ def fit_live_interactive(cube):
     ax_img.tick_params(axis='x', labelbottom=False)
     ax_spectr = plt.subplot2grid((2, 5), (0, 2), colspan=3, rowspan=2, fig=fig)
 
-    ax_img.imshow(init_conds['moment0'], origin='lower')
+    im = ax_img.imshow(init_conds['moment0'], origin='lower')
+    cbar = fig.colorbar(im, ax=ax_img)
+    cax = cbar.ax
     ax_img.set_title("Moment 0 (masked)")
-    ax_img2.imshow(cube.spectral_slab(15*u.km/u.s, 35*u.km/u.s).moment0().to_value(), origin='lower')
+    im = ax_img2.imshow(cube.spectral_slab(15*u.km/u.s, 35*u.km/u.s).moment0().to_value(), origin='lower')
+    cbar2 = fig.colorbar(im, ax=ax_img2)
+    cax2 = cbar2.ax
     ax_img2.set_title("Moment 0 [15, 35] km/s")
 
     ax_spectr.plot(spectral_axis, masked_cube.mean(axis=(1, 2)).to(u.K).to_value(), linewidth=0.7)
@@ -289,18 +356,30 @@ def fit_live_interactive(cube):
             """
             astropy modeling does NOT like NaNs. That's weird! They should!
             """
-            g_fit, g_fit_array, masked_spectrum_val = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter)
+            if double:
+                g_fit, g_fit_array, masked_spectrum_val = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter, double=True)
+            else:
+                g_fit, g_fit_array, masked_spectrum_val = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter)
+
+            """
+            FIT 2 GAUSSIANS HERE
+            """
+
             if g_fit is not None:
-                print("Parameter [MIN : init_val/fitted_val : MAX]")
-                print(f"Ampl [{g_fit.amplitude.min:6.2f} {g_init.amplitude.value:6.2f}/{g_fit.amplitude.value:6.2f} {g_fit.amplitude.max:6.2f}]")
-                print(f"Mean [{g_fit.mean.min:6.2f} {g_init.mean.value:6.2f}/{g_fit.mean.value:6.2f} {g_fit.mean.max:6.2f}]")
-                print(f"Stdd [{g_fit.stddev.min:6.2f} {g_init.stddev.value:6.2f}/{g_fit.stddev.value:6.2f} {g_fit.stddev.max:6.2f}]")
+                print(g_fit)
+                # print("Parameter [MIN : init_val/fitted_val : MAX]")
+                # print(f"Ampl [{g_fit.amplitude.min:6.2f} {g_init.amplitude.value:6.2f}/{g_fit.amplitude.value:6.2f} {g_fit.amplitude.max:6.2f}]")
+                # print(f"Mean [{g_fit.mean.min:6.2f} {g_init.mean.value:6.2f}/{g_fit.mean.value:6.2f} {g_fit.mean.max:6.2f}]")
+                # print(f"Stdd [{g_fit.stddev.min:6.2f} {g_init.stddev.value:6.2f}/{g_fit.stddev.value:6.2f} {g_fit.stddev.max:6.2f}]")
             else:
                 print("No fit was made")
 
             spectrum = cube[:, i, j].to_value()
             ax_spectr.plot(spectral_axis, spectrum, color='k', linewidth=0.7, label='Data', marker='o', alpha=0.2, markersize=3)
             ax_spectr.plot(spectral_axis, masked_spectrum_val, color='Indigo', marker='x', linewidth=2, linestyle='dotted', alpha=0.9, label='Data fitted to')
+            if double and g_fit is not None:
+                for g in g_fit:
+                    ax_spectr.plot(spectral_axis, g(init_conds['spectral_axis']), color='orange', linestyle='dotted', linewidth=0.8, label="Fitted", alpha=0.5)
 
             ax_spectr.plot(spectral_axis, g_fit_array, color='orange', linestyle='dotted', linewidth=1, label="Fitted", alpha=0.9)
             ax_spectr.plot(spectral_axis, spectrum - g_fit_array, color='k', linewidth=0.7, label='Residuals', alpha=0.6)
@@ -313,7 +392,7 @@ def fit_live_interactive(cube):
             ax_spectr.set_xlabel("v (km/s)")
             ax_spectr.set_ylabel("T (K)")
             ax_spectr.set_xlim((0, 45))
-            ax_spectr.set_ylim((-5, 55))
+            ax_spectr.set_ylim((-5, 35))
             ax_spectr.legend()
             plot_info_dict['currently_selecting'] = False
         elif event.button == 1 and event.inaxes is ax_spectr:
@@ -338,8 +417,10 @@ def fit_live_interactive(cube):
                 print(f"Integrated between {vlo:.1f} and {vhi:.1f} km/s. Intensity limits: {ilo:.1f}, {ihi:.1f}")
                 mom0_unmasked = cube.spectral_slab(vlo*u.km/u.s, vhi*u.km/u.s).moment(order=0).to(u.K*u.km/u.s).to_value()
                 ax_img.clear()
+                cax.clear()
                 im = ax_img.imshow(mom0_unmasked, origin='lower', vmin=ilo, vmax=ihi)
                 ax_img.set_title(f"Integrated cube [{vlo:4.1f}, {vhi:4.1f}] km/s")
+                fig.colorbar(im, cax=cax)
                 if plot_info_dict['x1'] is not None:
                     i, j = plot_info_dict['xij']
                     plot_info_dict['x1'], = ax_img.plot([j], [i], 'x', color='red')
@@ -454,9 +535,9 @@ def subtract_hybrid_gaussian(cube):
     """
     pass
 
-def fit_image_to_file(cube):
+def fit_image_to_file(cube, double=False):
     """
-    Do the big fit but only on stuff above half power, and only one Gaussian1D
+    Do the big fit but only on stuff above half power
     """
     masked_cube = mask_with_best_setting(cube)
     init_conds = prepare_initial_conditions(cube, masked_cube)
@@ -464,8 +545,10 @@ def fit_image_to_file(cube):
     fitter = fitting.SLSQPLSQFitter()
     g_init = models.Gaussian1D(25, 26, 1, bounds={'amplitude': (0, 50), 'mean': (22, 28), 'stddev': (1, 3.5)})
     n_params = len(g_init.param_names)
+    if double:
+        n_params *= 2
 
-    results = np.zeros((n_params*2, *masked_cube.shape[1:]))
+    results = np.zeros((n_params, *masked_cube.shape[1:]))
     residuals_array = np.zeros(masked_cube.shape)
     models_array = np.zeros(masked_cube.shape)
 
@@ -480,13 +563,18 @@ def fit_image_to_file(cube):
         i, j = np.unravel_index(flat_idx, masked_cube.shape[1:])
 
         g_init = initialize_gaussian(init_conds, g_init, (i, j))
-        g_fit, fitted_spectrum, _ = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter, verblevel=0)
+        g_fit, fitted_spectrum, _ = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter, verblevel=0, double=double)
 
-        results[:n_params, i, j] = g_init.param_sets[:, 0]
         if g_fit is not None:
-            results[n_params:, i, j] = g_fit.param_sets[:, 0]
+            if double:
+                # Put the thinner Gaussian first
+                individual_models = sorted(g_fit, key=lambda m: m.stddev)
+                results[:n_params//2, i, j] = individual_models[0].param_sets[:, 0]
+                results[n_params//2:, i, j] = individual_models[1].param_sets[:, 0]
+            else:
+                results[:, i, j] = g_fit.param_sets[:, 0]
         else:
-            results[n_params:, i, j] = np.nan
+            results[:, i, j] = np.nan
         residuals_array[:, i, j] = cube[:, i, j].to_value() - fitted_spectrum
         models_array[:, i, j] = fitted_spectrum
         # Logging again
@@ -500,8 +588,8 @@ def fit_image_to_file(cube):
     print(f"Finished at {datetime.datetime.now(datetime.timezone.utc).astimezone().ctime()}")
     print(f"Time elapsed: {str(datetime.timedelta(seconds=(timing_t1-timing_t0)))}")
 
-    filename_stub = "models/gauss_fit_above_1G_v4_smooth"
-    param_units = ['K', 'km / s', 'km / s']
+    filename_stub = "models/gauss_fit_above_2G_v1_smooth"
+    param_units = ['K', 'km / s', 'km / s'] * (int(double) + 1)
     wcs_flat = cube.moment(order=0).wcs
     to_header = lambda : wcs_flat.to_header()
     phdu = fits.PrimaryHDU(header=to_header())
@@ -512,14 +600,15 @@ def fit_image_to_file(cube):
     phdu.header['COMMENT'] = "Cutout with length_scale_mult 4"
     hdu_list = [phdu]
     for i in range(n_params):
+        if double:
+            fitted_suffix = f"_{i // len(g_init.param_names)}"
+        else:
+            fitted_suffix = ""
         hdu = fits.ImageHDU(data=results[i], header=to_header())
-        hdu.header['EXTNAME'] = g_init.param_names[i] + "_INIT"
+        hdu.header['EXTNAME'] = g_init.param_names[i % len(g_init.param_names)] + fitted_suffix
         hdu.header['BUNIT'] = param_units[i]
         hdu_list.append(hdu)
-        hdu = fits.ImageHDU(data=results[i+n_params], header=to_header())
-        hdu.header['EXTNAME'] = g_init.param_names[i] + "_FIT"
-        hdu.header['BUNIT'] = param_units[i]
-        hdu_list.append(hdu)
+
     hdul = fits.HDUList(hdu_list)
     hdul.writeto(cube_utils.os.path.join(cube_info['dir'], f"{filename_stub}.param.fits"), overwrite=True)
 
@@ -540,7 +629,7 @@ def fit_image_to_file(cube):
     print("Done!")
 
 
-def investigate_fit(cube):
+def investigate_fit(cube, double=False):
     """
     Investiate the fit made in the previous function
 
@@ -551,7 +640,10 @@ def investigate_fit(cube):
     contour_args = (pillar_1_highlight.to_value(),)
     contour_kwargs = dict(levels=[20, 30, 40, 50, 60], linewidths=1, colors='k', alpha=0.9)
 
-    filename_stub = "models/gauss_fit_above_1G_v4_smooth"
+    if double:
+        filename_stub = "models/gauss_fit_above_2G_v1_smooth"
+    else:
+        filename_stub = "models/gauss_fit_above_1G_v4_smooth"
     param_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".param.fits")
     resid_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".resid.fits")
     model_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".model.fits")
@@ -592,12 +684,14 @@ def investigate_fit(cube):
                 ax_img.lines.remove(plot_info_dict['x1'])
             plot_info_dict['x1'], = ax_img.plot([j], [i], 'x', color='red')
             plot_info_dict['xij'] = (i, j)
-            A = hdul['amplitude_INIT'].data[i, j]
-            mean = hdul['mean_INIT'].data[i, j]
-            stddev = hdul['stddev_INIT'].data[i, j]
             resid_spectr = resid_cube[:, i, j]
             model_spectr = model_cube[:, i, j]
             ax_spectr.plot(spectral_axis, resid_spectr+model_spectr, color='k', label='original', linewidth=0.7, marker='o', alpha=0.2, markersize=3)
+            if double:
+                g_thin = models.Gaussian1D(*(hdul[x].data[i, j] for x in ('amplitude_0', 'mean_0', 'stddev_0')))
+                g_thick = models.Gaussian1D(*(hdul[x].data[i, j] for x in ('amplitude_1', 'mean_1', 'stddev_1')))
+                ax_spectr.plot(spectral_axis, g_thin(spectral_axis.to_value()),color='Indigo', label='thin comp', linewidth=0.7, alpha=0.5, linestyle='--')
+                ax_spectr.plot(spectral_axis, g_thick(spectral_axis.to_value()),color='MediumOrchid', label='thick comp', linewidth=0.7, alpha=0.5, linestyle='--')
             ax_spectr.plot(spectral_axis, model_spectr, color='Indigo', label='model', linewidth=0.7, alpha=0.6)
             ax_spectr.plot(spectral_axis, resid_spectr, color='orange', label='resid', linewidth=0.7, alpha=0.7)
             ax_spectr.legend()
@@ -696,6 +790,35 @@ def calculate_noise(cube):
     plt.show()
 
 
+class ImgContourPair:
+
+    default_alpha = 0.9
+    smooth_spatial_ = None
+
+    def __init__(self, moment_map, name, levels=None, color='k'):
+        self.moment_map = moment_map
+        self.wcs = moment_map.wcs
+        self.levels = levels
+        self.color = color
+
+    def img(self):
+        return self.moment_map.to_value()
+
+    def carg(self):
+        return (ImgContourPair.smooth_spatial_(self.moment_map.to_value(), self.wcs),)
+
+    def ckwarg(self):
+        kwargs = {}
+        if self.levels is not None:
+            kwargs['levels'] = self.levels
+        if self.color is not None:
+            kwargs['colors'] = self.color
+        kwargs['alpha'] = ImgContourPair.default_alpha
+        kwargs['linewidths'] = 1
+        return kwargs
+
+
+
 def check_if_wings_trace_peak_emission(cube):
     """
     I need the original cube as arg, and then I can load the fitted stuff
@@ -703,10 +826,17 @@ def check_if_wings_trace_peak_emission(cube):
     """
     kms = u.km/u.s
     vel_bounds = 20*kms, 30*kms
+    smooth_beam = cube_utils.Beam(18*u.arcsec)
+    ImgContourPair.smooth_spatial_ = lambda img, w: smooth_spatial(img, w, cube, smooth_beam)
 
     pillar_1_highlight = cube.spectral_slab(25*kms, 27*kms).moment0()
-    contour_args = (pillar_1_highlight.to_value(),)
-    contour_kwargs = dict(levels=[20, 30, 40, 50, 60], linewidths=1, colors='k', alpha=0.9)
+    pillar_1_highlight = ImgContourPair(pillar_1_highlight, "P1", levels=[20, 30, 40, 50, 60], color='k')
+
+    background_35_highlight = cube.spectral_slab(32*kms, 36*kms).moment0()
+    background_35_highlight = ImgContourPair(background_35_highlight, "BG35", levels=[11, 20, 35], color='r')
+
+    background_30_highlight = cube.spectral_slab(29*kms, 30*kms).moment0()
+    background_30_highlight = ImgContourPair(background_30_highlight, "BG30", levels=[6,11], color='orange')
 
     # original_mom0 = cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
 
@@ -716,29 +846,36 @@ def check_if_wings_trace_peak_emission(cube):
     model_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".model.fits")
     resid_cube = cube_utils.SpectralCube.read(resid_fn)
     red_wing_highlight = resid_cube.spectral_slab(27*kms, 30*kms).moment0().to(u.K*u.km/u.s)
-    cargs2 = (red_wing_highlight.to_value(),)
-    ckwargs2 = dict(levels=[6, 9], linewidths=1, colors='w', alpha=1)
+    red_wing_highlight = ImgContourPair(red_wing_highlight, "Redshifted Wing", levels=[6, 9], color='w')
     # resid_mom0 = resid_cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
     fig = plt.figure(figsize=(12, 10))
-    ax1 = plt.subplot(121, projection=cube.wcs, slices=('x', 'y', 50))
-    ax2 = plt.subplot(122, projection=resid_cube.wcs, slices=('x', 'y', 50))
+    ax1 = plt.subplot(121, projection=cube.wcs, slices=('x', 'y', 0))
+    ax2 = plt.subplot(122, projection=resid_cube.wcs, slices=('x', 'y', 0))
 
     with fits.open(param_fn) as hdul:
         std_fitted = hdul['stddev_FIT'].data
-    # im = ax1.imshow(pillar_1_highlight.to_value(), origin='lower', vmin=0, vmax=85, cmap='cool')
-    im = ax1.imshow(std_fitted, origin='lower', vmin=1.2, vmax=3, cmap='seismic')
-    ax1.set_title("1")
-    ax1.contour(*contour_args, **contour_kwargs)
-    fig.colorbar(im, ax=ax1)
 
     # metric = (-resid_cube.spectral_slab(*vel_bounds).unmasked_data[:]*np.sign(cube.spectral_slab(*vel_bounds).unmasked_data[:])).to_value()
     # metric[metric < 0] = 0
     # metric = metric.sum(axis=0)
-    im = ax2.imshow(red_wing_highlight.to_value(), origin='lower', vmin=0, vmax=12, cmap='cool')
-    ax2.set_title("2")
-    ax2.contour(*contour_args, **contour_kwargs)
-    ax2.contour(*cargs2, **ckwargs2)
-    fig.colorbar(im, ax=ax2)
+    # ############### add this in
+
+    def plot_axes(img1, v1, img2, v2, *additional_contours):
+        im = ax1.imshow(img1.img(), origin='lower', vmin=v1[0], vmax=v1[1], cmap='viridis')
+        # im = ax1.imshow(std_fitted, origin='lower', vmin=1.2, vmax=3, cmap='seismic')
+        # ax1.set_title("1")
+        # ax1.contour(*contour_args, **contour_kwargs)
+        ax1.contour(*img1.carg(), **img1.ckwarg())
+        fig.colorbar(im, ax=ax1)
+
+        im = ax2.imshow(img2.img(), origin='lower', vmin=v2[0], vmax=v2[1], cmap='viridis')
+        ax2.set_title("2")
+        for c_img in additional_contours:
+            ax2.contour(*c_img.carg(), **c_img.ckwarg())
+        ax2.contour(*img2.carg(), **img2.ckwarg())
+        fig.colorbar(im, ax=ax2)
+
+    plot_axes(pillar_1_highlight, (5, 80), red_wing_highlight, (0, 12), pillar_1_highlight)
 
     plt.show()
 
@@ -970,11 +1107,30 @@ def stack_pillar_spectra(cube):
     plt.show()
 
 
-def get_all_subcubes():
-    subcube_cii = cutout_subcube(length_scale_mult=4)
-    subcube_12co = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
-    subcube_13co = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_13CO3-2_truncated_cutout.fits")
+def get_all_subcubes(**kwargs):
+    """
+    As of Nov 11, jerry rigged to take one extra filename (like bima) and return a longer tuple
+    As of Jan 25 (2021), wondering why the first call to cutout_subcube was ABOVE
+        the if/else block that popped "data_filename" off the kwarg dict?
+    As of Jan 26, made data_filename just intercept the FIRST load call. extra_filename
+        gets the extra file. Moved first call back to top, maybe that was why...
+    """
+    if 'extra_filename' in kwargs:
+        extra_fn = kwargs.pop('extra_filename')
+    else:
+        extra_fn = None
+    subcube_cii = cutout_subcube(**kwargs)
+    if 'data_filename' in kwargs:
+        kwargs.pop('data_filename')
+    if kwargs['length_scale_mult'] <= 4:
+        stub = "_cutout"
+    else:
+        stub = ""
+    subcube_12co = cutout_subcube(**kwargs, data_filename=f"apex/M16_12CO3-2_truncated{stub}.fits")
+    subcube_13co = cutout_subcube(**kwargs, data_filename=f"apex/M16_13CO3-2_truncated{stub}.fits")
     subcubes = (subcube_cii, subcube_12co, subcube_13co)
+    if extra_fn is not None:
+        subcubes = subcubes + (cutout_subcube(**kwargs, data_filename=extra_fn),)
     return subcubes
 
 
@@ -989,18 +1145,28 @@ def smooth(cube):
     return cube.spectral_smooth(smooth_kernel)
 
 
+def smooth_spatial(img_to_convolve, img_wcs, cube, target_beam):
+    conv_beam = target_beam.deconvolve(cube.beam)
+    # print(f"Convolving from {str(cube.beam)} to {str(target_beam)} using {str(conv_beam)}")
+    return convolution.convolve(img_to_convolve, conv_beam.as_kernel(misc_utils.get_pixel_scale(img_wcs)), boundary='extend')
+
+
 if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
     subcube = cutout_subcube(length_scale_mult=4)
 
-    subcube = smooth(subcube)
+    # subcube = smooth(subcube)
 
     # subcubes = [smooth(c) for c in get_all_subcubes()]
     # try_mask_above_half_power(subcube, xpower=2)
+
     # check_if_wings_trace_peak_emission(subcube)
-    # fit_image_to_file(subcube)
-    # fit_live_interactive(subcube)
-    investigate_fit(subcube)
+
+    # fit_image_to_file(subcube, double=True)
+
+    # fit_live_interactive(subcube, double=True)
+
+    investigate_fit(subcube, double=False)
 
     # stack_pillar_spectra(subcube)
 

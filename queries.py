@@ -6,6 +6,7 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astroquery.mast import Catalogs
 from astroquery.vizier import Vizier
+Vizier.ROW_LIMIT = -1 # Always get all the rows
 import regions
 
 from . import catalog
@@ -27,8 +28,8 @@ def m16_stars():
         proportional to the FUV flux
     """
     hillenbrand = "J/AJ/106/1906"
-    catalog_list = Vizier.find_catalogs(hillenbrand)
-    catalogs = Vizier.get_catalogs(catalog_list[hillenbrand])
+    catalog_dict = Vizier.find_catalogs(hillenbrand)
+    catalogs = Vizier.get_catalogs(catalog_dict[hillenbrand])
     sptype_catalog = catalogs[1] # returns 2 catalogs
     del catalogs, catalog_list # save memory
     catalog_df = sptype_catalog.to_pandas(index='ID')
@@ -84,7 +85,45 @@ def m16_stars():
     regions.write_ds9(region_list, f"{catalog.utils.m16_data_path}catalogs/hillenbrand_stars.reg")
     return None
 
-args = m16_stars()
+
+def cygx_wright2015():
+    """
+    Grab the Cyg OB2 stars from Wright et al 2015 (for Kim's paper)
+    There are some mismatches between the Berlanas paper and the Wright paper,
+    so I want to compare them directly
+    Written: November 5, 2020
+    """
+    wright2015 = "J/MNRAS/449/741"
+    catalog_dict = Vizier.find_catalogs(wright2015)
+    catalogs = Vizier.get_catalogs(catalog_dict[wright2015])
+    sptype_catalog = catalogs[0] # "census" catalog; second is "ref" with references
+    del catalogs, catalog_dict
+    catalog_df = sptype_catalog.to_pandas()
+    catalog_df.index = np.arange(1, len(catalog_df)+1)
+    catalog_df['SpType'] = catalog_df['SpType'].apply(lambda x: x.decode("utf-8"))
+    catalog_df['SimbadName'] = catalog_df['SimbadName'].apply(lambda x: x.decode("utf-8"))
+    catalog_df['RAJ2000'] = catalog_df['RAJ2000'].apply(lambda x: x.decode("utf-8"))
+    catalog_df['DEJ2000'] = catalog_df['DEJ2000'].apply(lambda x: x.decode("utf-8"))
+    catalog_df.rename(columns={'logL':"LogL", 'SimbadName':"Name"}, inplace=True)
+    catalog_df.set_index('Name', inplace=True)
+    def extract_coordinate(row):
+        """
+        Helper function for using these byte things
+        """
+        ra_str = row['RAJ2000']
+        dec_str = row['DEJ2000']
+        return SkyCoord(f"{ra_str} {dec_str}", unit=(u.hourangle, u.deg), frame='fk5')
+    catalog_df['SkyCoord'] = catalog_df.apply(extract_coordinate, axis=1)
+    cygx_dir = "/home/ramsey/Documents/Research/Feedback/cygx_data/catalogs/"
+    catalog_df[["RAJ2000", "DEJ2000", 'SpType', 'LogL', 'logT']].to_csv(cygx_dir + 'wright.csv')
+    catalog_df = catalog_df.drop(columns=["RAJ2000", "DEJ2000"])
+    catalog_df = catalog_df[['SkyCoord', 'SpType', 'LogL', 'logT']]
+    catalog_df['Teff'] = 10.**catalog_df['logT']
+    catalog_df = catalog_df.drop(columns=["logT"])
+    catalog_df['origin'] = 'W15'
+    catalog_df.to_pickle(cygx_dir + "wright.pkl")
+
+args = cygx_wright2015()
 
 """
 Query atomic lines

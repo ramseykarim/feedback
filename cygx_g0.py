@@ -4,8 +4,9 @@ import os
 import glob
 
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 12}
-matplotlib.rc('font', **font)
+if __name__ == "__main__":
+    font = {'family': 'sans', 'weight': 'normal', 'size': 12}
+    matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 
 from astropy.io import fits
@@ -17,13 +18,18 @@ from . import catalog
 from .g0_stars import calc_g0
 from .mosaic_vlt import make_wcs
 
+distance_los = 1.5*u.kpc
+
 data_dir = os.path.abspath(os.path.join(catalog.utils.feedback_path, "cygx_data/catalogs"))
 berlanas_table_filenames = glob.glob(os.path.join(data_dir, "berlanas*"))
 berlanas_table_filenames = {
     'newstars': [x for x in berlanas_table_filenames if 'A1' in x].pop(),
     'oldstars': [x for x in berlanas_table_filenames if 'A2' in x].pop(),
 }
+berlanas_table = os.path.join(data_dir, "berlanas.pkl")
+wright_table = os.path.join(data_dir, "wright.pkl")
 mytable = os.path.join(data_dir, "cyg-ob2_all.pkl")
+mytable_csv = os.path.join(data_dir, "cyg-ob2_all.csv")
 mytable_html = os.path.join(data_dir, "cyg-ob2_all.html")
 header_file = os.path.join(data_dir, "kim_fits_header.txt")
 
@@ -141,7 +147,7 @@ def calc_fluxes(df, plot=False):
     catalog.spectral.stresolver.UNCERTAINTY = False
 
     # Make the PoWR objects
-    powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNL-H50', 'WNL', 'WNE')}
+    powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNL-H50', 'WNL', 'WNE', 'WC')}
     # Make the Martins tables object
     cal_tables = catalog.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
     # Make Leitherer tables object
@@ -322,59 +328,210 @@ def load_cygx_wcs():
 
 
 def make_g0_plot(df, catr, wcs_obj, **kwargs):
-    val, uncertainty = calc_g0(df, catr, wcs_obj, 1.4*u.kpc, **kwargs)
+    if 'ax' not in kwargs:
+        fig = plt.figure(figsize=(8, 10))
+        ax = plt.subplot(111, projection=wcs_obj)
+    else:
+        fig = kwargs.pop('fig')
+        ax = kwargs.pop('ax')
+    label = kwargs.pop('label', "")
+    if 'fuv_or_ionizing' in kwargs and kwargs['fuv_or_ionizing'] == 'ionizing':
+        vlims_kw = dict(vmin=8.5, vmax=13.5)
+        titlestub = "$q_0$"
+        savestub = "q0"
+    else:
+        vlims_kw = dict(vmin=1, vmax=5)
+        titlestub = "$G_0$"
+        savestub = "g0"
+    val, uncertainty = calc_g0(df, catr, wcs_obj, distance_los, **kwargs)
     try:
         val = val.to_value()
     except:
-        print("!!", type(val))
+        print("Val has no .to_value method because its type is ", type(val))
     try:
         uncertainty = u.Quantity(uncertainty)
     except:
-        print("!!!!!", type(uncertainty))
-    fig = plt.figure(figsize=(8, 10))
-    ax = plt.subplot(111, projection=wcs_obj)
+        print(f"uncertainty is {type(uncertainty)} but that\'s fine")
     val_log = np.log10(val)
-    im = ax.imshow(val_log, origin='lower', cmap='nipy_spectral')
-    # try:
-    #     c = ax.contour(val, levels=[50, 100, 500, 1000, 5000], linewidths=0.5, colors='k')
-    #     ax.clabel(c, [50, 100, 500, 1000, 5000], inline=True, fontsize=6, fmt='%d')
-    # except Exception as e:
-    #     print("Problem with countours: ", e)
+    im = ax.imshow(val_log, origin='lower', cmap='nipy_spectral', **vlims_kw)
+    try:
+        c = ax.contour(val, levels=[50, 100, 500, 1000, 5000], linewidths=0.5, colors='k')
+        ax.clabel(c, [50, 100, 500, 1000, 5000], inline=True, fontsize=6, fmt='%d')
+    except Exception as e:
+        print("Problem with countours: ", e)
     fig.colorbar(im, ax=ax)
-    ax.set_title("$q_0$ around Cyg OB2 $-$ ROUGH DRAFT")
-    fig.savefig(os.path.join(data_dir, "cyg-ob2_q0_2020-10-07.png"))
-    plt.show()
+    ax.set_title(f"{titlestub} around Cyg OB2 $-${label}")
+    fig.savefig(os.path.join(data_dir, f"cyg-ob2_{savestub}_2020-11-06.png"))
+    # plt.show()
     return val, uncertainty
 
 
-def save_g0_fits(array, hdr):
+def save_g0_fits(array, hdr, **kwargs):
     """
     Already built array and header
     """
+    if 'fuv_or_ionizing' in kwargs and kwargs['fuv_or_ionizing'] == 'ionizing':
+        savestub = "q0"
+    else:
+        savestub = "g0"
     hdu = fits.PrimaryHDU(data=array, header=hdr)
-    hdu.writeto(os.path.join(data_dir, "cyg-ob2-q0_2020-10-07.fits"), overwrite=True)
+    hdu.writeto(os.path.join(data_dir, f"cyg-ob2-{savestub}_2020-11-06.fits"), overwrite=True)
     print("Done")
 
 
+
+def crossmatch_wright_and_berlanas(wright_df, berlanas_df):
+    """
+    Create a combined dataframe from Wright 2015 and Berlanas 2018,2020
+    Copied heavily from build_catalog() in catalog.parse
+    """
+    # First, reset the index so we can see the 0-indexed numerical indices
+    wright_df = wright_df.reset_index()
+    wright_df['Name'] = wright_df['Name'].apply(lambda s: s.replace('2MASS ', ''))
+    berlanas_df = berlanas_df.reset_index()
+    # Now make coordinate arrays
+    wright_coords = SkyCoord(wright_df['SkyCoord'].values)
+    berlanas_coords = SkyCoord(berlanas_df['SkyCoord'].values)
+    # Crossmatch each to the other
+    # W.match_to_catalog_sky(B) is a W-sized array of B indices
+    # Assign these results to columns
+    # x, y are stand-in variables so that we can turn the separations into arcseconds
+
+    x, y, _ = wright_coords.match_to_catalog_sky(berlanas_coords)
+    wright_df['other_min'], wright_df['other_min_sep_as'] = x, y.arcsec
+    _, y, _ = wright_coords.match_to_catalog_sky(berlanas_coords, nthneighbor=2)
+    wright_df['next_match_sep_as'] = y.arcsec
+
+    x, y, _ = berlanas_coords.match_to_catalog_sky(wright_coords)
+    berlanas_df['other_min'], berlanas_df['other_min_sep_as'] = x, y.arcsec
+    _, y, _ = berlanas_coords.match_to_catalog_sky(wright_coords, nthneighbor=2)
+    berlanas_df['next_match_sep_as'] = y.arcsec
+
+    # Now vet the matches
+    # Make sure the object claiming the match is also the claimed match's match
+    def make_vetting_function(this_catalog, other_catalog):
+        """
+        Generate a vetting function for an arbitrary order of catalogs,
+        since we need to do this twice
+        """
+        def vet_match(row):
+            """
+            Check a single match (in one direction) with the object from another
+            catalog
+            This match was from this catalog crossmatched against the other catalog
+            In other words, this_catalog.match_to_catalog_sky(other_catalog)
+            """
+            # Get the match's match idx
+            # This is a "this_catalog" index
+            other_match_idx = other_catalog.loc[row['other_min'], 'other_min']
+            # "row.name" isn't "Name", like Simbad, it's the index!
+            return (other_match_idx == row.name)
+        return vet_match
+    # Create and apply these functions
+    vet_B_to_W = make_vetting_function(wright_df, berlanas_df)
+    vet_W_to_B = make_vetting_function(berlanas_df, wright_df)
+    wright_df['mutual'] = wright_df.apply(vet_B_to_W, axis=1)
+    berlanas_df['mutual'] = berlanas_df.apply(vet_W_to_B, axis=1)
+    # Include a 0.5 arcsecond cutoff
+    wright_df['vetted'] = wright_df['mutual'] & (wright_df['other_min_sep_as']*4 < wright_df['next_match_sep_as']) & (wright_df['other_min_sep_as'] < 5)
+    berlanas_df['vetted'] = berlanas_df['mutual'] & (berlanas_df['other_min_sep_as']*4 < berlanas_df['next_match_sep_as']) & (berlanas_df['other_min_sep_as'] < 5)
+
+    # # Flag < 1 arcsecond matches that failed vetting, just to look closer
+    # wright_df['flag'] = wright_df['vetted'] & (wright_df['other_min_sep_as'] > 2)
+    # berlanas_df['flag'] = berlanas_df['vetted'] & (berlanas_df['other_min_sep_as'] > 2)
+    # wright_df.loc[~wright_df['flag'], 'flag'] = np.nan
+    # berlanas_df.loc[~berlanas_df['flag'], 'flag'] = np.nan
+
+    # # Make NaNs so they disappear in the HTML table
+    # wright_df.loc[~wright_df['mutual'], 'mutual'] = np.nan
+    # berlanas_df.loc[~berlanas_df['mutual'], 'mutual'] = np.nan
+    # wright_df.loc[~wright_df['vetted'], 'vetted'] = np.nan
+    # berlanas_df.loc[~berlanas_df['vetted'], 'vetted'] = np.nan
+
+
+    """
+    Crossmatching completed
+    Combine the catalogs!
+    I will use berlanas_df as the "base" catalog, adding Wright15 entries to it
+    We want to
+    1) override A2-old (CP12) with W15, but leave A1-new (B18,20) alone
+    2) add all the non-matched Wright15 entries
+    """
+    # Get the CP12 rows with vetted matches to W15, and get them indexed by W15
+    berlanas_df.update(wright_df.loc[berlanas_df.loc[(berlanas_df['origin'] == 'A2-old') & berlanas_df['vetted'], 'other_min']].drop(columns='Name').set_index('other_min'), overwrite=True)
+    berlanas_df = berlanas_df.set_index('Name')
+    wright_df = wright_df.set_index('Name')
+    berlanas_df = berlanas_df.append(wright_df.loc[~wright_df['vetted']], verify_integrity=True)
+
+    # Sort by RA
+    berlanas_df['RA'] = berlanas_df['SkyCoord'].apply(lambda c: c.ra.deg)
+    berlanas_df.sort_values(by='RA', inplace=True)
+    berlanas_df.drop(columns=['RA', 'other_min', 'other_min_sep_as', 'next_match_sep_as', 'vetted', 'mutual'], inplace=True)
+
+    berlanas_df['origin'].where(lambda x: x != 'A1-new', other='B18+20', inplace=True)
+    berlanas_df['origin'].where(lambda x: x != 'A2-old', other='CP12', inplace=True)
+
+    return berlanas_df
+
+
+def save_as_csv(df, stub="all"):
+    df = df.reset_index()
+    df['RAJ2000'] = df['SkyCoord'].apply(lambda c: c.ra.deg)
+    df['DEJ2000'] = df['SkyCoord'].apply(lambda c: c.dec.deg)
+    df = df[['RAJ2000', 'DEJ2000', 'SpType', 'Name', 'origin', 'Teff', 'LogL']]
+    df.to_csv(mytable_csv.replace('all.csv', stub+'.csv'), na_rep="")
+
+def save_as_html(df, stub="all"):
+    df = df.drop(columns=['SkyCoord'])
+    df['Teff'] = df['Teff']/1000
+    # df.sort_values(by=['Teff'], inplace=True, ascending=False)
+    # df = df.loc[df['Teff'] > 40]
+    df.to_html(mytable_html.replace('all.html', stub+'.html'), na_rep="")
+
+
+
+def generate_and_write_tables():
+    """
+    I ran all this most recently on Nov 6, 2020
+    I commented out the write commands to avoid problems
+    The "entire_df" is saved under the "mytable" pkl filename
+    """
+    wright_df = pd.read_pickle(wright_table)
+    berlanas_df = pd.read_pickle(berlanas_table)
+    entire_df = crossmatch_wright_and_berlanas(wright_df, berlanas_df)
+    # entire_df.to_pickle(mytable)
+
+
 df = pd.read_pickle(mytable)
-
-"""
-# df.drop(columns=['SkyCoord'], inplace=True)
-# df['Teff'] = df['Teff']/1000
-# df.sort_values(by=['Teff'], inplace=True, ascending=False)
-# # df = df.loc[df['Teff'] > 40]
-# df.to_html(mytable_html, na_rep="")
-"""
-
 catr = calc_fluxes(df, plot=False)
-
 Q = catalog.spectral.stresolver.u.Quantity(tuple(zip(*catr.get_array_ionizing_flux()))[0])
-print(catr.get_ionizing_flux(nsamples=3))
-
-
+# print(catr.get_ionizing_flux(nsamples=3))
 wcs_obj, hdr = load_cygx_wcs()
+# fig = plt.figure(figsize=(18, 6))
+# ax1 = plt.subplot(131, projection=wcs_obj)
+val, uncert = make_g0_plot(df, catr, wcs_obj, extremely_large=True, fuv_or_ionizing='fuv', nsamples=3, catalog_mask=np.isfinite(np.log10(Q.to_value())))
+save_g0_fits(val, hdr, fuv_or_ionizing='fuv',)
 
-val, uncert = make_g0_plot(df, catr, wcs_obj, extremely_large=True, fuv_or_ionizing='ionizing', nsamples=3, catalog_mask=np.isfinite(np.log10(Q.to_value())))
-save_g0_fits(val, hdr)
+# df = pd.read_pickle(berlanas_table)
+# catr = calc_fluxes(df, plot=False)
+# Q = catalog.spectral.stresolver.u.Quantity(tuple(zip(*catr.get_array_ionizing_flux()))[0])
+# # print(catr.get_ionizing_flux(nsamples=3))
+# wcs_obj, hdr = create_cygx_wcs(df)
+# ax3 = plt.subplot(133, projection=wcs_obj)
+# val_berlanas, uncert = make_g0_plot(df, catr, wcs_obj, extremely_large=False, fuv_or_ionizing='fuv', nsamples=3, catalog_mask=np.isfinite(np.log10(Q.to_value())), fig=fig, ax=ax3, label=' Berlanas \'18,\'20')
+# # save_g0_fits(val, hdr)
 
-# load_cygx_wcs()
+
+
+if False:
+    """
+    This is a good example of setting colorbar ticks manually
+    """
+    ax2 = plt.subplot(132, projection=wcs_obj)
+    im = ax2.imshow(np.log10(val / val_berlanas), origin='lower', vmin=-.222, vmax=.222, cmap='seismic')
+    cbar = fig.colorbar(im, ax=ax2, ticks=np.log10(np.array([0.6, 0.75, 0.9, 1, 1.1, 1.25, 1.6])))
+    cbar.ax.set_yticklabels(['$-$40%', '$-$25%', '$-$10%', '$+$0%', '$+$10%', '$+$25%', '$+$60%'])
+    ax2.set_title("Ratio of $G_0$, Complete / Berlanas")
+
+    fig.savefig(os.path.join(data_dir, "cyg-ob2_g0_comparison_2020-11-06.png"))
+    plt.show()

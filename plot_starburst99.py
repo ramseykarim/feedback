@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib
-font = {'family': 'sans', 'weight': 'normal', 'size': 6}
-matplotlib.rc('font', **font)
+if __name__ == "__main__":
+    font = {'family': 'sans', 'weight': 'normal', 'size': 6}
+    matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 import pandas as pd
 from collections.abc import Sequence
