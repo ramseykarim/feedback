@@ -2,7 +2,7 @@ import os, sys
 import numpy as np
 import matplotlib
 if __name__ == "__main__":
-    font = {'family': 'sans', 'weight': 'normal', 'size': 11}
+    font = {'family': 'sans', 'weight': 'normal', 'size': 13}
     matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -424,8 +424,8 @@ def integrate_shell_on_image(use_background=False, plot_anything=False):
 
     if plot_anything:
         cmap = 'inferno'
-        cbar_tick_labelsize = 12
-        cbar_labelsize = 12
+        cbar_tick_labelsize = 13
+        cbar_labelsize = 16
         cbar_labelpad = -70
         T, T_h = load_T()
         fig = plt.figure(figsize=(16, 9))

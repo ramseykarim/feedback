@@ -88,7 +88,7 @@ def cut_across_m16_pillars_again():
     Cut across all pillars, like the Jan ~26, 2021 PV in pvdiagrams_2.try_reproject_pv
     """
 
-    colors, path_list, path_name, vlims, grid_shape, region_name = crosscut.setup_paths(2, select=2)
+    colors, path_list, path_name, vlims, grid_shape, region_name = crosscut.setup_paths(2, select=5)
 
     fig = plt.figure(figsize=(17, 7))
     cco = crosscut.CrossCut(path_list[0], vlims=vlims, log=False)
@@ -100,14 +100,15 @@ def cut_across_m16_pillars_again():
         crosscut.DataLayer("$^{12}$CO (3$-$2)", cube_utils.CubeData("apex/M16_12CO3-2_truncated.fits"), cube=True, alpha=0.7, color='g', linewidth=1.2),
         crosscut.DataLayer("$^{13}$CO (3$-$2)", cube_utils.CubeData("apex/M16_13CO3-2_truncated.fits"), cube=True, alpha=0.7, color='LimeGreen', linewidth=1),
         crosscut.DataLayer("8 $\mu$m", "spitzer/SPITZER_I4_mosaic.fits", linestyle='--', norm=90, offset=fx, alpha=0.4, linewidth=1),
-        crosscut.DataLayer("F657N", "hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits", alpha=0.3, linestyle='--', norm=90, offset=fx, linewidth=1),
+        # crosscut.DataLayer("F657N", "hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits", alpha=0.3, linestyle='--', norm=90, offset=fx, linewidth=1),
     ]
     cco.add_data_layer(*layers)
     cco.update_plot(norm=True)
     cco.switch_axes('xcut')
     plt.ylabel("Normalized intensity")
     plt.title(f"Cross cut $-$ {path_name[0]}")
-    cco.plot_image("F657N", stretch='linear', line_color=colors[0], subplot_number=121, vlims=(0.1, 0.7), cmap='Greys', cutout=False)
+    # cco.plot_image("F657N", stretch='linear', line_color=colors[0], subplot_number=121, vlims=(0.1, 0.7), cmap='Greys', cutout=False)
+    cco.plot_image("8 $\mu$m", stretch='arcsinh', line_color=colors[0], subplot_number=121, vlims=(80, 400), cmap='Greys', cutout=False)
     for i, p in enumerate(path_list):
         cco2 = crosscut.CrossCut(p, vlims=vlims, log=False)
         cco2.setup_figure(fig=fig, xcut_axis=plt.subplot2grid(grid_shape, (i, 1)))
@@ -126,7 +127,7 @@ def cut_across_m16_pillars_again():
     # plt.legend(handles=[mpatches.Patch(color=colors[i], label=path_name[i]) for i in range(len(path_name))])
     # plt.show()
     plt.tight_layout()
-    fig.savefig("/home/ramsey/Pictures/2021-01-26-imgs/across_all_xcut.png")
+    fig.savefig("/home/ramsey/Pictures/2021-03-01-work/across_all_xcut_5_redo.png")
 
 
 if __name__ == "__main__":

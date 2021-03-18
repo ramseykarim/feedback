@@ -478,6 +478,8 @@ def single_parallel_pillar_pvs():
 
 """
 I used carma_pvdiagrams.across_pillars_carma to make the across-pillar cuts
+
+There's also a big crosscut in crosscut_2.cut_across_m16_pillars_again
 """
 
 

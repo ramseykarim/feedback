@@ -4,3 +4,4 @@ __pycache__/*
 figures/*
 mantipython*
 other_peoples_code*
+.ipynb_checkpoints/*

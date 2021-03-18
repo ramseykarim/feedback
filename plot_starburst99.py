@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib
 if __name__ == "__main__":
-    font = {'family': 'sans', 'weight': 'normal', 'size': 6}
+    font = {'family': 'sans', 'weight': 'normal', 'size': 16}
     matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -263,7 +263,9 @@ def compare_runs():
 
 
 def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange',
-    setup=False, show=False, label_suffix=None, secondary_uncertainty=None):
+    setup=False, show=False, label_suffix=None, secondary_uncertainty=None, fig=None):
+    if fig is not None:
+        plt.figure(fig.number)
     if axes is None:
         pow_ax, mom_ax = plt.subplot(121), plt.subplot(122)
         axes = pow_ax, mom_ax
@@ -299,7 +301,7 @@ def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange'
     lightfillOB_kwargs = {**lightfill_kwargs, 'color': colorOB}
     lightfillWR_kwargs = {**lightfill_kwargs, 'color': colorWR, 'hatch': '////'}
 
-    plot_kwargs = dict(alpha=0.9, lw=1)
+    plot_kwargs = dict(alpha=0.9, lw=3)
     plotOB_kwargs = {**plot_kwargs, 'color': colorOB, 'linestyle': '-', 'label': labelOB}
     plotWR_kwargs = {**plot_kwargs, 'color': colorWR, 'linestyle': '--', 'label': labelWR}
 
@@ -342,13 +344,14 @@ def runs_with_uncertainty(prefix_n, axes=None, colorOB='green', colorWR='orange'
 def fill_between_horiz(ax, center, low, high, color='k', linestyle='-', hatch=None, label=None):
     plt.sca(ax)
     plt.axhspan(low, high, color=color, hatch=hatch, alpha=0.05, lw=0.02)
-    plt.axhline(y=center, color=color, alpha=0.7, lw=0.7, linestyle=linestyle, label=label)
+    plt.axhline(y=center, color=color, alpha=0.5, lw=2, linestyle=linestyle, label=label)
 
 
 def make_nice_sb99_figure():
+    fig = plt.figure(figsize=(18, 8))
     # axes = runs_with_uncertainty(1, setup=True, label_suffix='[1, 120]')
     # runs_with_uncertainty(2, axes=axes, colorOB='blue', colorWR='red', label_suffix='[1, 80]')
-    axes = runs_with_uncertainty(3, setup=True, colorOB='blue', colorWR='red', label_suffix='[1, 100] $M_{\\odot}$', secondary_uncertainty=['Wd2_21', 'Wd2_12'])
+    axes = runs_with_uncertainty(3, setup=True, colorOB='blue', colorWR='red', label_suffix=None, secondary_uncertainty=['Wd2_21', 'Wd2_12'], fig=fig)
     ob_pow = (np.log10(8.3) + 37, np.log10(8.3 - 0.5) + 37, np.log10(8.3 + 0.5) + 37)
     # wr_pow = (np.log10(3.6) + 37, np.log10(3.6 - 1.1) + 37, np.log10(3.6 + 1.3) + 37) # WR20a
     wr_pow = (np.log10(5.3) + 37, np.log10(5.3 - 1.3) + 37, np.log10(5.3 + 1.7) + 37) # WR20a + WR20b
@@ -364,7 +367,9 @@ def make_nice_sb99_figure():
     fill_between_horiz(mom_ax, *wr_mom, linestyle='--', hatch='\\'*4, label='WR20a+b')
     plt.sca(mom_ax)
     plt.legend()
-    plt.show()
+    plt.subplots_adjust(left=0.08, right=0.97, top=0.93)
+    # plt.show()
+    plt.savefig("/home/ramsey/Pictures/2021-02-01-imgs/sb99.png")
 
 
 def total_energy_over_time(prefix_n, axes=None, color='green',
@@ -429,7 +434,7 @@ def make_nice_energy_figure(ax=None, log=True):
 if __name__ == "__main__":
     make_nice_sb99_figure()
 
-    check_power_linear(30, age_lim_Myr=[1.5, 2, 2.5, 3, 3.5])
+    # check_power_linear(30, age_lim_Myr=[1.5, 2, 2.5, 3, 3.5])
 
     # make_nice_energy_figure(ax=plt.subplot(121), log=False)
     # make_nice_energy_figure(ax=plt.subplot(122))
