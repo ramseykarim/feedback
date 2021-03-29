@@ -52,8 +52,147 @@ To verify, I'll make a fake pillar moment 0 and 1 image, add noise, and try the
 method.
 Fake pillar involves making a cube from a map of Gaussian parameters,
 adding noise to those spectra, and then running my code on the cube
+
+March 18, 2021 update:
+This round of testing was instructive, but the code is a bit of a mess,
+so I'm going to clean it up and generalize a few things so that I can make
+better plot combos
+One of the things I want to be able to easily do is compare the fitted plane
+to the model plane (particularly where the pillar exists)
+Another thing is to streamline / clarify how the pillar is masked
 """
 kms = u.km/u.s
+
+
+def make_fake_pillar(base_cube, debug=False):
+    """
+    Make fake pillar (version 2; see last commit for previous version)
+    Use astropy.modeling.models.Gaussian1D to run grid of parameters
+    Shape parameters correctly
+
+    Features to add: better definitions of pillar width, height, orientation(?),
+        and gradient, so that these can be passed in as arguments
+        Eventually, add other features (second set-of-Gaussian plane) to act as
+        background cloud to see how this affects the answer
+
+    This time around, generalize a little more and take in a cube whose
+    shape (and wcs) will be used
+    :param base_cube: SpectralCube to base shape and WCS on
+    :returns: fake data SpectralCube
+    """
+    # Get the independent variable axis in 3D
+    xarr = base_cube.spectral_axis.to_value()[:, np.newaxis, np.newaxis]
+    # Get image shape (2D)
+    img_shape = base_cube.shape[1:]
+
+    # Set up boolean mask for "exact" pillar location
+    # Width defined by "fraction of total width" dj_frac
+    # (different than original definition, which was confusing)
+    # dj_frac is the width of the pillar divided by the width of the image
+    dj_frac = 0.4
+    # dj is width in pixels
+    dj = int(round(dj_frac * img_shape[1]))
+    # Height defined same way
+    di_frac = 0.75
+    di = int(round(di_frac * img_shape[0]))
+    bool_pillar_mask = np.zeros(img_shape, dtype=bool)
+    bool_pillar_mask[:di, (img_shape[1]//2 - dj//2):(img_shape[1]//2 + dj//2)] = True
+
+    if debug:
+        fig = plt.figure()
+        # Plot bool_pillar_mask
+        plt.subplot2grid((2, 8), (0, 0))
+        plt.imshow(bool_pillar_mask, origin='lower')
+        ### can definitely turn this and the inclusive mask imgs into contour/img combo
+        plt.title("Pillar source")
+
+    # Set up a 2D image for each parameter
+    # Amplitude
+    A_img = np.zeros(img_shape)
+    line_height = 20.
+    A_img[bool_pillar_mask] = line_height
+    smooth_kernel = Gaussian2DKernel(x_stddev=2)
+    A_img = convolve2d(A_img, smooth_kernel, mode='same', boundary='symm')
+
+    inclusive_bool_pillar_mask = A_img > 1
+
+    if debug:
+        # Plot inclusive_bool_pillar_mask
+        plt.subplot2grid((2, 8), (1, 0))
+        plt.imshow(inclusive_bool_pillar_mask, origin='lower')
+        plt.title("Pillar mask")
+        # Plot amplitude
+        plt.subplot2grid((2, 8), (0, 1), colspan=2, rowspan=2)
+        plt.imshow(A_img, origin='lower')
+        plt.colorbar()
+        plt.title("Amplitude")
+
+    # Mean
+    # Make img coord axes to use for velocity gradient
+    ii, jj = np.mgrid[0:img_shape[0], 0:img_shape[1]]
+    i_grad, j_grad, mu0 = 0.2, 0.2, 25
+    # Center the gradient at the middle of the pillar
+    mu_img = i_grad*(ii - di//2) + j_grad*(jj - img_shape[0]//2) + mu0
+
+    if debug:
+        # Plot mean
+        plt.subplot2grid((2, 8), (0, 3), colspan=2, rowspan=2)
+        plt.imshow(mu_img, origin='lower')
+        plt.colorbar()
+        plt.title("Mean")
+
+    # Standard deviation
+    std = 1.
+    std_img = np.ones(img_shape)*std
+
+    # Find the pillar's velocity range
+    pillar_vel_limits = (mu_img[bool_pillar_mask].min() - std, mu_img[bool_pillar_mask].max() + std)
+
+    # Put parameter images together into model plane and calculate cube
+    gauss = models.Gaussian1D(mean=mu_img[np.newaxis, :], stddev=std_img[np.newaxis, :], amplitude=A_img[np.newaxis, :])
+    fake_cube_data = gauss(xarr)
+    # Add noise
+    snr = 20.
+    rng = np.random.default_rng()
+    fake_cube_data += rng.normal(loc=0.0, scale=line_height/snr, size=fake_cube_data.shape)
+    # Add background (DC offset)
+    background_level = 10
+    fake_cube_data += background_level
+    # Convert to Quantity
+    fake_cube_data = fake_cube_data * u.K
+    # Initialize SpectralCube
+    fake_cube = cube_utils.SpectralCube(data=fake_cube_data, wcs=base_cube.wcs).with_spectral_unit(kms)
+
+    if debug:
+        fake_subcube = fake_cube.spectral_slab(*(x*kms for x in pillar_vel_limits))
+        fake_mom0 = fake_subcube.moment0()
+        print(f"Median of moment0: {np.median(fake_mom0.to_value())}")
+        print(f"Mean of moment0: {np.mean(fake_mom0.to_value())}")
+        fake_mom1 = fake_subcube.moment1()
+        # Plot moment 0
+        plt.subplot2grid((2, 8), (0, 7))
+        plt.imshow(fake_mom0.to_value(), origin='lower')
+        plt.colorbar()
+        plt.title("Moment 0")
+        # Plot moment 1
+        plt.subplot2grid((2, 8), (1, 7))
+        plt.imshow(fake_mom1.to_value(), origin='lower', vmin=pillar_vel_limits[0], vmax=pillar_vel_limits[1])
+        plt.colorbar()
+        plt.title("Moment 1")
+        # Plot the deviation of moment 1 from the model gradient
+        deviation = 100*(mu_img - fake_mom1.to_value())/mu_img
+        min_dev, max_dev = max(-50, deviation[bool_pillar_mask].min()), min(50, deviation[bool_pillar_mask].max())
+        deviation_copy = deviation.copy()
+        deviation[~inclusive_bool_pillar_mask] = np.nan
+        deviation_copy = convolve2d(deviation_copy, Gaussian2DKernel(x_stddev=1), mode='same', boundary='symm')
+        deviation_copy[~inclusive_bool_pillar_mask] = np.nan
+        ax = plt.subplot2grid((2, 8), (0, 5), colspan=2, rowspan=2)
+        im = ax.imshow(deviation, origin='lower', vmin=min_dev, vmax=max_dev)
+        ax.contour(deviation_copy, levels=5, colors='r', alpha=0.7)
+        fig.colorbar(im, ax=ax)
+        plt.title("model deviation (%)")
+    return fake_cube, (mu_img, std_img, A_img), pillar_vel_limits, (bool_pillar_mask, inclusive_bool_pillar_mask)
+
 
 def vlims_moment1(cube, mom1, vel_lims):
     """
@@ -275,7 +414,7 @@ def plot_direct_plane_fit():
     return fitted_plane, moment1_masked
 
 
-def make_fake_pillar(debug=False):
+def make_fake_pillar_OLD(debug=False):
     """
     Make fake pillar
     Looks like I can use astropy.modeling.models.Gaussian1D to run a grid of parameters
@@ -375,9 +514,10 @@ if __name__ == "__main__" and True:
 
 
 if __name__ == '__main__':
-    # make_fake_pillar(debug=True)
-    fitted_plane, moment1_masked = plot_direct_plane_fit()
+    make_fake_pillar(cube, debug=True)
     plt.show()
+
+    # fitted_plane, moment1_masked = plot_direct_plane_fit()
 
     # print(f"New velocity limits: {vel_str}")
     # vlims = dict(vmin=param_imgs[0].min(), vmax=param_imgs[0].max())
