@@ -482,6 +482,50 @@ I used carma_pvdiagrams.across_pillars_carma to make the across-pillar cuts
 There's also a big crosscut in crosscut_2.cut_across_m16_pillars_again
 """
 
+def cii_systematic_emission():
+    """
+    April 7, 2021
+    I just copied and pasted the stuff below from another function to get started
+    it still needs to be heavily edited to do anything useful
+
+    I want to make a moment 0 plot to highlight the systematic emission around 25 km/s
+    which is close to the mean velocity of pillar 1
+    I also want a moment 1 plot to show how the line center shifts around in this systematic emission
+    A few sample spectra could help as well, taken as average spectra from hand-picked regions
+    """
+    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    kms = u.km/u.s
+    cube = SpectralCube.read(fn)
+    cube._unit = u.K
+    cube = cube.with_spectral_unit(kms)
+
+    sysvel_limits = (25*kms, 26*kms)
+    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/systematicvelocity_samples.reg"))
+
+    fig = plt.figure(figsize=(12, 4))
+
+    ax_img = plt.subplot2grid((2, 3), (0, 0))
+    mom0 = cube.spectral_slab(*sysvel_limits).moment0()
+    im = ax_img.imshow(np.arcsinh(mom0.to_value()), origin='lower', vmin=1.5, vmax=5, cmap='plasma')
+    fig.colorbar(im, ax=ax_img)
+
+    ax_img2 = plt.subplot2grid((2, 3), (1, 0))
+    mom1 = cube.spectral_slab(10*kms, 40*kms).moment1()
+    im = ax_img2.imshow(mom1.to_value(), origin='lower', cmap='plasma', vmin=18, vmax=30)
+    fig.colorbar(im, ax=ax_img2)
+
+    ax = plt.subplot2grid((2, 3), (0, 1), colspan=2, rowspan=2)
+    for reg in reg_list:
+        subcube = cube.subcube_from_regions([reg])
+        spectrum = subcube.mean(axis=(1, 2))
+        p = ax.plot(cube.spectral_axis.to_value(), spectrum.to_value())
+        pixreg = reg.to_pixel(mom0.wcs)
+        for a in (ax_img, ax_img2):
+            pixreg.plot(ax=a, color=p[0].get_c())
+
+    ax.axvspan(*(svl.to_value() for svl in sysvel_limits), color='k', alpha=0.1)
+    plt.show()
+
 
 if __name__ == "__main__":
-    args = single_parallel_pillar_pvs()
+    cii_systematic_emission()

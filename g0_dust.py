@@ -1,15 +1,30 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.constants as cst
-from astropy import units as u
-from scipy.special import factorial, zeta
 import sys
 
-from parse_FIR_fits import open_FIR_pickle, open_FIR_fits, herschel_path
+import scipy.constants as cst
+from scipy.special import factorial, zeta
 
+from astropy.wcs import WCS
+from astropy import units as u
+from astropy.modeling import models
+from astropy.io import fits
+
+from .parse_FIR_fits import open_FIR_pickle, open_FIR_fits, herschel_path
+from . import catalog
+from . import misc_utils
+"""
+Currently unknown creation date (while back though)
+
+Updated April 29, 2021 to get a L_FIR map to Maitraiyee
+I am following Goicoechea 2015's prescription for L_FIR (40-500 um)
+F[W m-2 Hz-1] = B(T) * (1 - e^-tau) * (solid angle per pixel)
+"""
 
 # Laptop directory
-filename = "RCW49large_3p.fits"
+filename = "herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits"; prefix='solution'
+filename = "herschel/colorsoln_1.fits"; prefix=''
+filename = catalog.utils.search_for_file(filename)
 
 """
 I need to implement this equation for G0:
@@ -30,7 +45,7 @@ Q_abs_avgFUV is the averge Q_abs = C_abs / sigma_dust over the FUV absorption
 """
 
 def calculate_g0():
-    result_dict = open_FIR_fits(herschel_path+filename)
+    result_dict = open_FIR_fits(filename)
     T, tau, beta = (result_dict[x] for x in ('T', 'tau' ,'beta'))
 
 
@@ -70,9 +85,6 @@ def make_plot_g0():
     plt.colorbar()
     plt.title("G0")
     plt.show()
-
-
-
 
 
 """
@@ -121,5 +133,36 @@ def plot_dust():
     plt.show()
 
 
+def fir_luminosity():
+    with fits.open(filename) as hdul:
+        T = hdul[prefix+'T'].data
+        tau = hdul[prefix+'tau'].data
+        hdr = hdul[prefix+'T'].header
+    w = WCS(hdr)
+
+    bb = models.BlackBody(T[:, :, np.newaxis]*u.K)
+    wl_lims = np.array([40., 500.]) * u.micron
+    nu_lims = wl_lims.to(u.Hz, equivalencies=u.spectral())
+    nu_array = np.linspace(nu_lims[1].to_value(), nu_lims[0].to_value(), 1000) * u.Hz
+    wl_array = nu_array.to(u.um, equivalencies=u.spectral())
+    S_array = bb(nu_array[np.newaxis, np.newaxis, :])
+    tau_array = (10.**tau[:, :, np.newaxis]) * (nu_array[np.newaxis, np.newaxis, :] / (160*u.micron).to(u.Hz, equivalencies=u.spectral()))**2.
+    I_array = S_array * (1. - np.exp(-tau_array))
+    F_array = np.trapz(x=nu_array, y=I_array).to('erg s-1 cm-2 sr-1')
+
+    pixel_area = misc_utils.get_pixel_scale(w)**2.
+    F_array = F_array * pixel_area
+    L_FIR = (4. * np.pi * (4.16*u.kpc)**2. * F_array).to(u.solLum)
+
+    header_kws = dict(COMMENT='L_FIR map of RCW 49 from 70 and 160 micron',
+        HISTORY='from same SED fits as published paper, beta=2',
+        DATE='April 29, 2021', CREATOR='Ramsey Karim', BUNIT='solLum')
+    new_hdr = w.to_header()
+    new_hdr.update(header_kws)
+    hdu = fits.PrimaryHDU(data=L_FIR.to_value(), header=new_hdr)
+    hdu.writeto(catalog.utils.feedback_path + 'rcw49_data/herschel/rcw49-L_FIR.fits', overwrite=True)
+    # plt.imshow(L_FIR.to_value(), origin='lower')
+    # plt.show()
+
 if __name__ == "__main__":
-    plot_dust()
+    fir_luminosity()

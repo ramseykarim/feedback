@@ -375,7 +375,7 @@ def integrate_shell_on_image(use_background=False, plot_anything=False):
     # Distance is the Vargas-Alvarez value
     losD = 4.16*1000
 
-    tau160, tau160_h = load_tau(colorcolor=2)
+    tau160, tau160_h = load_tau(colorcolor=3)
     tau160 = 10.**tau160
     tau160_w = WCS(tau160_h)
     tau160_background = 10**(-2.6) # np.nanmedian(tau160) is really high
@@ -492,7 +492,7 @@ def integrate_shell_on_image(use_background=False, plot_anything=False):
         add_mask_contour(insetaxT)
 
         plt.subplots_adjust(wspace=0, bottom=0, top=0.92, left=0.1, right=0.95)
-        fig.savefig("/home/ramsey/Pictures/2021-03-19-work/dust_mask_better.png")
+        fig.savefig("/home/ramsey/Pictures/2021-04-06-work/dust_mask_1.png")
         # plt.show()
 
 
@@ -614,7 +614,7 @@ def load_tau(colorcolor=0):
     if colorcolor == 0, original behavior (LS fit)
     if 1, "colorsoln_standard", no bandpass handling
     if 2, "colorsoln_better", bandpass handling
-
+    if 3, the final version that went into the publication
     Always returns the header from the LS fit
     """
     with fits.open(f"{herschel_path}{fit2p_filename}") as hdul:
@@ -622,9 +622,15 @@ def load_tau(colorcolor=0):
         h = hdul['solutiontau'].header
     if colorcolor > 0:
         if colorcolor == 1:
+            # From color_temperature_comparison; no bandpass handling
             fn = "colorsoln_standard.fits"
-        else:
+        elif colorcolor == 2:
+            # From color_temperature_comparison; bandpass handling
             fn = "colorsoln_better.fits"
+        elif colorcolor == 3:
+            # 2021-04-06 version, publication-ready (I hope)
+            # Theoretically equal to colorsoln_better, but I don't wanna test it
+            fn = "colorsoln_1.fits"
         with fits.open(f"{herschel_path}{fn}") as hdul:
             img = hdul['tau'].data
     return img, h
