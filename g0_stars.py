@@ -39,15 +39,19 @@ def main():
     catalog_df = catalog.parse.load_final_catalog_df()
 
     # catalog_df = filter_by_within_range(catalog_df)
+
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=3.)
     # print(3, end=": ")
     # print(len(catalog_df.loc[catalog_df['is_within_3.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
+
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=6.)
     # print(6, end=": ")
     # print(len(catalog_df.loc[catalog_df['is_within_6.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
+
     catalog_df = filter_by_within_range(catalog_df, radius_arcmin=12.)
     # print(12, end=": ")
     # print(len(catalog_df.loc[catalog_df['is_within_12.0_arcmin'] & catalog_df['VA_ID'].isnull() & catalog_df['TFT_ID'].notnull()]))
+
     catalog_df = filter_by_only_WR(catalog_df) # ['is_WR']
     catr = convert_catalog_to_CatalogResolver(catalog_df)
     # prepare_and_save_catalog(catalog_df, catr)
@@ -55,7 +59,9 @@ def main():
 
     cii_mom0, cii_w = catalog.utils.load_cii(2)
 
-    # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
+    calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
+    return
+
     radius_limit = 3 # arcmin
     print(f"all calculations below limited to {radius_limit} arcmin radius from Wd2")
     print("OB STARS")
@@ -94,7 +100,7 @@ def convert_catalog_to_CatalogResolver(catalog_df):
     :returns: CatalogResolver
     """
     # Make the PoWR objects
-    powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNL-H50', 'WNL', 'WNE')}
+    powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WC', 'WNL-H50', 'WNL', 'WNE')}
     # Make the Martins tables object
     cal_tables = catalog.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
     # Make Leitherer tables object
