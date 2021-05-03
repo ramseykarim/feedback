@@ -66,9 +66,9 @@ def make_grid():
     # set up parameter grid
 
     # log10(Tau160) in logarithmic steps of 0.5%
-    tau_range = np.arange(-4.1, -0.398, 0.002)[::200]
+    tau_range = np.arange(-4.1, -0.398, 0.002)
     # Temperature from 5 to 150 in geometric steps of 3%
-    T_range = np.arange(6, 60.01, 0.05)[::200]
+    T_range = np.arange(6, 60.01, 0.05)
     # Beta in arithmetic steps of 0.1
     b_range = np.array([1.675,])
     """
@@ -80,7 +80,7 @@ def make_grid():
     print(f"logtau: {tau_range[0]} to {tau_range[-1]}")
     print(f"T: {T_range[0]} to {T_range[-1]}")
     print(f"beta: {b_range[0]} to {b_range[-1]}")
-    return
+    # return
     #### If setting tau160 to a single value (2D grid)
     # N1Av = np.log10(1.1) + 21
     # kappa2 = dust.Dust(beta=2.0, k0=0.05625, nu0=750*1e9)
@@ -113,9 +113,9 @@ def make_grid():
     with open(other_grid, 'rb') as f:
         original_result = pickle.load(f)
     for d in herschel:
-        result[d.name] = np.concatenate([result[d.name].reshape(TT.shape), original_result[d.name][::200, ::200, :-1]], axis=-1)
+        result[d.name] = np.concatenate([result[d.name].reshape(TT.shape), original_result[d.name][:, :, :-1]], axis=-1)
     for name, arr in zip(('tau160', 'T', 'beta'), (tt, TT, bb)):
-        result[name] = np.concatenate([arr, original_result[name][::200, ::200, :-1]], axis=-1)
+        result[name] = np.concatenate([arr, original_result[name][:, :, :-1]], axis=-1)
     result['README'] = readme
     print('grid shape:', result['T'].shape)
     with open(filename, 'wb') as f:
