@@ -70,7 +70,7 @@ def make_grid():
     # Temperature from 5 to 150 in geometric steps of 3%
     T_range = np.arange(6, 60.01, 0.05)
     # Beta in arithmetic steps of 0.1
-    b_range = np.array([1.675,])
+    b_range = np.array([1.65,])
     """
     a 28 million element grid will take ~1.5-3 hours on one core
     I looked into this on June 12, 2020
