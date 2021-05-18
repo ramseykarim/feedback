@@ -45,6 +45,10 @@ mpl_colors = pvdiagrams.mpl_colors
 mpl_transforms = pvdiagrams.mpl_transforms
 mpatches = pvdiagrams.mpatches
 
+make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
+
+kms = u.km/u.s
+
 
 def marcs_rgb_in_cii():
     """
@@ -121,7 +125,6 @@ def m16_channel_maps():
     fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
     cube = SpectralCube.read(fn)
     cube._unit = u.K
-    kms = u.km/u.s
     # cube.plot_channel_maps(2, 2, [50, 60, 70, 80], cmap='jet')
     moments = make_moment_series(cube, (2.5*kms, 40*kms), 2.5*kms)
     # assert len(moments) == 20
@@ -493,26 +496,32 @@ def cii_systematic_emission():
     I also want a moment 1 plot to show how the line center shifts around in this systematic emission
     A few sample spectra could help as well, taken as average spectra from hand-picked regions
     """
-    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    fn = catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits"); line_name = "12CO3-2"
+    fn = catalog.utils.search_for_file("apex/M16_13CO3-2_truncated.fits"); line_name = "13CO3-2"
+    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits"); line_name = "CII"
     kms = u.km/u.s
     cube = SpectralCube.read(fn)
     cube._unit = u.K
     cube = cube.with_spectral_unit(kms)
 
     sysvel_limits = (25*kms, 26*kms)
+    sysvel_stub = make_vel_stub(sysvel_limits)
     reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/systematicvelocity_samples.reg"))
 
-    fig = plt.figure(figsize=(12, 4))
+    fig = plt.figure(figsize=(18, 10))
 
     ax_img = plt.subplot2grid((2, 3), (0, 0))
     mom0 = cube.spectral_slab(*sysvel_limits).moment0()
-    im = ax_img.imshow(np.arcsinh(mom0.to_value()), origin='lower', vmin=1.5, vmax=5, cmap='plasma')
+    im = ax_img.imshow(np.arcsinh(mom0.to_value()), origin='lower', vmin=1.5, vmax=5, cmap='Greys')
     fig.colorbar(im, ax=ax_img)
+    ax_img.set_title(f"{line_name} moment 0 {sysvel_stub}")
 
     ax_img2 = plt.subplot2grid((2, 3), (1, 0))
-    mom1 = cube.spectral_slab(10*kms, 40*kms).moment1()
-    im = ax_img2.imshow(mom1.to_value(), origin='lower', cmap='plasma', vmin=18, vmax=30)
+    mom1_limits = (10*kms, 40*kms)
+    mom1 = cube.spectral_slab(*mom1_limits).moment1()
+    im = ax_img2.imshow(mom1.to_value(), origin='lower', cmap='Greys', vmin=18, vmax=30)
     fig.colorbar(im, ax=ax_img2)
+    ax_img2.set_title(f"{line_name} moment 1 {make_vel_stub(mom1_limits)}")
 
     ax = plt.subplot2grid((2, 3), (0, 1), colspan=2, rowspan=2)
     for reg in reg_list:
@@ -522,10 +531,187 @@ def cii_systematic_emission():
         pixreg = reg.to_pixel(mom0.wcs)
         for a in (ax_img, ax_img2):
             pixreg.plot(ax=a, color=p[0].get_c())
+    ax.set_xlabel("velocity (km/s)")
+    ax.set_ylabel(f"{line_name} intensity (K)")
+    ax.set_title(f"{line_name} spectra averaged over selected positions")
 
     ax.axvspan(*(svl.to_value() for svl in sysvel_limits), color='k', alpha=0.1)
+    # plt.show()
+    fig.savefig(f"/home/ramsey/Pictures/2021-05-03-work/selected_spectra_{line_name}.png")
+
+
+def save_fits_thin_channel_maps():
+    """
+    Created: May 3, 2021
+    The plan here is to just save 3 channel maps (1 km/s wide or so) as FITS
+    files so I can go into DS9 and try them as 3-color images and see what I
+    can find
+
+    Right now, I'm thinking 24-25, 25-26, 26-27
+    """
+    # fn = catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits")
+    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    kms = u.km/u.s
+    cube = SpectralCube.read(fn)
+    cube._unit = u.K
+    cube = cube.with_spectral_unit(kms)
+    vel_start, channel_width = 24.*kms, 1*kms
+    for i in range(3):
+        vel_limits = (vel_start + i*channel_width, vel_start + (i+1)*channel_width)
+        mom0 = cube.spectral_slab(*vel_limits).moment0()
+        hdr = mom0.wcs.to_header()
+        hdr['DATE'] = "May 3, 2021"
+        hdr['CREATOR'] = "Ramsey Karim via m16_pictures.save_fits_thin_channel_maps"
+        hdr['OBJECT'] = "M16"
+        hdr['COMMENT'] = f"CII moment 0 image {make_vel_stub(vel_limits)}"
+        hdu = fits.PrimaryHDU(data=mom0.data, header=hdr)
+        hdu.writeto(f"{catalog.utils.m16_data_path}sofia/thin_channel_{i}.fits")
+    print("done")
+
+
+def make_image_thin_channel_maps():
+    """
+    Created: May 3, 2021
+    Use the images created in save_fits_thin_channel_maps to make images!
+    I have played around in DS9 (quicker turnaround) to find good parameters
+
+    For the 24, 25, 26 1km/s channel maps, use 2-60 limits for all channels
+        with an arcsinh stretch
+
+    Updated: May 17, 2021
+    Per Marc/Xander, do this same thing but shift through channels over whole
+    velocity range (maybe 10-40 right now)
+    Do overlap, so only step 1 km/s even though image spans 3 km/s
+    Replicate the save_fits_thin_channel_maps functionality without saving image
+    **I haven't yet made these changes, just pushed to github to save the current code**
+    """
+    # from 0 to 2 in blue-to-red order, so reverse them so they're RGB
+    maps = np.stack([fits.getdata(f"{catalog.utils.m16_data_path}sofia/thin_channel_{i}.fits") for i in range(3)][::-1], axis=-1)
+    w = WCS(fits.getdata(f"{catalog.utils.m16_data_path}sofia/thin_channel_0.fits", header=True)[1])
+    kms = u.km/u.s
+    vel_start, channel_width = 24.*kms, 1*kms
+    stretch = np.sqrt
+    v_limits = dict(vmin=stretch(2), vmax=stretch(80))
+    maps = stretch(maps)
+    norm = mpl_colors.Normalize(**v_limits)
+    nanmask = np.isnan(maps[:, :, 0])
+    maps = norm(maps)
+    maps[nanmask] = 0
+    fig = plt.figure(figsize=(12, 12))
+    ax = plt.subplot(111, projection=w)
+    ax.imshow(maps, origin='lower')
+
+    # optional: add CO contours
+    fn = catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits")
+    cube = SpectralCube.read(fn)
+    colors = ('b', 'LimeGreen', 'r')
+    for i in range(3):
+        vel_limits = (vel_start + i*channel_width, vel_start + (i+1)*channel_width)
+        mom0 = cube.spectral_slab(*vel_limits).moment0()
+        mom0_reproj = reproject_interp((mom0.to_value(), mom0.wcs), w, maps.shape[:2], return_footprint=False)
+        # mom0_reproj[nanmask] = np.nan
+        # [1.5, 3., 4.5] for original, [1.5, 4.5] for 2, [3] for 3
+        ax.contour(mom0_reproj, levels=[3], linewidths=0.7, colors=colors[i])
+
+    # plt.show()
+    fig.savefig("/home/ramsey/Pictures/2021-05-03-work/rgb_channel_COoverlay3.png")
+
+
+def quick_make_CO_mom0():
+    """
+    Created: May 4, 2021
+    CO3-2 moment 0 between 20-27 km/s to compare with CO1-0 mom0 that Marc made
+    so that I can compare to HST and CO1-0 to prove pointing offset in ds9
+
+    May 9, 2021
+    Also used this to make a 25-26 km/s moment 0 and for 19-21
+    May 12, 2021
+    Also used this to make 20-27 km/s moment 0 for CO 6-5
+    """
+    fn = catalog.utils.search_for_file("apex/M16_CO6-5.fits")
+    cube = SpectralCube.read(fn)
+    kms = u.km/u.s
+    cube._unit = u.K
+    cube = cube.with_spectral_unit(kms)
+    vel_limits = (20*kms, 27*kms)
+    mom0 = cube.spectral_slab(*vel_limits).moment0()
+    hdr = mom0.wcs.to_header()
+    hdr['CREATOR'] = "Ramsey Karim via m16_pictures.quick_make_CO_mom0"
+    hdr['DATE'] = "May 12, 2021"
+    hdr['OBJECT'] = "M16"
+    hdr['BUNIT'] = "K km s-1"
+    hdr['COMMENT'] = "12CO(6-5) moment 0 between 20-27 km/s"
+    hdu = fits.PrimaryHDU(data=mom0.to_value(), header=hdr)
+    hdu.writeto(catalog.utils.m16_data_path+"apex/M16_12CO6-5_mom0.fits")
+
+
+def quick_make_BIMA_HST_APEX_overlay():
+    """
+    Created: May 5-6, 2021
+    two images
+    both with HST img base
+    each with contours, one from APEX, one from BIMA
+    use 13CO for both
+    """
+    img_hst, hdr_hst = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
+    img_apex = reproject_interp(catalog.utils.search_for_file("apex/M16_12CO3-2_mom0.fits"), hdr_hst)
+    plt.subplot(121)
+    plt.imshow(img_hst, origin='lower', vmin=0., vmax=0.6, cmap='Greys_r')
+    plt.subplot(122)
+    plt.imshow(img_apex, origin='lower')
+    # this doesn't work :(
+    # reproject_interp is too memory intensive for the HST grid
     plt.show()
 
 
+def compare_32_65_10():
+    # co32_cube = SpectralCube.read(catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits"))
+    co10_cube = SpectralCube.read(catalog.utils.search_for_file("bima/M16_12CO1-0_APEXbeam.fits"))
+    co65_cube = SpectralCube.read(catalog.utils.search_for_file("apex/M16_CO6-5_APEXbeam.fits"))
+    if False:
+        # this is how we convolved the 6-5 data
+        co65_cube._unit = u.K
+        co65_cube = co65_cube.convolve_to(co32_cube.beam)
+        co65_cube.write(catalog.utils.m16_data_path+"apex/M16_CO6-5_APEXbeam.fits", format='fits')
+    select = 1
+    mom0_co65 = co65_cube.spectral_slab(20*kms, 27*kms).moment0()
+    fig = plt.figure(figsize=(10, 10))
+    ax = plt.subplot(111, projection=mom0_co65.wcs)
+    if select < 0:
+        ax.imshow(mom0_co65.to_value(), origin='lower', cmap='Greys')
+    else:
+        ax.imshow(np.zeros_like(mom0_co65.to_value()), origin='lower', cmap='Greys', vmin=0, vmax=1)
+    ax.contour(mom0_co65.to_value(), colors='k')
+    handles = [] # FIXME do this legend stuff
+    handles.append(mpatches.Patch(color='k', label="APEX 12CO(6-5)"))
+    overlay_stub = ""
+    if select % 2 == 0:
+        co32_img = reproject_interp(catalog.utils.search_for_file("apex/M16_12CO3-2_mom0.fits"), mom0_co65.wcs, shape_out=mom0_co65.shape, return_footprint=False)
+        overlay_img = co32_img
+        overlay_stub = "APEX 12CO(3-2)"
+        overlay_color = 'red'
+        ax.contour(overlay_img, colors=overlay_color, linewidths=1)
+        handles.append(mpatches.Patch(color=overlay_color, label=overlay_stub))
+    if select > 0:
+        co10_mom0 = co10_cube.spectral_slab(20*kms, 27*kms).moment0()
+        co10_img = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), mom0_co65.wcs, shape_out=mom0_co65.shape, return_footprint=False)
+        overlay_img = co10_img
+        co10_stub = "BIMA 12CO(1-0)"
+        if overlay_stub:
+            overlay_stub = overlay_stub + " and " + co10_stub
+        else:
+            overlay_stub = co10_stub
+        overlay_color = 'blue'
+        ax.contour(overlay_img, colors=overlay_color, linewidths=1)
+        handles.append(mpatches.Patch(color=overlay_color, label=co10_stub))
+    if select < 0:
+        ax.set_title(f"APEX 12CO(6-5)", fontsize=10)
+    else:
+        ax.set_title(f"APEX 12CO(6-5) compared to {overlay_stub}", fontsize=10)
+    ax.set_xlabel("RA"); ax.set_ylabel("Dec")
+    ax.legend(handles=handles)
+    # plt.show()
+    plt.savefig("/home/ramsey/Pictures/2021-05-12-work/CO_65_10.png")
+
 if __name__ == "__main__":
-    cii_systematic_emission()
+    quick_make_CO_mom0()
