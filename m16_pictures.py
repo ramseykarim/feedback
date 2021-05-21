@@ -495,6 +495,10 @@ def cii_systematic_emission():
     which is close to the mean velocity of pillar 1
     I also want a moment 1 plot to show how the line center shifts around in this systematic emission
     A few sample spectra could help as well, taken as average spectra from hand-picked regions
+
+    I made a copy of this function in m16_investigation.py on May 9, 2021
+    and have been working on an improved version there. That function is
+    called cii_systematic_emission_2.
     """
     fn = catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits"); line_name = "12CO3-2"
     fn = catalog.utils.search_for_file("apex/M16_13CO3-2_truncated.fits"); line_name = "13CO3-2"
@@ -583,8 +587,67 @@ def make_image_thin_channel_maps():
     velocity range (maybe 10-40 right now)
     Do overlap, so only step 1 km/s even though image spans 3 km/s
     Replicate the save_fits_thin_channel_maps functionality without saving image
-    **I haven't yet made these changes, just pushed to github to save the current code**
+
+    Start blue, drop the bluest layer and shift everything blue, and add red
+    This way, we can go in increasing (red) velocity
+
+    Right now I'm optimizing this for channel_width == step_width
+    If I want to change it later, I'll have to rewrite some things
     """
+    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    kms = u.km/u.s
+    cube = SpectralCube.read(fn)
+    cube._unit = u.K
+    cube = cube.with_spectral_unit(kms)
+    vel_start, channel_width = 0.*kms, 1*kms
+    current_velocity = vel_start
+    vel_stop = 7.*kms # vel_start + 3 will run once
+
+    bgr_layers = [] # blue, green, red
+    # Get the first two (bluest) layers started
+    for i in range(2):
+        vel_limits = (current_velocity, current_velocity + channel_width)
+        mom0 = cube.spectral_slab(*vel_limits).moment0()
+        current_velocity += channel_width
+        bgr_layers.append(mom0)
+    # Get the bgr_layers list in the right shape with a dummy blue layer
+    bgr_layers.insert(0, None)
+    # Get the WCS object
+    w = mom0.wcs
+
+    fig = plt.figure(figsize=(12, 12))
+
+    # Work blue-to-red, and keep bgr_layers in blue-to-red order, but keep
+    # in mind that the image array must be red-to-blue
+    while current_velocity < vel_stop:
+        # create the new red layer and slide the list towards red
+        vel_limits = (current_velocity, current_velocity + channel_width)
+        mom0 = cube.spectral_slab(*vel_limits).moment0()
+        current_velocity += channel_width
+        bgr_layers.append(mom0)
+        del bgr_layers[0]
+        # stack the arrays (red-to-blue)
+        maps = np.stack(bgr_layers[::-1], axis=-1)
+        # Set up stretch with the parameters from the initial image (sqrt, 2-80)
+        stretch = np.sqrt
+        v_limits = dict(vmin=stretch(2), vmax=stretch(80))
+        maps = stretch(maps)
+        norm = mpl_colors.Normalize(**v_limits)
+        nanmask = np.isnan(maps[:, :, 0])
+        maps = norm(maps)
+        maps[nanmask] = 0
+        fig.clear()
+        ax = plt.subplot(111, projection=w)
+        ax.imshow(maps, origin='lower')
+        ax.text(0.05, 0.90, f"R: {(current_velocity - 0*channel_width).to_value():.0f} - {(current_velocity - -1*channel_width).to_value():.0f} {current_velocity.unit}", transform=ax.transAxes, c='r')
+        ax.text(0.05, 0.85, f"G: {(current_velocity - 1*channel_width).to_value():.0f} - {(current_velocity - 0*channel_width).to_value():.0f} {current_velocity.unit}", transform=ax.transAxes, c='g')
+        ax.text(0.05, 0.80, f"B: {(current_velocity - 2*channel_width).to_value():.0f} - {(current_velocity - 1*channel_width).to_value():.0f} {current_velocity.unit}", transform=ax.transAxes, c='b')
+        ax.set_xlabel("RA"), ax.set_ylabel("Dec")
+        fig.savefig(f"/home/ramsey/Pictures/2021-05-17-work/rgb/rgb_1_g{(current_velocity - 1*channel_width).to_value():02.0f}.png")
+        print("saved", current_velocity)
+    return
+
+
     # from 0 to 2 in blue-to-red order, so reverse them so they're RGB
     maps = np.stack([fits.getdata(f"{catalog.utils.m16_data_path}sofia/thin_channel_{i}.fits") for i in range(3)][::-1], axis=-1)
     w = WCS(fits.getdata(f"{catalog.utils.m16_data_path}sofia/thin_channel_0.fits", header=True)[1])
@@ -714,4 +777,4 @@ def compare_32_65_10():
     plt.savefig("/home/ramsey/Pictures/2021-05-12-work/CO_65_10.png")
 
 if __name__ == "__main__":
-    quick_make_CO_mom0()
+    make_image_thin_channel_maps()

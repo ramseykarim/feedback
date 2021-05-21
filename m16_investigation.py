@@ -28,6 +28,8 @@ from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
 
+from photutils import centroids
+
 # Lord forgive me
 from . import crosscut
 pvdiagrams = crosscut.pvdiagrams
@@ -110,16 +112,17 @@ def cii_systematic_emission_2():
             add_spectrum(ax_img2, ax4, reg, i)
         i += 1
 
-    # spec_ylim = (-3, 25)
-    spec_ylim = (-1, 50)
-    # spec_ylim = (-1, 10)
-    spec_xlim = (15, 40)
+    spec_ylim = (-1, 50) # CII
+    # spec_ylim = (-3, 25) # 12CO(3-2)
+    # spec_ylim = (-1, 10) # 13CO(3-2)
+    # spec_xlim = (15, 40) # OLD, Marc suggested to widen it
+    spec_xlim = (-5, 55)
     for ax in axes:
         ax.legend()
         ax.set_ylim(spec_ylim)
         ax.set_xlim(spec_xlim)
         ax.axvspan(*(svl.to_value() for svl in sysvel_limits), color='k', alpha=0.1)
-        ax.axhline(spec_ylim[0]+1, color='k', alpha=0.2)
+        ax.axhline(0, color='k', alpha=0.2)
 
     ax2.set_xlabel("velocity (km/s)")
     ax4.set_xlabel("velocity (km/s)")
@@ -127,7 +130,31 @@ def cii_systematic_emission_2():
     ax2.set_ylabel(f"{line_name} intensity (K)")
     ax3.set_title(f"{line_name} spectra averaged over selected positions")
     # plt.show()
-    fig.savefig(f"/home/ramsey/Pictures/2021-05-09-work/selected_spectra_{line_name}.png")
+    fig.savefig(f"/home/ramsey/Pictures/2021-05-20-work/selected_spectra_{line_name}.png")
+
+
+def minimum_valid_cutout(img):
+    """
+    Isolate a sub-array from an array which has a padding of unnecessary or
+    invalid values. This function is general-purpose and can be thought of
+    as 1) the opposite of the np.pad function or 2) similar to the Cutout2D
+    function in astropy.
+    You pass in a boolean array where there are True values surrounded by
+    False values. The True vales should be confined to a small space, though
+    they don't necessarily have to cover a perfect rectangle or be uniform.
+    This function will return the array slices necessary to capture all the True
+    values and discard as many False edge values as possible.
+    The worst case scenario for this function is an isolated True value far
+    from the main cluster of True values; try to avoid that.
+    :param img: a boolean array where False values are unnecessary.
+        Ideally, the True values are limited to a single small rectangular
+        (aligned with array axes) region in which there are few, if any, False
+        values.
+    :returns: tuple(slice, slice) which can be applied to the original image
+        to obtain the valid subregion. Similar to the "slices" attribute
+        from astropy's Cutout2D.
+    """
+    return tuple(slice(np.min(x), np.max(x)+1) for x in np.where(img))
 
 
 def correlate_to_find_offset():
@@ -148,8 +175,10 @@ def correlate_to_find_offset():
     # co32_img = reproject_interp(catalog.utils.search_for_file("apex/M16_12CO3-2_mom0.fits"), co10_hdr, return_footprint=False)
     co32_img, co32_hdr = fits.getdata(catalog.utils.search_for_file("apex/M16_12CO3-2_mom0.fits"), header=True)
     co10_img, fp = reproject_interp((co10_img, co10_hdr), co32_hdr, return_footprint=True)
-    fp = fp > 0.5
-    print(fp.shape, type(fp))
+    min_cutout_sl = minimum_valid_cutout(fp > 0.5)
+    co10_img = co10_img[min_cutout_sl]
+    # co10_img = co32_img[min_cutout_sl] #### THIS ONE MAKES 10 A COPY OF 32
+    co32_img = co32_img[min_cutout_sl]
     # print(co10_img.shape)
     # print(co32_img.shape)
     # co10_img = co10_img[]
@@ -157,19 +186,39 @@ def correlate_to_find_offset():
     # print(co10_img.shape)
     # print(co32_img.shape)
     # return
-    # fig = plt.figure(figsize=(10, 15))
-    # ax1 = plt.subplot(131)
-    # ax1.imshow(co10_img, origin='lower')
-    # ax2 = plt.subplot(132)
-    # ax2.imshow(co32_img, origin='lower')
+    fig = plt.figure(figsize=(10, 15))
+    ax1 = plt.subplot(131)
+    ax1.imshow(co10_img, origin='lower')
+    ax2 = plt.subplot(132)
+    ax2.imshow(co32_img, origin='lower')
 
 
-    # corr = signal.correlate2d(co32_img, co10_img, boundary='fill', mode='same')
-    ax3 = plt.subplot(111)
-    ax3.imshow(fp, origin='lower')
-    # ax3.imshow(corr)
+    corr = signal.correlate2d(co32_img, co10_img, boundary='fill', mode='same')
+    ax3 = plt.subplot(133)
+    # ax3.imshow(fp, origin='lower', vmin=-1, vmax=1)
+    corr_sl = tuple(slice(x//2 - 5, x//2 + 5) for x in corr.shape)
+    ax3.imshow(corr, origin='lower')
+    mask = np.zeros_like(corr).astype(bool)
+    mask[corr_sl] = True
+    corr[~mask] = np.nan
+    x1, y1 = centroids.centroid_com(corr)
+    x2, y2 = centroids.centroid_1dg(corr)
+    x3, y3 = centroids.centroid_2dg(corr)
+    print("Centroids:")
+    print(x1, y1)
+    print(x2, y2)
+    print(x3, y3)
+    ax3.plot(x1, y1, color='black', ms=5, mew=2, marker='+')
+    ax3.plot(x2, y2, color='white', ms=5, mew=2, marker='+')
+    ax3.plot(x3, y3, color='red', ms=5, mew=2, marker='+')
+    """
+    The correlation produces results! I need to quantify these and obtain
+    the direction and magnitude (in sky angle) of the offset
+    The direction appears to be due North-South, from my quick glance, and about
+    half an APEX 3-2 pixel
+    """
     plt.show()
 
 
 if __name__ == "__main__":
-    correlate_to_find_offset()
+    cii_systematic_emission_2()
