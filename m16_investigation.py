@@ -130,8 +130,8 @@ def cii_systematic_emission_2():
     ax1.set_ylabel(f"{line_name} intensity (K)")
     ax2.set_ylabel(f"{line_name} intensity (K)")
     ax3.set_title(f"{line_name} spectra averaged over selected positions")
-    # plt.show()
-    fig.savefig(f"/home/ramsey/Pictures/2021-05-20-work/selected_spectra_{line_name}.png")
+    plt.show()
+    # fig.savefig(f"/home/ramsey/Pictures/2021-05-20-work/selected_spectra_{line_name}.png")
 
 
 def minimum_valid_cutout(img):
@@ -477,14 +477,115 @@ def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, ve
 
 
 
+def pillar_sample_spectra(reg_idx):
+    """
+    June 1, 2021
+    In prep for the meeting with Nicola tomorrow, I want to look at spectra of CO 1-0, 3-2, 6-5, and CII towards the head of P1
+    I want to see if CII is more redshifted than CO or just broader
+    I have a region file called pillar_samples.reg with relevant samples
+    The code from cii_systematic_emission_2 can be copied and modified into this file
+    """
+    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_samples.reg"))
+
+    cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits", "apex/M16_12CO3-2_truncated_cutout.fits", "apex/M16_13CO3-2_truncated_cutout.fits",
+        "bima/M16_12CO1-0_APEXbeam.fits", "apex/M16_CO6-5_APEXbeam.fits"]
+    line_names = ['CII', '12CO(3-2)', '13CO(3-2)',
+        '12CO(1-0) * 0.5', '12CO(6-5)']
+    multiplier = [1, 1, 1, 0.5, 1]
+    kms = u.km/u.s
+
+    reference_filename = catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")
+    reference_name = "HST F657N"
+    # reference_filename = catalog.utils.search_for_file("apex/M16_12CO6-5_mom0.fits") # smaller test reference file
+    # reference_name = "12CO(6-5)"
+
+    if reg_idx < 3:
+        pillar_vel_limits = (22.5*kms, 27.5*kms)
+    elif reg_idx == 3:
+        pillar_vel_limits = (20*kms, 27.5*kms)
+    else:
+        pillar_vel_limits = (19*kms, 24*kms)
+
+    pillar_vel_stub = make_vel_stub(pillar_vel_limits)
+
+    fig = plt.figure(figsize=(18, 10))
+
+    ax_img = plt.subplot2grid((1, 3), (0, 0))
+    ref_img, ref_hdr = fits.getdata(reference_filename, header=True)
+    ref_wcs = WCS(ref_hdr)
+    im = ax_img.imshow(ref_img, origin='lower', cmap='Greys_r', vmin=0.1, vmax=0.6)
+    fig.colorbar(im, ax=ax_img)
+    ax_img.set_title(reference_name)
+
+
+    # reg_idx = 0
+    reg = reg_list[reg_idx]
+
+    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2, rowspan=1)
+    def add_spectrum(cube, spec_ax, reg, idx):
+        # holdover from cii_systematic_emission_2() where there were multiple img/spec axes
+        subcube = cube.subcube_from_regions([reg])
+        spectrum = subcube.mean(axis=(1, 2)) * multiplier[idx]
+        if reg_idx < 4:
+            mean_vel = np.nanmean(subcube.spectral_slab(*pillar_vel_limits).moment1().to_value())
+            mean_stub = f" [Mean: {mean_vel:.2f}]"
+        else:
+            mean_stub = ""
+        p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value(), label=f"{line_names[idx]}{mean_stub}")
+        if reg_idx < 4:
+            spec_ax.axvline(mean_vel, color=p[0].get_c(), alpha=0.6)
+        return p
+
+    for i, c_fn in enumerate(cube_filenames):
+        cube = cube_utils.CubeData(c_fn)
+        cube.convert_to_K()
+        cube.data = cube.data.with_spectral_unit(kms)
+        add_spectrum(cube.data, ax_spec, reg, i)
+    pixreg = reg.to_pixel(ref_wcs)
+    pix_center = pixreg.center.xy
+    pix_radius = pixreg.radius
+    # ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{idx}", color='r', fontsize=11, ha='center', va='bottom')
+    if reg_idx < 4:
+        ax_spec.text(0.7, 0.6, "Mean velocity taken from\nwithin shaded velocity range", color='k', fontsize=11, ha='left', va='bottom', transform=ax_spec.transAxes)
+    pixreg.plot(ax=ax_img, color='r')
+
+
+    # spec_ylim = (-1, 50) # CII
+    # spec_ylim = (-3, 25) # 12CO(3-2)
+    # spec_ylim = (-1, 10) # 13CO(3-2)
+    # spec_xlim = (15, 40) # OLD, Marc suggested to widen it
+    spec_xlim = (15, 45)
+    ax_spec.legend()
+    # ax_spec.set_ylim(spec_ylim)
+    ax_spec.set_xlim(spec_xlim)
+    ax_spec.axvspan(*(pvl.to_value() for pvl in pillar_vel_limits), color='grey', alpha=0.05)
+    ax_spec.axhline(0, color='k', alpha=0.2)
+
+    ax_spec.set_xlabel("velocity (km/s)")
+    ax_spec.set_ylabel("Line intensity (K)")
+    ax_spec.set_title("Line spectra (20\" beam) averaged over selected position")
+    # plt.show()
+    fig.savefig(f"/home/rkarim/Pictures/2021-06-01-work/pillar_samples_{reg_idx}.png")
+
+
+
+
 if __name__ == "__main__":
-    # ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
-    sf = True
-    # gb = True
-    vel_lims = dict(vel_start=24.5, vel_stop=25.5)
-    vel_lims = dict(vel_start=21.5, vel_stop=23.5)
-    vel_lims = dict(vel_start=17.5, vel_stop=30.5)
-    for gb in (True, False):
-        thin_channel_images_rb('cii', 'co10CONV', gb, savefig=sf, **vel_lims)
-        thin_channel_images_rb('cii', 'hcn', gb, savefig=sf, **vel_lims)
-        thin_channel_images_rb('cii', 'hcop', gb, savefig=sf, **vel_lims)
+    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_samples.reg"))
+    for i in range(3, len(reg_list)):
+        pillar_sample_spectra(i)
+
+
+
+
+    ### the code for making all the RGB images
+    # # ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
+    # sf = True
+    # # gb = True
+    # vel_lims = dict(vel_start=24.5, vel_stop=25.5)
+    # vel_lims = dict(vel_start=21.5, vel_stop=23.5)
+    # vel_lims = dict(vel_start=17.5, vel_stop=30.5)
+    # for gb in (True, False):
+    #     thin_channel_images_rb('cii', 'co10CONV', gb, savefig=sf, **vel_lims)
+    #     thin_channel_images_rb('cii', 'hcn', gb, savefig=sf, **vel_lims)
+    #     thin_channel_images_rb('cii', 'hcop', gb, savefig=sf, **vel_lims)
