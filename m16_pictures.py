@@ -599,9 +599,9 @@ def make_image_thin_channel_maps():
     cube = SpectralCube.read(fn)
     cube._unit = u.K
     cube = cube.with_spectral_unit(kms)
-    vel_start, channel_width = 0.*kms, 1*kms
+    vel_start, channel_width = 40.*kms, 1*kms
     current_velocity = vel_start
-    vel_stop = 7.*kms # vel_start + 3 will run once
+    vel_stop = 45.*kms # vel_start + 3 will run once
 
     bgr_layers = [] # blue, green, red
     # Get the first two (bluest) layers started
@@ -623,7 +623,6 @@ def make_image_thin_channel_maps():
         # create the new red layer and slide the list towards red
         vel_limits = (current_velocity, current_velocity + channel_width)
         mom0 = cube.spectral_slab(*vel_limits).moment0()
-        current_velocity += channel_width
         bgr_layers.append(mom0)
         del bgr_layers[0]
         # stack the arrays (red-to-blue)
@@ -644,6 +643,7 @@ def make_image_thin_channel_maps():
         ax.text(0.05, 0.80, f"B: {(current_velocity - 2*channel_width).to_value():.0f} - {(current_velocity - 1*channel_width).to_value():.0f} {current_velocity.unit}", transform=ax.transAxes, c='b')
         ax.set_xlabel("RA"), ax.set_ylabel("Dec")
         fig.savefig(f"/home/ramsey/Pictures/2021-05-17-work/rgb/rgb_1_g{(current_velocity - 1*channel_width).to_value():02.0f}.png")
+        current_velocity += channel_width
         print("saved", current_velocity)
     return
 

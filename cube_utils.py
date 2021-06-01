@@ -46,7 +46,10 @@ class CubeData:
     Updated November 16, 2020 to take CARMA data
     """
     def __init__(self, filename):
-        self.full_path = catalog.utils.search_for_file(filename)
+        if not os.path.exists(filename):
+            self.full_path = catalog.utils.search_for_file(filename)
+        else:
+            self.full_path = os.path.abspath(filename)
         self.telescope = self.full_path.split('/')[-2]
         self.basename = os.path.basename(self.full_path)
         self.directory = os.path.dirname(self.full_path)
@@ -133,6 +136,13 @@ class CubeData:
     def refresh_wcs(self):
         """
         Reassign the WCS attributes
+
+        Musings on May 25, 2021: Why did I make this function? Was it important?
+        Should I be using it more often?
+        Answer: no, it's apparently useful if I want to convert a *cutout* of
+        a cube from Jy/beam to K. I guess the conversion doesn't use the wcs,
+        but it's good practice to make sure they match
+        Future: Should wrap this into a setter function for self.data !
         """
         self.wcs = self.data.wcs
         self.wcs_flat = self.data[0, :, :].wcs

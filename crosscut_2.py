@@ -125,9 +125,9 @@ def cut_across_m16_pillars_again():
     for axis_name in ('x', 'y'):
         plt.gca().tick_params(axis=axis_name, labelbottom=False, labelleft=False)
     # plt.legend(handles=[mpatches.Patch(color=colors[i], label=path_name[i]) for i in range(len(path_name))])
-    # plt.show()
     plt.tight_layout()
-    fig.savefig("/home/ramsey/Pictures/2021-03-01-work/across_all_xcut_5_redo.png")
+    plt.show()
+    # fig.savefig("/home/ramsey/Pictures/2021-03-01-work/across_all_xcut_5_redo.png")
 
 
 if __name__ == "__main__":

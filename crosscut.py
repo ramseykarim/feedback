@@ -466,15 +466,21 @@ class CrossCut:
 
 
     def plot_image(self, layer_to_plot, vlims=None, stretch='arcsinh',
-        subplot_number=122, line_color='r', cmap='Greys_r', cutout=True):
+        subplot_number=122, subplot_creator=None, line_color='r',
+        cmap='Greys_r', cutout=True):
         """
         Plot an image with a superimposed arrow illustrating the cross cut`
         :param layer_to_plot: the layer name of the layer to use.
             If it's a cube, it'll be the moment 0 map with limits described here
         :param vlims: visual limits for plotting the image, specified in linear
+        :param subplot_creator: a function taking ONLY the WCS object and returning
+            an Axes object (likely a lambda function wrapper for subplot2grid)
         """
-        if isinstance(layer_to_plot, str):
-            layer = self.layers[layer_to_plot]
+        if isinstance(layer_to_plot, str) or isinstance(layer_to_plot, DataLayer):
+            if isinstance(layer_to_plot, str):
+                layer = self.layers[layer_to_plot]
+            else:
+                layer = layer_to_plot
             img, wcs = layer.load(**self.vlim_kwargs())
             if cutout:
                 # Make a cutout about 2x the length of the cross cut
@@ -492,7 +498,10 @@ class CrossCut:
                 lo, hi = misc_utils.flquantiles(stretched_image[np.isfinite(stretched_image)].flatten(), 10000)
             else:
                 lo, hi = stretch(np.array(vlims))
-            self.axes['img'] = plt.subplot(subplot_number, projection=wcs)
+            if subplot_creator is not None:
+                self.axes['img'] = subplot_creator(wcs)
+            else:
+                self.axes['img'] = plt.subplot(subplot_number, projection=wcs)
             plt.imshow(stretched_image, origin='lower', vmin=lo, vmax=hi, cmap=cmap)
         elif isinstance(layer_to_plot, CrossCut):
             layer_to_plot.switch_axes('img')

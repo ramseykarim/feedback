@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import sys
 import os
+import glob
 
 from math import ceil
 from scipy import signal
@@ -220,5 +221,270 @@ def correlate_to_find_offset():
     plt.show()
 
 
+def convolve_carma_to_sofia():
+    """
+    May 25, 2021
+    I want to investigate those "threads" coming from the tip of Pillar 1
+    I want to see if they're visible at SOFIA ~14x14 resolution and compare to
+    SOFIA.
+    """
+    filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
+    """
+    This contains:
+    CS, N2H+, HCO+, HCN
+    """
+    raise RuntimeError("You already ran this on May 25, 2021")
+    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    cube_cii = SpectralCube.read(fn)
+    cube_cii._unit = u.K
+
+    cube_mol = cube_utils.CubeData([f for f in filepaths if 'hcop' in f].pop())
+    cube_mol.convert_to_K()
+    write_path, original_mol_fn = os.path.split(cube_mol.full_path)
+    write_fn = original_mol_fn.replace('.fits', '.SOFIAbeam.fits')
+    print(write_path)
+    print(original_mol_fn)
+    print(write_fn)
+    cube_mol = cube_mol.data # gets spectralcube object from cubedata object
+    cube_mol = cube_mol.convolve_to(cube_cii.beam)
+    cube_mol.write(os.path.join(write_path, write_fn), format='fits')
+
+
+def compare_carma_to_sofia_crosscut():
+    """
+    May 25, 2021
+    Following from convolve_carma_to_sofia, I'll use those convolved-up CARMA
+    molecular line maps to compare to SOFIA and see if CII has comparatively
+    less of a "threaded" structure just below the tip of P1
+    I'll also include the unconvolved CARMA map, in each case, to show the
+    full extend of the threaded structure
+
+    File: p1_threads.reg
+    First path: 24.4-25.5 km/s
+    Second path: 24.8-25.7 km/s
+    Third path (horns): 23.7-25.8 km/s
+    Fourth path (very tip): 25-27 km/s
+    (Tested on HCN at native resolution)
+    """
+    filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
+    filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
+    molecule = 'hcn'
+    molecule_name = 'HCN'
+    mol_fn = [f for f in filepaths if molecule in f].pop()
+    mol_conv_fn = [f for f in filepaths_conv if molecule in f].pop()
+
+    reg_filename = catalog.utils.search_for_file("catalogs/p1_threads.reg")
+    selected_region = 3 # 0 to 3
+    vel_lims = [(24.4, 25.5), (24.8, 25.7), (23.7, 25.8), (25., 27.)][selected_region]
+    cc_path = crosscut.coords_from_region(reg_filename, index=selected_region)
+
+    fig = plt.figure(figsize=(17, 7))
+    img_ax_f = lambda w: plt.subplot2grid((1, 4), (0, 0), colspan=1, projection=w)
+    xcut_ax = plt.subplot2grid((1, 4), (0, 1), colspan=3)
+    cco = crosscut.CrossCut(cc_path, vlims=vel_lims)
+    cco.setup_figure(fig=fig, xcut_axis=xcut_ax)
+    layers = [
+        crosscut.DataLayer("[CII]", cube_utils.CubeData("sofia/M16_CII_U.fits"), cube=True, alpha=0.7),
+        crosscut.DataLayer(f"{molecule_name} (CII beam)", cube_utils.CubeData(mol_conv_fn), cube=True, alpha=0.7),
+        crosscut.DataLayer(f"{molecule_name}", cube_utils.CubeData(mol_fn), cube=True, alpha=0.7),
+    ]
+    cco.add_data_layer(*layers)
+    cco.update_plot(norm=False)
+    cco.switch_axes('xcut')
+    plt.ylabel("Intensity")
+    plt.title("Cross cut")
+    plt.xlabel("Distance along cross-cut (arcseconds)")
+    cco.plot_image(layers[2], stretch='linear', subplot_creator=img_ax_f)
+    cco.switch_axes('img')
+    plt.title(f"{molecule_name} (CII beam) {vel_lims}")
+    plt.show()
+
+
+def compare_carma_to_sofia_pv():
+    """
+    May 25, 2021
+    Same cuts as compare_carma_to_sofia_crosscut but with PVs now
+    Start with 20-30 km/s ranges for everything (for now)
+    Following pvdiagrams_2.m16_pv_again and m16_pictures.single_parallel_pillar_pvs
+    but this is a little different than either of those because I will only
+    plot one slice at a time and will be overlaying several sources of data
+
+    The "galaxy brain" idea here would be to combine the previous function
+    with the crosscuts and this one with PV diagrams
+    Would look noisy but could be really cool
+    """
+    # copied from the crosscut version
+    filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
+    filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
+    get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
+    get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
+    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"),]
+    colors = ['r', 'b', 'cyan', 'violet', 'magenta']
+    names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)']
+
+    reg_filename = catalog.utils.search_for_file("catalogs/p1_threads.reg")
+    selected_region = 3 # 0 to 3
+    pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=None) # Try nonzero width later
+    vel_limits = np.array([20, 30])*u.km/u.s
+
+    ax_sl, sl_grid_wcs, sl_grid_shape, sl_grid_header = None, None, None, None
+    for i, c_fn in enumerate(cube_filenames):
+        cube = cube_utils.CubeData(c_fn)
+        # should actually use cps2 cutout as wrapper for this and save
+        # the one that will make the reference image
+        sl = pvextractor.extract_pv_slice(cube.data.spectral_slab(*vel_limits), pv_path)
+        if ax_sl is None:
+            sl_grid_wcs = WCS(sl.header)
+            sl_grid_header = sl.header
+            ax_sl = plt.subplot2grid((1, 2), (0, 1), projection=sl_grid_wcs)
+            sl_grid_shape = sl.data.shape
+            contour_args = (sl.data,)
+        else:
+            sl.header['CTYPE2'] = 'VRAD' # thanks to the note in m16_pictures.single_parallel_pillar_pvs
+            contour_args = (reproject_interp((sl.data, sl.header), sl_grid_header, return_footprint=False),)
+        ax_sl.contour(*contour_args, linewidths=1.2, colors=colors[i])
+
+    ax_sl.coords[1].set_format_unit(u.km/u.s)
+    ax_sl.coords[0].set_format_unit(u.arcsec)
+    ax_sl.coords[0].set_major_formatter('x')
+    ax_sl.set_title("PV Diagram")
+    ax_sl.set_xlabel("Offset, from E to W (arcseconds)")
+    ax_sl.tick_params(axis='x', direction='in')
+    ax_sl.tick_params(axis='y', direction='in')
+
+    vel_limits = [(24.4, 25.5), (24.8, 25.7), (23.7, 25.8), (25., 27.)][selected_region]
+    # cube = cube_utils.CubeData(cube_filenames[0]) # can also use cps2 cutout function
+    # img = cube.data.spectral_slab(*(v*u.km/u.s for v in vel_limits)).moment0().to(u.K * u.km / u.s)
+
+    img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
+    w = WCS(hdr)
+    vlims = dict(vmin=0.1, vmax=0.7)
+
+    ax_img = plt.subplot2grid((1, 2), (0, 0), projection=w)
+    ax_img.imshow(img, origin='lower', **vlims)
+
+    handles = [mpatches.Patch(color=c, label=n) for ii, n, c in zip(range(len(cube_filenames)), names, colors)]
+    ax_sl.legend(handles=handles, loc='lower right')
+    ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'))
+    plt.show()
+
+
+def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, vel_stop=25.5, savefig=True):
+    """
+    May 27, 2021 (post-MVA appt)
+    This will be similar to m16_pictures.make_image_thin_channel_maps
+    Following from suggestions from my May 26th M16 meeting, I'll compare thin
+    channel maps (like 1 km/s wide) of CO/molecular and CII to see what sorts of
+    offsets and gradients I see
+
+    May 28: this function has been really successful and generalized to a few different
+    molecular lines and any combination between them. I will extend it to CO 6-5
+    and 3-2.
+    """
+    kms = u.km/u.s
+    # copied from the crosscut version
+    filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
+    filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
+    get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
+    get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
+    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits"]
+    colors = ['r', 'b', 'cyan', 'violet', 'magenta', 'LimeGreen', 'g']
+    names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '12CO(1-0)', '12CO(1-0) (CII beam)']
+    short_names = ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
+    vlims_r = [[-0.5, 0], # cii
+        [-1, 0], [-0.5, 0], # hcn/CONV
+        [-1, 0], [-0.5, 0], #hcop/CONV
+        [0, 1], [0, 1],] # co10/CONV
+
+    vlims_g = [[-0.5, 0], # cii
+        [-0.5, 0], [-0.5, 1], # hcn/CONV
+        [-0.5, 0], [-0.5, 1], #hcop/CONV
+        [0, 1], [0, 1],] # co10/CONV
+
+    vlims_b = [[-0.5, 0], # cii
+        [-1, 0], [-1, 0], # hcn/CONV
+        [-1, -1], [-1, 0], #hcop/CONV
+        [0, 0], [0, 0],] # co10/CONV
+
+    if not isinstance(c1_idx, int):
+        print(c1_idx, end=': ')
+        c1_idx = short_names.index(c1_idx)
+        print(c1_idx)
+    if not isinstance(c2_idx, int):
+        print(c2_idx, end=': ')
+        c2_idx = short_names.index(c2_idx)
+        print(c2_idx)
+
+    # c1_idx = 0
+    # c2_idx = 2
+    unique_label = f"{short_names[c1_idx]}-{short_names[c2_idx]}"
+    # blue_if_true = True # green if False
+    c1_lo, c1_hi = vlims_r[c1_idx]
+    c2_lo, c2_hi = (vlims_b if blue_if_true else vlims_g)[c2_idx]
+    cube1 = cube_utils.CubeData(cube_filenames[c1_idx]).data # Cube 1 should have larger footprint (CII)
+    cube2 = cube_utils.CubeData(cube_filenames[c2_idx]).data
+    vel_start *= kms
+    vel_stop *= kms
+    channel_width = 1*kms
+    current_velocity = vel_start
+
+    if savefig:
+        fig = plt.figure(figsize=(12, 12))
+    while current_velocity < vel_stop:
+        if not savefig:
+            fig = plt.figure(figsize=(12, 12))
+        vel_lims = (current_velocity, current_velocity + channel_width)
+        img1_raw = cube1.spectral_slab(*vel_lims).moment0()
+        img2_raw = cube2.spectral_slab(*vel_lims).moment0()
+        img2, fp = reproject_interp((img2_raw.to_value(), img2_raw.wcs), img1_raw.wcs, shape_out=img1_raw.shape, return_footprint=True)
+        min_cutout_sl = minimum_valid_cutout(fp > 0.5)
+        img1 = img1_raw.to_value()[min_cutout_sl]
+        img2 = img2[min_cutout_sl]
+        nanmask = np.isnan(img1) | np.isnan(img2)
+        stretch = np.arcsinh # adjust & apply this later
+        img1[nanmask] = np.min(img1)
+        img1 -= np.min(img1)
+        img2[nanmask] = np.min(img2)
+        img2 -= np.min(img2)
+        img1, img2 = stretch(img1), stretch(img2)
+        # img1 = mpl_colors.Normalize(*misc_utils.flquantiles(img1.flatten(), 1000))(img1)
+        img1 = mpl_colors.Normalize(np.median(img1)+c1_lo*np.std(img1), np.max(img1)+c1_hi*np.std(img1))(img1)
+        # img2 = mpl_colors.Normalize()(img1)
+        # img2 = mpl_colors.Normalize(*misc_utils.flquantiles(img2.flatten(), 20))(img2)
+        img2 = mpl_colors.Normalize(np.median(img2)+c2_lo*np.std(img2), np.max(img2)+c2_hi*np.std(img2))(img2)
+        # img2 = mpl_colors.Normalize()(img2)
+        # Stack in RGB order for matplotlib imshow
+        maps = [img1, img2, np.zeros_like(img1)] # just 2 valid layers (R G B order)
+        if blue_if_true:
+            maps = [maps[0]] + maps[1:][::-1]
+        maps = np.stack(maps, axis=-1)
+        fig.clear()
+        ax = plt.subplot(111)
+        ax.imshow(maps, origin='lower')
+        vel_str = f"{current_velocity.to_value():.1f}$-${(current_velocity + channel_width).to_value():.1f} {current_velocity.unit}"
+        ax.text(0.05, 0.90, f"R: {names[c1_idx]}", transform=ax.transAxes, c='r')
+        ax.text(0.05, 0.85, f"{('B' if blue_if_true else 'G')}: {names[c2_idx]}", transform=ax.transAxes, c=('b' if blue_if_true else 'g'))
+        ax.set_xlabel("RA"), ax.set_ylabel("Dec")
+        ax.set_title(f"R-{('B' if blue_if_true else 'G')} image with channel maps at {vel_str}")
+        if savefig:
+            try:
+                fig.savefig(f"/home/ramsey/Pictures/2021-05-27-work/rgb/{unique_label.replace('CONV', '')}/r{('b' if blue_if_true else 'g')}_{unique_label}_{current_velocity.to_value():04.1f}.png")
+            except:
+                fig.savefig(f"/home/ramsey/Pictures/2021-05-27-work/rgb/r{('b' if blue_if_true else 'g')}_{unique_label}_{current_velocity.to_value():04.1f}.png")
+        current_velocity += channel_width
+    if not savefig:
+        plt.show()
+
+
+
 if __name__ == "__main__":
-    cii_systematic_emission_2()
+    # ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
+    sf = True
+    # gb = True
+    vel_lims = dict(vel_start=24.5, vel_stop=25.5)
+    vel_lims = dict(vel_start=21.5, vel_stop=23.5)
+    vel_lims = dict(vel_start=17.5, vel_stop=30.5)
+    for gb in (True, False):
+        thin_channel_images_rb('cii', 'co10CONV', gb, savefig=sf, **vel_lims)
+        thin_channel_images_rb('cii', 'hcn', gb, savefig=sf, **vel_lims)
+        thin_channel_images_rb('cii', 'hcop', gb, savefig=sf, **vel_lims)
