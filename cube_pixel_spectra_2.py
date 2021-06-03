@@ -4,6 +4,7 @@ if __name__ == "__main__":
     font = {'family': 'sans', 'weight': 'normal', 'size': 8}
     matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import sys
 import warnings
 import datetime
@@ -45,6 +46,8 @@ Major reorganization October 14, 2020
 __author__ = "Ramsey Karim"
 
 cube_info = {}
+make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
+
 
 def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
     length_scale=None, global_center_coord=None, reg_index=0, return_cutout=False):
@@ -797,6 +800,7 @@ class ImgContourPair:
 
     def __init__(self, moment_map, name, levels=None, color='k'):
         self.moment_map = moment_map
+        self.name = name
         self.wcs = moment_map.wcs
         self.levels = levels
         self.color = color
@@ -826,17 +830,22 @@ def check_if_wings_trace_peak_emission(cube):
     """
     kms = u.km/u.s
     vel_bounds = 20*kms, 30*kms
-    smooth_beam = cube_utils.Beam(18*u.arcsec)
+    smooth_beam = cube_utils.Beam(16*u.arcsec)
     ImgContourPair.smooth_spatial_ = lambda img, w: smooth_spatial(img, w, cube, smooth_beam)
 
-    pillar_1_highlight = cube.spectral_slab(25*kms, 27*kms).moment0()
-    pillar_1_highlight = ImgContourPair(pillar_1_highlight, "P1", levels=[20, 30, 40, 50, 60], color='k')
 
-    background_35_highlight = cube.spectral_slab(32*kms, 36*kms).moment0()
-    background_35_highlight = ImgContourPair(background_35_highlight, "BG35", levels=[11, 20, 35], color='r')
+    pillar_1_highlight_vlims = (24*kms, 27*kms)
+    pillar_1_highlight = cube.spectral_slab(*pillar_1_highlight_vlims).moment0()
+    pillar_1_highlight = ImgContourPair(pillar_1_highlight, make_vel_stub(pillar_1_highlight_vlims), levels=[x*1.5 for x in [20, 30, 40, 50, 60]], color='k')
 
-    background_30_highlight = cube.spectral_slab(29*kms, 30*kms).moment0()
-    background_30_highlight = ImgContourPair(background_30_highlight, "BG30", levels=[6,11], color='orange')
+    background_35_highlight_vlims = (32*kms, 36*kms)
+    background_35_highlight = cube.spectral_slab(*background_35_highlight_vlims).moment0()
+    background_35_highlight = ImgContourPair(background_35_highlight, make_vel_stub(background_35_highlight_vlims), levels=[11, 20, 35], color='r')
+
+    background_30_highlight_vlims = (28*kms, 29*kms)
+    # background_30_highlight_vlims = (29*kms, 30*kms)
+    background_30_highlight = cube.spectral_slab(*background_30_highlight_vlims).moment0()
+    background_30_highlight = ImgContourPair(background_30_highlight, make_vel_stub(background_30_highlight_vlims), levels=[8,10,12], color='orange')
 
     # original_mom0 = cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
 
@@ -846,9 +855,9 @@ def check_if_wings_trace_peak_emission(cube):
     model_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".model.fits")
     resid_cube = cube_utils.SpectralCube.read(resid_fn)
     red_wing_highlight = resid_cube.spectral_slab(27*kms, 30*kms).moment0().to(u.K*u.km/u.s)
-    red_wing_highlight = ImgContourPair(red_wing_highlight, "Redshifted Wing", levels=[6, 9], color='w')
+    red_wing_highlight = ImgContourPair(red_wing_highlight, "Red Residual Wing", levels=[6, 9], color='w')
     # resid_mom0 = resid_cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
-    fig = plt.figure(figsize=(12, 10))
+    fig = plt.figure(figsize=(10, 5))
     ax1 = plt.subplot(121, projection=cube.wcs, slices=('x', 'y', 0))
     ax2 = plt.subplot(122, projection=resid_cube.wcs, slices=('x', 'y', 0))
 
@@ -866,18 +875,27 @@ def check_if_wings_trace_peak_emission(cube):
         # ax1.set_title("1")
         # ax1.contour(*contour_args, **contour_kwargs)
         ax1.contour(*img1.carg(), **img1.ckwarg())
+        handles1 = [mpatches.Patch(color=img1.color, label=img1.name)]
         fig.colorbar(im, ax=ax1)
+        ax1.legend(handles=handles1, loc='lower right')
+        ax1.set_title(img1.name)
 
         im = ax2.imshow(img2.img(), origin='lower', vmin=v2[0], vmax=v2[1], cmap='viridis')
-        ax2.set_title("2")
+        handles2 = []
         for c_img in additional_contours:
             ax2.contour(*c_img.carg(), **c_img.ckwarg())
+            handles2.append(mpatches.Patch(color=c_img.color, label=c_img.name))
         ax2.contour(*img2.carg(), **img2.ckwarg())
+        handles2.append(mpatches.Patch(color=img2.color, label=img2.name))
         fig.colorbar(im, ax=ax2)
+        ax2.legend(handles=handles2, loc='lower right')
+        ax2.set_title(img2.name)
 
-    plot_axes(pillar_1_highlight, (5, 80), red_wing_highlight, (0, 12), pillar_1_highlight)
-
-    plt.show()
+    # plot_axes(pillar_1_highlight, (5, 80), red_wing_highlight, (0, 12), pillar_1_highlight)
+    plot_axes(pillar_1_highlight, (5, 80*1.5), background_30_highlight, (4, 14), pillar_1_highlight, background_35_highlight)
+    plt.tight_layout()
+    plt.savefig("/home/ramsey/Pictures/2021-06-03-work/redshifted_wing.png")
+    # plt.show()
 
 
 """
@@ -1160,13 +1178,13 @@ if __name__ == "__main__":
     # subcubes = [smooth(c) for c in get_all_subcubes()]
     # try_mask_above_half_power(subcube, xpower=2)
 
-    # check_if_wings_trace_peak_emission(subcube)
+    check_if_wings_trace_peak_emission(subcube)
 
     # fit_image_to_file(subcube, double=True)
 
     # fit_live_interactive(subcube, double=True)
 
-    investigate_fit(subcube, double=False)
+    # investigate_fit(subcube, double=False)
 
     # stack_pillar_spectra(subcube)
 

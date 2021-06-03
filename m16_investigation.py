@@ -250,7 +250,7 @@ def convolve_carma_to_sofia():
     cube_mol.write(os.path.join(write_path, write_fn), format='fits')
 
 
-def compare_carma_to_sofia_crosscut():
+def compare_carma_to_sofia_crosscut(selected_region=0):
     """
     May 25, 2021
     Following from convolve_carma_to_sofia, I'll use those convolved-up CARMA
@@ -265,16 +265,17 @@ def compare_carma_to_sofia_crosscut():
     Third path (horns): 23.7-25.8 km/s
     Fourth path (very tip): 25-27 km/s
     (Tested on HCN at native resolution)
+
+    selected_region is an int between 0 and 3 inclusive
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
-    molecule = 'hcn'
-    molecule_name = 'HCN'
+    molecule = 'hcop'
+    molecule_name = 'HCO+'
     mol_fn = [f for f in filepaths if molecule in f].pop()
     mol_conv_fn = [f for f in filepaths_conv if molecule in f].pop()
 
     reg_filename = catalog.utils.search_for_file("catalogs/p1_threads.reg")
-    selected_region = 3 # 0 to 3
     vel_lims = [(24.4, 25.5), (24.8, 25.7), (23.7, 25.8), (25., 27.)][selected_region]
     cc_path = crosscut.coords_from_region(reg_filename, index=selected_region)
 
@@ -284,7 +285,7 @@ def compare_carma_to_sofia_crosscut():
     cco = crosscut.CrossCut(cc_path, vlims=vel_lims)
     cco.setup_figure(fig=fig, xcut_axis=xcut_ax)
     layers = [
-        crosscut.DataLayer("[CII]", cube_utils.CubeData("sofia/M16_CII_U.fits"), cube=True, alpha=0.7),
+        crosscut.DataLayer("[CII] / 4", cube_utils.CubeData("sofia/M16_CII_U.fits"), cube=True, alpha=0.7, f_to_apply=lambda x: x/4),
         crosscut.DataLayer(f"{molecule_name} (CII beam)", cube_utils.CubeData(mol_conv_fn), cube=True, alpha=0.7),
         crosscut.DataLayer(f"{molecule_name}", cube_utils.CubeData(mol_fn), cube=True, alpha=0.7),
     ]
@@ -296,11 +297,12 @@ def compare_carma_to_sofia_crosscut():
     plt.xlabel("Distance along cross-cut (arcseconds)")
     cco.plot_image(layers[2], stretch='linear', subplot_creator=img_ax_f)
     cco.switch_axes('img')
-    plt.title(f"{molecule_name} (CII beam) {vel_lims}")
-    plt.show()
+    plt.title(f"{molecule_name} {vel_lims}")
+    # plt.show()
+    fig.savefig(f"/home/ramsey/Pictures/2021-06-01-work/xc_{selected_region}_{molecule}.png")
 
 
-def compare_carma_to_sofia_pv():
+def compare_carma_to_sofia_pv(selected_region=0, hcop_if_true_else_hcn=False):
     """
     May 25, 2021
     Same cuts as compare_carma_to_sofia_crosscut but with PVs now
@@ -312,22 +314,40 @@ def compare_carma_to_sofia_pv():
     The "galaxy brain" idea here would be to combine the previous function
     with the crosscuts and this one with PV diagrams
     Would look noisy but could be really cool
+
+    selected_region is an int between 0 and 3 inclusive
+
+
+    TODO::::::: swap the CII image for a HC/N/OP image (native resolution)
+    so that I can more directly compare CII and HC/ at CII resolution as contours
     """
     # copied from the crosscut version
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
+    # get all the filenames at once
     cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"),]
-    colors = ['r', 'b', 'cyan', 'violet', 'magenta']
-    names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)']
+    colors = ['r', 'b', 'cyan', 'k', 'cyan']
+    names = ['[CII]', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)']
+    # devise way to pick hcn or hcop with simply toggle
+    mol_idx = 2*int(hcop_if_true_else_hcn) + 1
+    molecule = 'hcop' if hcop_if_true_else_hcn else 'hcn'
+    trim_lists = lambda l : [l[0]] + l[mol_idx:mol_idx+2]
+    # trim all lists so we can just loop through them and only get one molecular line
+    cube_filenames = trim_lists(cube_filenames)
+    colors = trim_lists(colors)
+    names = trim_lists(names)
+    img_for_background = 1
 
+    # set up the vectors
     reg_filename = catalog.utils.search_for_file("catalogs/p1_threads.reg")
-    selected_region = 3 # 0 to 3
     pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=None) # Try nonzero width later
     vel_limits = np.array([20, 30])*u.km/u.s
 
+    fig = plt.figure(figsize=(14, 8))
     ax_sl, sl_grid_wcs, sl_grid_shape, sl_grid_header = None, None, None, None
+    contour_args_list, contour_kwargs_list = [], []
     for i, c_fn in enumerate(cube_filenames):
         cube = cube_utils.CubeData(c_fn)
         # should actually use cps2 cutout as wrapper for this and save
@@ -338,16 +358,24 @@ def compare_carma_to_sofia_pv():
             sl_grid_header = sl.header
             ax_sl = plt.subplot2grid((1, 2), (0, 1), projection=sl_grid_wcs)
             sl_grid_shape = sl.data.shape
-            contour_args = (sl.data,)
+            contour_args = (sl.data,) # marc suggested that one of the layers should be an image instead of all contours
         else:
             sl.header['CTYPE2'] = 'VRAD' # thanks to the note in m16_pictures.single_parallel_pillar_pvs
             contour_args = (reproject_interp((sl.data, sl.header), sl_grid_header, return_footprint=False),)
-        ax_sl.contour(*contour_args, linewidths=1.2, colors=colors[i])
+        contour_args_list.append(contour_args)
+        if not (i == img_for_background):
+            # don't save kwargs for the image layer, no need
+            contour_kwargs_list.append(dict(linewidths=1.2, colors=colors[i]))
+
+    ax_sl.imshow(*contour_args_list.pop(img_for_background), origin='lower', cmap='viridis')
+    for contour_args, contour_kwargs in zip(contour_args_list, contour_kwargs_list):
+        ax_sl.contour(*contour_args, **contour_kwargs)
+
 
     ax_sl.coords[1].set_format_unit(u.km/u.s)
     ax_sl.coords[0].set_format_unit(u.arcsec)
     ax_sl.coords[0].set_major_formatter('x')
-    ax_sl.set_title("PV Diagram")
+    ax_sl.set_title(f"PV Diagram; {names[img_for_background]} in color")
     ax_sl.set_xlabel("Offset, from E to W (arcseconds)")
     ax_sl.tick_params(axis='x', direction='in')
     ax_sl.tick_params(axis='y', direction='in')
@@ -358,15 +386,16 @@ def compare_carma_to_sofia_pv():
 
     img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
     w = WCS(hdr)
-    vlims = dict(vmin=0.1, vmax=0.7)
+    vlims = dict(vmin=0.1, vmax=0.8)
 
     ax_img = plt.subplot2grid((1, 2), (0, 0), projection=w)
-    ax_img.imshow(img, origin='lower', **vlims)
+    ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
 
-    handles = [mpatches.Patch(color=c, label=n) for ii, n, c in zip(range(len(cube_filenames)), names, colors)]
+    handles = [mpatches.Patch(color=c, label=n) for ii, n, c in zip(range(len(cube_filenames)), names, colors) if ii != img_for_background] # adjust for cii as image
     ax_sl.legend(handles=handles, loc='lower right')
     ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'))
-    plt.show()
+    # plt.show()
+    fig.savefig(f"/home/ramsey/Pictures/2021-06-01-work/pv_{selected_region}_{molecule}.png")
 
 
 def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, vel_stop=25.5, savefig=True):
@@ -508,9 +537,9 @@ def pillar_sample_spectra(reg_idx):
 
     pillar_vel_stub = make_vel_stub(pillar_vel_limits)
 
-    fig = plt.figure(figsize=(18, 10))
+    fig = plt.figure(figsize=(15, 5)) # originally (18, 10)
 
-    ax_img = plt.subplot2grid((1, 3), (0, 0))
+    ax_img = plt.subplot2grid((1, 5), (0, 0))
     ref_img, ref_hdr = fits.getdata(reference_filename, header=True)
     ref_wcs = WCS(ref_hdr)
     im = ax_img.imshow(ref_img, origin='lower', cmap='Greys_r', vmin=0.1, vmax=0.6)
@@ -521,7 +550,7 @@ def pillar_sample_spectra(reg_idx):
     # reg_idx = 0
     reg = reg_list[reg_idx]
 
-    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2, rowspan=1)
+    ax_spec = plt.subplot2grid((1, 5), (0, 1), colspan=4, rowspan=1)
     def add_spectrum(cube, spec_ax, reg, idx):
         # holdover from cii_systematic_emission_2() where there were multiple img/spec axes
         subcube = cube.subcube_from_regions([reg])
@@ -565,16 +594,51 @@ def pillar_sample_spectra(reg_idx):
     ax_spec.set_ylabel("Line intensity (K)")
     ax_spec.set_title("Line spectra (20\" beam) averaged over selected position")
     # plt.show()
-    fig.savefig(f"/home/rkarim/Pictures/2021-06-01-work/pillar_samples_{reg_idx}.png")
+    fig.savefig(f"/home/rkarim/Pictures/2021-06-03-work/pillar_samples_{reg_idx}.png")
 
+
+def multiple_moments():
+    # cube = cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").data.spectral_slab(20*kms, 30*kms)
+    # vel_lims = (20*kms, 30*kms)
+    # vel_lims = (23*kms, 27*kms)
+    vel_lims = (19*kms, 24*kms)
+    vel_str = f"{vel_lims[0].to_value():.1f}-{vel_lims[1].to_value():.1f}"
+    # Pillar1: 0, Pillar2: 2
+    cube = cps2.cutout_subcube(length_scale_mult=4., reg_index=2).spectral_slab(*vel_lims)
+    fig = plt.figure(figsize=(15, 5))
+    # vlims = [(None, None), (24, 26.5), (2, 7)] # 20-30
+    # vlims = [(None, None), (24.5, 25.5), (1, 1.7)] # 23-27
+    vlims = [(None, 90), (21, 23), (1, 3)] # 19-24
+    cargs, ckwargs = None, None
+    for i in range(3):
+        mom = cube.moment(order=i)
+        ax = plt.subplot2grid((1, 3), (0, i))
+        im = ax.imshow(mom.to_value(), origin='lower', vmin=vlims[i][0], vmax=vlims[i][1], cmap='nipy_spectral')
+        fig.colorbar(im, ax=ax)
+        if cargs is None:
+            cargs = (mom.to_value(),)
+            if any(vlims[0][j] is not None for j in range(2)):
+                if vlims[0][0] is not None:
+                    cargs[0][cargs[0] < vlims[0][0]] = vlims[0][0]
+                if vlims[0][1] is not None:
+                    cargs[0][cargs[0] > vlims[0][1]] = vlims[0][1]
+            ckwargs = dict(colors='k', linewidths=1)
+        ax.contour(*cargs, **ckwargs)
+        ax.set_title(f"[CII] Moment {i} {make_vel_stub(vel_lims)}")
+        ax.set_xticks([]), ax.set_yticks([])
+    plt.tight_layout()
+    fig.savefig(f"/home/ramsey/Pictures/2021-06-03-work/cii_moments_{vel_str}.png")
+    # plt.show()
 
 
 
 if __name__ == "__main__":
-    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_samples.reg"))
-    for i in range(3, len(reg_list)):
-        pillar_sample_spectra(i)
+    pillar_sample_spectra(0)
 
+
+    # for i in [1, 2]:
+    #     compare_carma_to_sofia_crosscut(selected_region=i)
+    #     compare_carma_to_sofia_pv(selected_region=i, hcop_if_true_else_hcn=True)
 
 
 
