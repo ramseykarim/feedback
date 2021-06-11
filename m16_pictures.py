@@ -57,7 +57,7 @@ def marcs_rgb_in_cii():
     B: 18-20
     G: 20-27
     R: 27-31
-    not a PV diagram, but related!!!
+    not a PV diagram, but related!!! (must have come from pvdiagrams_2?)
     """
     filenames = ["bima/M16_12CO1-0_7x4.fits", None]
     filenames=[None,]
@@ -112,7 +112,7 @@ def marcs_rgb_in_cii():
 
     for ax in axes:
         for ax_name in ('x', 'y'):
-            ax.tick_params(axis=ax_name, direction='in', labelled=False, labelbottom=False)
+            ax.tick_params(axis=ax_name, direction='in', labelleft=False, labelbottom=False)
     axes[0].set_ylabel(" ")
     axes[0].set_xlabel(" ")
     # axes[0].tick_params(axis='y', labelleft=False)

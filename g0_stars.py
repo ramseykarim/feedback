@@ -59,8 +59,8 @@ def main():
 
     cii_mom0, cii_w = catalog.utils.load_cii(2)
 
-    calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
-    return
+    # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
+    # return
 
     radius_limit = 3 # arcmin
     print(f"all calculations below limited to {radius_limit} arcmin radius from Wd2")
@@ -281,10 +281,12 @@ def calc_everything(catalog_df, catr, cii_mom0, cii_w, plotting=False,
     mvflux_med, mvflux_err = catr.get_momentum_flux(star_mask=star_mask)
     ke_med, ke_err = catr.get_mechanical_luminosity(star_mask=star_mask)
     fuv_tot_med, fuv_tot_err = catr.get_FUV_flux(star_mask=star_mask)
+    ionizing_tot_med, ionizing_tot_err = catr.get_ionizing_flux(star_mask=star_mask)
     print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
     print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
     print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.s))}")
     print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
+    print(f"IONIZING PHOTON FLUX: {print_val_err(ionizing_tot_med, ionizing_tot_err)}") # units should be 1/time
     mass_med, mass_err = catr.get_stellar_mass(star_mask=star_mask)
     lum_med, lum_err = catr.get_bolometric_luminosity(star_mask=star_mask)
     print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")

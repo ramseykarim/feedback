@@ -23,14 +23,12 @@ if not os.path.isdir(fila_dir):
 
 readme = """## README ##
 This is a 3D grid of log10(tau(160micron)), T [K], beta
-Created on May 3, 2021
+Created on June 11, 2021
 Return value is a dictionary; check the keys
 
-tau_range = np.arange(-4.1, -0.398, 0.002)
+tau_range = np.arange(-4.2, -0.398, 0.002)
 T_range = np.arange(6, 60.01, 0.05)
-b_range = np.array([1.65, 1.675, 1.70, 1.725, 1.75])
-
-Rows with beta values greater than 1.65 originated from the file tb_grid_3D_2020-10-08.pkl and are unchanged
+b_range = np.array([1.64, 1.68, 1.72, 1.76, 1.80])
 
 ## END ##
 """
@@ -45,11 +43,12 @@ filename = "tb_grid_kappa1Av.pkl"
 # filename = "tb_grid_t160-0.1.pkl"
 # filename = "tb_grid_t160-0.3.pkl"
 # filename = "tb_grid_3D_2020-10-08.pkl"
-filename = "tb_grid_3D_2021-05-03__TEST.pkl"
+# filename = "tb_grid_3D_2021-05-03__TEST.pkl"
+filename = "tb_grid_3D_2021-06-11__TEST.pkl"
 
 filename = fila_dir + filename
 
-other_grid = "/n/sgraraid/filaments/lgm/tb_grid_3D_2020-10-08.pkl"
+# other_grid = "/n/sgraraid/filaments/lgm/tb_grid_3D_2020-10-08.pkl"
 
 WINDOW_TITLE = filename.split('t160-')[-1]
 
@@ -66,11 +65,11 @@ def make_grid():
     # set up parameter grid
 
     # log10(Tau160) in logarithmic steps of 0.5%
-    tau_range = np.arange(-4.1, -0.398, 0.002)
+    tau_range = np.arange(-4.2, -0.398, 0.002)[::100]
     # Temperature from 5 to 150 in geometric steps of 3%
-    T_range = np.arange(6, 60.01, 0.05)
-    # Beta in arithmetic steps of 0.1
-    b_range = np.array([1.65,])
+    T_range = np.arange(6, 60.01, 0.05)[::100]
+    # Beta in arithmetic steps of 0.04
+    b_range = np.array([1.64, 1.68, 1.72, 1.76, 1.80])
     """
     a 28 million element grid will take ~1.5-3 hours on one core
     I looked into this on June 12, 2020
@@ -109,7 +108,6 @@ def make_grid():
     If you are trying to run the REGULAR grid, then comment out all this
     and uncomment the stuff below "ORIGINAL"
     This is for prepending this beta run onto the original grid and dropping the last (largest) original beta value
-    """
     with open(other_grid, 'rb') as f:
         original_result = pickle.load(f)
     for d in herschel:
@@ -121,20 +119,21 @@ def make_grid():
     with open(filename, 'wb') as f:
         pickle.dump(result, f)
     return result
+    """
 
     """
     ORIGINAL (pre-May 3, 2021)
     """
-    # for d in herschel:
-    #     result[d.name] = result[d.name].reshape(TT.shape)
-    # result['tau160'] = tt
-    # result['T'] = TT
-    # result['beta'] = bb
-    # result['README'] = readme
-    # print("grid shape:", TT.shape)
-    # with open(filename, 'wb') as f:
-    #     pickle.dump(result, f)
-    # return result
+    for d in herschel:
+        result[d.name] = result[d.name].reshape(TT.shape)
+    result['tau160'] = tt
+    result['T'] = TT
+    result['beta'] = bb
+    result['README'] = readme
+    print("grid shape:", TT.shape)
+    with open(filename, 'wb') as f:
+        pickle.dump(result, f)
+    return result
 
 
 def plot_data(dataset_name, SNR_MINIMUM=10, force160250=0, additional_mask=None, coverage_plot=True, extra_title=""):

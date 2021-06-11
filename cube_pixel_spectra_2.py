@@ -830,7 +830,7 @@ def check_if_wings_trace_peak_emission(cube):
     """
     kms = u.km/u.s
     vel_bounds = 20*kms, 30*kms
-    smooth_beam = cube_utils.Beam(16*u.arcsec)
+    smooth_beam = cube_utils.Beam(11*u.arcsec)
     ImgContourPair.smooth_spatial_ = lambda img, w: smooth_spatial(img, w, cube, smooth_beam)
 
 
@@ -849,6 +849,7 @@ def check_if_wings_trace_peak_emission(cube):
 
     # original_mom0 = cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
 
+    """ CAN ONLY DO THESE IF I RAN MODEL FITS FOR THEM
     filename_stub = "models/gauss_fit_above_1G_v4_smooth"
     param_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".param.fits")
     resid_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".resid.fits")
@@ -857,9 +858,6 @@ def check_if_wings_trace_peak_emission(cube):
     red_wing_highlight = resid_cube.spectral_slab(27*kms, 30*kms).moment0().to(u.K*u.km/u.s)
     red_wing_highlight = ImgContourPair(red_wing_highlight, "Red Residual Wing", levels=[6, 9], color='w')
     # resid_mom0 = resid_cube.spectral_slab(*vel_bounds).moment(order=0).to(u.K*u.km/u.s).to_value()
-    fig = plt.figure(figsize=(10, 5))
-    ax1 = plt.subplot(121, projection=cube.wcs, slices=('x', 'y', 0))
-    ax2 = plt.subplot(122, projection=resid_cube.wcs, slices=('x', 'y', 0))
 
     with fits.open(param_fn) as hdul:
         std_fitted = hdul['stddev_FIT'].data
@@ -868,6 +866,11 @@ def check_if_wings_trace_peak_emission(cube):
     # metric[metric < 0] = 0
     # metric = metric.sum(axis=0)
     # ############### add this in
+    """
+
+    fig = plt.figure(figsize=(10, 5))
+    ax1 = plt.subplot(121, projection=cube.wcs, slices=('x', 'y', 0))
+    ax2 = plt.subplot(122, projection=cube.wcs, slices=('x', 'y', 0))
 
     def plot_axes(img1, v1, img2, v2, *additional_contours):
         im = ax1.imshow(img1.img(), origin='lower', vmin=v1[0], vmax=v1[1], cmap='viridis')
@@ -892,9 +895,9 @@ def check_if_wings_trace_peak_emission(cube):
         ax2.set_title(img2.name)
 
     # plot_axes(pillar_1_highlight, (5, 80), red_wing_highlight, (0, 12), pillar_1_highlight)
-    plot_axes(pillar_1_highlight, (5, 80*1.5), background_30_highlight, (4, 14), pillar_1_highlight, background_35_highlight)
+    plot_axes(pillar_1_highlight, (5, 80*1.5), background_30_highlight, (4, 17), pillar_1_highlight) #, background_35_highlight
     plt.tight_layout()
-    plt.savefig("/home/ramsey/Pictures/2021-06-03-work/redshifted_wing.png")
+    plt.savefig("/home/ramsey/Pictures/2021-06-03-work/redshifted_wing_co_2.png")
     # plt.show()
 
 
@@ -1171,7 +1174,8 @@ def smooth_spatial(img_to_convolve, img_wcs, cube, target_beam):
 
 if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
-    subcube = cutout_subcube(length_scale_mult=4)
+    subcube = cutout_subcube(length_scale_mult=4, data_filename="bima/M16_12CO1-0_7x4.fits")
+    # subcube = cutout_subcube(length_scale_mult=4)
 
     # subcube = smooth(subcube)
 

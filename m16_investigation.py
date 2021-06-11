@@ -23,6 +23,7 @@ import glob
 
 from math import ceil
 from scipy import signal
+from scipy.interpolate import UnivariateSpline
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -600,16 +601,17 @@ def pillar_sample_spectra(reg_idx):
 def multiple_moments():
     # cube = cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").data.spectral_slab(20*kms, 30*kms)
     # vel_lims = (20*kms, 30*kms)
-    # vel_lims = (23*kms, 27*kms)
-    vel_lims = (19*kms, 24*kms)
+    vel_lims = (23*kms, 27*kms)
+    # vel_lims = (19*kms, 24*kms)
     vel_str = f"{vel_lims[0].to_value():.1f}-{vel_lims[1].to_value():.1f}"
     # Pillar1: 0, Pillar2: 2
-    cube = cps2.cutout_subcube(length_scale_mult=4., reg_index=2).spectral_slab(*vel_lims)
+    cube = cps2.cutout_subcube(length_scale_mult=4., reg_index=0).spectral_slab(*vel_lims)
     fig = plt.figure(figsize=(15, 5))
     # vlims = [(None, None), (24, 26.5), (2, 7)] # 20-30
-    # vlims = [(None, None), (24.5, 25.5), (1, 1.7)] # 23-27
-    vlims = [(None, 90), (21, 23), (1, 3)] # 19-24
+    vlims = [(None, None), (24.5, 25.5), (1, 1.7)] # 23-27
+    # vlims = [(None, 90), (21, 23), (1, 3)] # 19-24
     cargs, ckwargs = None, None
+    cargs2, ckwargs2 = None, None
     for i in range(3):
         mom = cube.moment(order=i)
         ax = plt.subplot2grid((1, 3), (0, i))
@@ -623,17 +625,455 @@ def multiple_moments():
                 if vlims[0][1] is not None:
                     cargs[0][cargs[0] > vlims[0][1]] = vlims[0][1]
             ckwargs = dict(colors='k', linewidths=1)
+        elif cargs2 is None:
+            cargs2 = (mom.to_value(),)
+            cargs2[0][cargs2[0] < vlims[1][0]] = vlims[1][0]
+            cargs2[0][cargs2[0] > vlims[1][1]] = vlims[1][1]
+            ckwargs2 = dict(colors='cyan', linewidths=1, levels=[24.6, 24.8, 25.35, 25.45])
         ax.contour(*cargs, **ckwargs)
+        if cargs2 is not None:
+            ax.contour(*cargs2, **ckwargs2)
         ax.set_title(f"[CII] Moment {i} {make_vel_stub(vel_lims)}")
         ax.set_xticks([]), ax.set_yticks([])
     plt.tight_layout()
-    fig.savefig(f"/home/ramsey/Pictures/2021-06-03-work/cii_moments_{vel_str}.png")
+    fig.savefig(f"/home/ramsey/Pictures/2021-06-03-work/cii_moments_{vel_str}_2.png")
     # plt.show()
+
+
+def compare_first_moment_to_peak_loc():
+    # vel_lims = (20*kms, 30*kms)
+    vel_lims = (23*kms, 27*kms)
+    # vel_lims = (19*kms, 24*kms)
+    vel_str = f"{vel_lims[0].to_value():.1f}-{vel_lims[1].to_value():.1f}"
+    cube = cps2.cutout_subcube(length_scale_mult=4., reg_index=0).spectral_slab(*vel_lims)
+    mom1 = cube.moment1().to(kms).to_value()
+    mom0 = cube.moment0().to_value()
+    cargs = (mom0,)
+    ckwargs = dict(colors='k', linewidths=1)
+
+    full_power_loc = cube.spectral_axis[cube.argmax(axis=0)].to_value()
+
+    plt.figure(figsize=(15, 5))
+    plt.subplot(131)
+    plt.imshow(mom1, origin='lower', vmin=vel_lims[0].to_value(), vmax=vel_lims[1].to_value(), cmap='nipy_spectral')
+    plt.colorbar()
+    plt.title(f"Moment 1 {vel_str}")
+    plt.contour(*cargs, **ckwargs)
+
+    plt.subplot(132)
+    plt.imshow(mom1 - full_power_loc, origin='lower', vmin=-1.5, vmax=1.5, cmap='nipy_spectral')
+    plt.colorbar()
+    plt.title("Moment 1 minus peak location")
+    plt.contour(*cargs, **ckwargs)
+
+    plt.subplot(133)
+    plt.imshow(full_power_loc, origin='lower', vmin=vel_lims[0].to_value(), vmax=vel_lims[1].to_value(), cmap='nipy_spectral')
+    plt.colorbar()
+    plt.title(f"Peak location  {vel_str}")
+    plt.contour(*cargs, **ckwargs)
+    plt.tight_layout()
+    plt.savefig(f"/home/ramsey/Pictures/2021-06-07-work/moment1_vs_peak_{vel_str}.png")
+    # plt.show()
+
+
+def estimate_noise(cube, spectrum, pix_radius, ax):
+    """
+    June 8, 2021
+    Helper function for identify_components
+    Find the RMS of the positive and negative noise
+    """
+    # estimate negative noise from -5 to 10 km/s
+    sl = slice(cube.closest_spectral_channel(-5*kms), cube.closest_spectral_channel(10*kms))
+    noise_spectrum = spectrum[sl]
+    pos_noise = noise_spectrum.to_value()[noise_spectrum>0]
+    neg_noise = noise_spectrum.to_value()[noise_spectrum<0]
+    f = lambda x : np.sum(np.abs(x))
+    n1 = list(f(x)/(x.size) for x in (pos_noise, neg_noise))
+    n2 = list(f(x)*np.sqrt(pix_radius)/(x.size) for x in (pos_noise, neg_noise))
+    ax.plot([pix_radius], [n1[0]], color='r', marker='+')
+    ax.plot([pix_radius], [n1[1]], color='r', marker='o')
+    ax.plot([pix_radius], [n2[0]], color='k', marker='+')
+    ax.plot([pix_radius], [n2[1]], color='k', marker='o')
+    """
+    The result seems to be:
+    Use the second formula, sum(abs(x))*root(radius)/size
+    and constrain it to be below 1.3 or 1.4 or so (test this out)
+    I am not using RMS because I don't want to take the square root of the
+    number of points (afaik)
+    """
+
+def scale_background(bg_spectrum, spectrum, pix_radius, hand_picked_scale, debug_plot=False):
+    """
+    June 8, 2021
+    Try to scale the background to the spectrum for subtraction
+    Use a negative noise based tolerance for how scaled up the BG should be
+    """
+    try:
+        bg_spectrum = bg_spectrum.to_value()
+    except:
+        pass
+    try:
+        spectrum = spectrum.to_value()
+    except:
+        pass
+    negative_noise_tolerance = 1.35 # based on estimate_noise() fidings
+    f = lambda x: np.sum(np.abs(x))*pix_radius/x.size
+    def rescale_subtract_and_get_noise(scale_factor):
+        # parameter is scale factor
+        # return the negative noise score
+        residual = spectrum - bg_spectrum*scale_factor
+        return f(residual[residual<0])
+    if debug_plot:
+        fig = plt.figure()
+        ax = plt.subplot(121)
+        ax2 = plt.subplot(122)
+    scale_factor = 1.0
+    scale_list = []
+    noise_list = []
+    for i in range(50):
+        noise = rescale_subtract_and_get_noise(scale_factor)
+        scale_list.append(scale_factor)
+        noise_list.append(noise/scale_factor)
+        scale_factor += 0.05
+    spline = UnivariateSpline(scale_list, noise_list, s=0)
+    scale_factor_range = np.linspace(scale_list[0], scale_list[-1], 100)
+    interpd_noise = spline(scale_factor_range)
+    best_scale_factor = scale_factor_range[np.argmin(interpd_noise)]
+    if debug_plot:
+        print("SCALE", best_scale_factor)
+        ax.plot(scale_list, noise_list, '.')
+        ax.plot(scale_factor_range, interpd_noise)
+        ax.plot(scale_factor_range, spline.derivative(1)(scale_factor_range))
+        ax.axvline(best_scale_factor, alpha=0.5, color='k')
+        ax.axvline(hand_picked_scale, alpha=0.5, color='orange')
+        ax2.plot(spectrum, color='g', alpha=0.5)
+        ax2.plot(spectrum - bg_spectrum*hand_picked_scale, color='orange', alpha=0.5)
+        ax2.plot(spectrum - bg_spectrum*best_scale_factor, color='k')
+        ax2.axhline(0, color='k', alpha=0.4)
+
+
+
+def identify_components(bgsub=False):
+    """
+    June 8, 2021
+    I made a bunch of channel maps and spectrum plots yesterday and it seems like the "red tail"
+    of the pillar 1 head is actually present off the pillar too, so it may be some other component
+    Now I want to remake those plots in Python and maybe even do some subtraction to see what's going on
+    The region file is called catalogs/pillar_samples_components.reg
+    """
+    reg_fn = "catalogs/pillar_samples_components.reg"
+    reg_list = regions.read_ds9(catalog.utils.search_for_file(reg_fn))
+    cube_zoom = cps2.cutout_subcube(length_scale_mult=6, reg_index=0)
+    cube = cps2.cutout_subcube(length_scale_mult=12, reg_index=2)
+    # can use cube.closest_spectral_channel(vel) to find channel
+
+    colors = ['k', 'k', 'r', 'b', 'g', 'k']
+    linestyles = ['--', '-', '-', '-', '-', ':']
+    names = ["Small Dashed Circle", "Small Solid Circle", "Circle 1", "Circle 2", "Circle 3", "Western Circle"]
+    short_names = ["", "", "1 (R)", "2 (B)", "3 (G)", "West"]
+    # I hand-edited some of these scale factors
+    # bg_scale_factors = [1.47, 2.34, 1.6, 1.22, 1.28, 1.0] # first version
+    # bg_scale_factors = [1.47, 1.96, 1.6, 1.22, 1.28, 1.0] # second version
+    bg_scale_factors = [1.47, 1.96, 1.4, 1.1, 1.28, 1.0] # third version
+
+    channel = 27*kms
+    ch_range = [channel]
+    # ch_range = np.arange(35, 40, 0.5)*kms
+    for channel in ch_range:
+        channel_map = cube[cube.closest_spectral_channel(channel), :, :]
+        channel_map_zoom = cube_zoom[cube_zoom.closest_spectral_channel(channel), :, :]
+
+        fig = plt.figure(figsize=(16.5, 8))
+        img_ax = plt.subplot2grid((2, 3), (0, 0), projection=channel_map.wcs)
+        img_zoom_ax = plt.subplot2grid((2, 3), (1, 0), projection=channel_map_zoom.wcs)
+        if bgsub:
+            spec_ax = plt.subplot2grid((2, 3), (0, 1), rowspan=1, colspan=2)
+            spec_bg_ax = plt.subplot2grid((2, 3), (1, 1), rowspan=1, colspan=2)
+        else:
+            spec_ax = plt.subplot2grid((2, 3), (0, 1), rowspan=2, colspan=2)
+        stretch = np.arcsinh
+        vlims = dict(vmin=stretch(0), vmax=stretch(30))
+        im = img_ax.imshow(stretch(channel_map.to_value()), origin='lower', cmap='nipy_spectral', **vlims)
+        fig.colorbar(im, ax=img_ax)
+        im = img_zoom_ax.imshow(stretch(channel_map_zoom.to_value()), origin='lower', cmap='nipy_spectral', **vlims)
+        fig.colorbar(im, ax=img_zoom_ax)
+
+        if bgsub:
+            bg_spectrum = cube.subcube_from_regions([reg_list[-1]]).mean(axis=(1, 2))
+        else:
+            bg_spectrum = np.zeros(cube.spectral_axis.shape) * u.K
+
+
+        """
+        Try to fit the background
+        Done, got the numbers I needed. Leaving this here for posterity
+        for i, reg in zip(range(2, 4), reg_list[2:4]):
+            pixreg = reg.to_pixel(channel_map.wcs)
+            pix_radius = pixreg.radius
+            spectrum = cube.subcube_from_regions([reg]).mean(axis=(1, 2))
+            scale_background(bg_spectrum, spectrum, pix_radius, bg_scale_factors[i], debug_plot=True)
+        plt.show()
+        return
+        """
+
+        for i, reg in enumerate(reg_list):
+            spectrum = cube.subcube_from_regions([reg]).mean(axis=(1, 2))
+            spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value(), label=names[i], color=colors[i], ls=linestyles[i])
+            if bgsub:
+                spectrum_bgsub = spectrum - bg_spectrum*bg_scale_factors[i]
+                spec_bg_ax.plot(cube.spectral_axis.to_value(), spectrum_bgsub.to_value(), label=names[i], color=colors[i], ls=linestyles[i])
+            for map, ax in zip((channel_map, channel_map_zoom), (img_ax, img_zoom_ax)):
+                pixreg = reg.to_pixel(map.wcs)
+                pix_center = pixreg.center.xy
+                pix_radius = pixreg.radius
+                ax.text(pix_center[0]-pix_radius/2, pix_center[1]+pix_radius, short_names[i], color='w', fontsize=11, ha='center', va='bottom')
+                pixreg.plot(ax=ax, color='w', lw=2, ls=linestyles[i])
+
+            """
+            This is how I estimated the negative noise threshold (which I didn't even end up using!!)
+            estimate_noise(cube, spectrum, pix_radius, ax2)
+            """
+
+        for ax in (img_ax, img_zoom_ax):
+            ax.set_xlabel(" ")
+            ax.set_ylabel(" ")
+        img_ax.tick_params(axis='x', direction='in', labelbottom=False)
+        img_ax.tick_params(axis='y', direction='in')
+        img_zoom_ax.tick_params(axis='x', direction='in')
+        img_zoom_ax.tick_params(axis='y', direction='in')
+        spec_ax.axvline(channel.to_value(), color='grey', alpha=0.4, lw=1.5)
+        spec_ax.axhline(0, color='grey', alpha=0.4, lw=1.5)
+        spec_ax.legend()
+        if bgsub:
+            spec_bg_ax.axvline(channel.to_value(), color='grey', alpha=0.4, lw=1.5)
+            spec_bg_ax.axhline(0, color='grey', alpha=0.4, lw=1.5)
+            spec_bg_ax.legend()
+        plt.tight_layout()
+        # plt.show()
+        bgsub_stub = "bgsub_" if bgsub else ""
+        fig.savefig(f"/home/ramsey/Pictures/2021-06-08-work/channel_map_{bgsub_stub}{channel.to_value():04.1f}.png")
+
+
+def identify_components_2():
+    """
+    June 8, 2021
+    Copy of the above function but this time I'm subtracting the brighter "background" spectra
+    from the pillar spectra, instead of just that dim Western spectrum
+    """
+    reg_fn = "catalogs/pillar_samples_components.reg"
+    reg_list = regions.read_ds9(catalog.utils.search_for_file(reg_fn))
+    cube_zoom = cps2.cutout_subcube(length_scale_mult=6, reg_index=0)
+    cube = cps2.cutout_subcube(length_scale_mult=12, reg_index=2)
+    # can use cube.closest_spectral_channel(vel) to find channel
+
+    colors = ['k', 'k', 'r', 'b', 'g', 'k']
+    linestyles = ['--', '-', '-', '-', '-', ':']
+    names = ["Small Dashed Circle", "Small Solid Circle", "Circle 1", "Circle 2", "Circle 3", "Western Circle"]
+    short_names = ["", "", "1 (R)", "2 (B)", "3 (G)", "West"]
+    bg_scale_factors = [1.47, 1.96, 1.4, 1.1, 1.28, 1.0] # third version
+
+    channel = 24*kms
+    ch_range = [channel]
+    ch_range = np.arange(20, 31, 0.5)*kms
+    for channel in ch_range:
+        channel_map = cube[cube.closest_spectral_channel(channel), :, :]
+        channel_map_zoom = cube_zoom[cube_zoom.closest_spectral_channel(channel), :, :]
+
+        fig = plt.figure(figsize=(16.5, 8))
+        img_ax = plt.subplot2grid((2, 3), (0, 0), projection=channel_map.wcs)
+        img_zoom_ax = plt.subplot2grid((2, 3), (1, 0), projection=channel_map_zoom.wcs)
+        spec_ax = plt.subplot2grid((2, 3), (0, 1), rowspan=1, colspan=2)
+        spec_bg_ax = plt.subplot2grid((2, 3), (1, 1), rowspan=1, colspan=2)
+        stretch = np.arcsinh
+        vlims = dict(vmin=stretch(0), vmax=stretch(30))
+        im = img_ax.imshow(stretch(channel_map.to_value()), origin='lower', cmap='nipy_spectral', **vlims)
+        fig.colorbar(im, ax=img_ax)
+        im = img_zoom_ax.imshow(stretch(channel_map_zoom.to_value()), origin='lower', cmap='nipy_spectral', **vlims)
+        fig.colorbar(im, ax=img_zoom_ax)
+
+        for i, reg in enumerate(reg_list):
+            spectrum = cube.subcube_from_regions([reg]).mean(axis=(1, 2))
+            spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value(), label=names[i], color=colors[i], ls=linestyles[i])
+            if i < 2:
+                bg_spectrum = cube.subcube_from_regions([reg_list[i+3]]).mean(axis=(1, 2))
+                spectrum_bgsub = spectrum - bg_spectrum
+                spec_bg_ax.plot(cube.spectral_axis.to_value(), spectrum_bgsub.to_value(), label=names[i]+" (BG subtracted)", color=colors[i], ls=linestyles[i])
+            if i == 2:
+                bg_spectrum = cube.subcube_from_regions([reg_list[-1]]).mean(axis=(1, 2))*bg_scale_factors[i]
+                spec_bg_ax.plot(cube.spectral_axis.to_value(), (spectrum - bg_spectrum).to_value(), label=names[i]+" (BG subtracted)", color=colors[i], ls=linestyles[i])
+            for map, ax in zip((channel_map, channel_map_zoom), (img_ax, img_zoom_ax)):
+                pixreg = reg.to_pixel(map.wcs)
+                pix_center = pixreg.center.xy
+                pix_radius = pixreg.radius
+                ax.text(pix_center[0]-pix_radius/2, pix_center[1]+pix_radius, short_names[i], color='w', fontsize=11, ha='center', va='bottom')
+                pixreg.plot(ax=ax, color='w', lw=2, ls=linestyles[i])
+
+            """
+            This is how I estimated the negative noise threshold (which I didn't even end up using!!)
+            estimate_noise(cube, spectrum, pix_radius, ax2)
+            """
+
+        for ax in (img_ax, img_zoom_ax):
+            ax.set_xlabel(" ")
+            ax.set_ylabel(" ")
+        img_ax.tick_params(axis='x', direction='in', labelbottom=False)
+        img_ax.tick_params(axis='y', direction='in')
+        img_zoom_ax.tick_params(axis='x', direction='in')
+        img_zoom_ax.tick_params(axis='y', direction='in')
+        spec_ax.axvline(channel.to_value(), color='grey', alpha=0.4, lw=1.5)
+        spec_ax.axhline(0, color='grey', alpha=0.4, lw=1.5)
+        spec_ax.legend()
+        spec_bg_ax.axvline(channel.to_value(), color='grey', alpha=0.4, lw=1.5)
+        spec_bg_ax.axhline(0, color='grey', alpha=0.4, lw=1.5)
+        spec_bg_ax.legend()
+        plt.tight_layout()
+        # plt.show()
+        fig.savefig(f"/home/ramsey/Pictures/2021-06-08-work/channel_map_extrabgsub_{channel.to_value():04.1f}.png")
+
+
+
+def identify_components_with_co():
+    """
+    June 8, 2021
+    Same as identify_components() but instead of overplotting multiple regions,
+    it's like pillar_sample_spectra() where I overplot multiple lines
+    I will have to pick a region (0 thru 5, 5 is the background) for each of these plots
+    I have copied some of the below from pillar_sample_spectra()
+    """
+    cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits", "apex/M16_12CO3-2_truncated_cutout.fits", "apex/M16_13CO3-2_truncated_cutout.fits",
+        "bima/M16_12CO1-0_APEXbeam.fits", "apex/M16_CO6-5_APEXbeam.fits"]
+    line_channel_vlims = [(0, 35), (0, 30), (None, None), (None, None), (None, None)]
+    line_names = ['CII', '12CO(3-2)', '13CO(3-2)',
+        '12CO(1-0) * 0.5', '12CO(6-5)']
+    line_colors = ['b', 'orange', 'g', 'r', 'purple']
+    multiplier = [1, 1, 1, 0.5, 1]
+    kms = u.km/u.s
+
+    #### These are for each region in the pillar_samples_components.reg file
+    colors = ['k', 'k', 'r', 'b', 'g', 'k']
+    linestyles = ['--', '-', '-', '-', '-', ':']
+    names = ["Small Dashed Circle", "Small Solid Circle", "Circle 1", "Circle 2", "Circle 3", "Western Circle"]
+    short_names = ["", "", "1 (R)", "2 (B)", "3 (G)", "West"]
+    # I hand-edited some of these scale factors
+    bg_scale_factors = [1.47, 1.96, 1.4, 1.1, 1.28, 1.0] # third version
+
+    reg_fn = "catalogs/pillar_samples_components.reg"
+    reg_list = regions.read_ds9(catalog.utils.search_for_file(reg_fn))
+    reg_idx = 0
+
+    ref_idx = 1
+    channel = 24*kms
+    ref_cube = cps2.cutout_subcube(length_scale_mult=12, data_filename=cube_filenames[ref_idx])
+    channel_map = ref_cube[ref_cube.closest_spectral_channel(channel), :, :]
+    reference_name = f"{line_names[ref_idx]} {channel.to_value():04.1f} {channel.unit}"
+
+    fig = plt.figure(figsize=(15, 5)) # originally (18, 10)
+    ax_img = plt.subplot2grid((1, 3), (0, 0))
+    ref_img, ref_wcs = channel_map.to_value(), channel_map.wcs
+    stretch = np.arcsinh
+    im = ax_img.imshow(stretch(ref_img), origin='lower', cmap='nipy_spectral', vmin=stretch(line_channel_vlims[ref_idx][0]), vmax=stretch(line_channel_vlims[ref_idx][1]))
+    # fig.colorbar(im, ax=ax_img)
+    ax_img.set_title(reference_name)
+
+    reg = reg_list[reg_idx]
+
+    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2, rowspan=1)
+    for i, c_fn in enumerate(cube_filenames):
+        cube = cube_utils.CubeData(c_fn)
+        cube.convert_to_K()
+        cube.data = cube.data.with_spectral_unit(kms)
+        subcube = cube.data.subcube_from_regions([reg])
+        spectrum = subcube.mean(axis=(1, 2)).to_value() * multiplier[i]
+        if line_names[i] == 'CII':
+            bg_spectrum = cube.data.subcube_from_regions([reg_list[reg_idx+3]]).mean(axis=(1, 2)).to_value() #* bg_scale_factors[reg_idx]
+            ax_spec.plot(cube.data.spectral_axis.to_value(), spectrum, label=f"{line_names[i]}", color=line_colors[i], linestyle='--')
+            spectrum -= bg_spectrum
+            ax_spec.plot(cube.data.spectral_axis.to_value(), spectrum, label=f"{line_names[i]} (BG subtracted)", color=line_colors[i])
+        else:
+            ax_spec.plot(cube.data.spectral_axis.to_value(), spectrum, label=f"{line_names[i]}", color=line_colors[i])
+    pixreg = reg.to_pixel(ref_wcs)
+    pix_center = pixreg.center.xy
+    pix_radius = pixreg.radius
+    # ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{idx}", color='r', fontsize=11, ha='center', va='bottom')
+    pixreg.plot(ax=ax_img, color='k', lw=2, ls=linestyles[reg_idx])
+
+    spec_xlim = (0, 55)
+    ax_spec.legend()
+    # ax_spec.set_ylim(spec_ylim)
+    ax_spec.set_xlim(spec_xlim)
+    # ax_spec.axvspan(*(pvl.to_value() for pvl in pillar_vel_limits), color='grey', alpha=0.05)
+    ax_spec.axvline(channel.to_value(), color='k', alpha=0.2)
+    ax_spec.axhline(0, color='k', alpha=0.2)
+
+    ax_spec.set_xlabel("velocity (km/s)")
+    ax_spec.set_ylabel("Line intensity (K)")
+    ax_spec.set_title("Line spectra (20\" beam) averaged over selected position")
+    # plt.show()
+    fig.savefig(f"/home/ramsey/Pictures/2021-06-08-work/pillar_samples_{reg_idx}.png")
+
+
+def save_transparent_moment_img():
+    """
+    June 10, 2021
+    Save a transparent-background image of M16 in CII for an overlay with optical data
+    Source: https://stackoverflow.com/questions/15857647/how-to-export-plots-from-matplotlib-with-transparent-background
+
+    If I had to pick 3 channels of interest, they would be:
+    (17, 22): northern cloud first shows up in blue
+    (22, 27): pillars
+    (27, 34): northern cloud in red
+    """
+    vel_lims = [(12, 22), (22, 27), (27, 30)]
+    vlims = [(30, 70), (40, 170), (18, 50)]
+    selected_region = 0
+    cube = cps2.cutout_subcube(length_scale_mult=24.)
+
+    stretch = np.arcsinh
+    layers = []
+    white_space = None
+    nanmask = None
+    for i in range(len(vel_lims)):
+        mom0 = stretch(cube.spectral_slab(*(v*kms for v in vel_lims[i])).moment0().to_value())
+        norm = mpl_colors.Normalize(vmin=stretch(vlims[i][0]), vmax=stretch(vlims[i][1]))
+        mom0 = norm(mom0)
+        if white_space is None:
+            white_space = (mom0 < 0)
+            nanmask = np.isnan(mom0)
+        else:
+            white_space &= (mom0 < 0)
+            nanmask |= np.isnan(mom0)
+        layers.append(mom0)
+    rgb = layers[::-1]
+    # rgb.append(mpl_colors.LogNorm(vmin=0.6, vmax=1)(np.sum(rgb, axis=0)))
+    rgb.append(np.ones_like(mom0)*0.8)
+    rgb = np.stack(rgb, axis=-1)
+    rgb[white_space | nanmask, :3] = 1
+    rgb[white_space | nanmask, 3] = 0
+    fig = plt.figure()
+    ax = plt.subplot(111)
+    ax.imshow(rgb, origin='lower')
+    ax.axis('off')
+
+
+    for ax_name in ('x', 'y'):
+        ax.tick_params(axis=ax_name, direction='in', labelleft=False, labelbottom=False)
+    ax.set_ylabel(" ")
+    ax.set_xlabel(" ")
+    # plt.show()
+    plt.savefig("/home/ramsey/Pictures/2021-06-10-work/transparent_pillars_3.png", transparent=True)
 
 
 
 if __name__ == "__main__":
-    pillar_sample_spectra(0)
+    """
+    TODO (as of June 3 2021):
+    fix pillar_sample_spectra plots so they look nice. remove ticks: ax.set_xticks([])
+    this only works on jupiter for some reason.. will need to do this from the office for ease
+    """
+    # identify_components_2()
+    # identify_components_with_co()
+
+    save_transparent_moment_img()
 
 
     # for i in [1, 2]:
