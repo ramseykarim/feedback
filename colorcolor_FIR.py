@@ -44,7 +44,7 @@ filename = "tb_grid_kappa1Av.pkl"
 # filename = "tb_grid_t160-0.3.pkl"
 # filename = "tb_grid_3D_2020-10-08.pkl"
 # filename = "tb_grid_3D_2021-05-03__TEST.pkl"
-filename = "tb_grid_3D_2021-06-11__TEST.pkl"
+filename = "tb_grid_3D_2021-06-11.pkl"
 
 filename = fila_dir + filename
 
@@ -65,9 +65,9 @@ def make_grid():
     # set up parameter grid
 
     # log10(Tau160) in logarithmic steps of 0.5%
-    tau_range = np.arange(-4.2, -0.398, 0.002)[::100]
+    tau_range = np.arange(-4.2, -0.398, 0.002)
     # Temperature from 5 to 150 in geometric steps of 3%
-    T_range = np.arange(6, 60.01, 0.05)[::100]
+    T_range = np.arange(6, 60.01, 0.05)
     # Beta in arithmetic steps of 0.04
     b_range = np.array([1.64, 1.68, 1.72, 1.76, 1.80])
     """
