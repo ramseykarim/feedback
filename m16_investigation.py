@@ -303,7 +303,7 @@ def compare_carma_to_sofia_crosscut(selected_region=0):
     fig.savefig(f"/home/ramsey/Pictures/2021-06-01-work/xc_{selected_region}_{molecule}.png")
 
 
-def compare_carma_to_sofia_pv(selected_region=0, hcop_if_true_else_hcn=False):
+def compare_carma_to_sofia_pv(selected_region=0, mol_idx=False):
     """
     May 25, 2021
     Same cuts as compare_carma_to_sofia_crosscut but with PVs now
@@ -321,6 +321,8 @@ def compare_carma_to_sofia_pv(selected_region=0, hcop_if_true_else_hcn=False):
 
     TODO::::::: swap the CII image for a HC/N/OP image (native resolution)
     so that I can more directly compare CII and HC/ at CII resolution as contours
+
+    Updated June 25, 2021 to include CO10 and potentially follow my TODOs above
     """
     # copied from the crosscut version
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
@@ -328,12 +330,11 @@ def compare_carma_to_sofia_pv(selected_region=0, hcop_if_true_else_hcn=False):
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
     # get all the filenames at once
-    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"),]
-    colors = ['r', 'b', 'cyan', 'k', 'cyan']
-    names = ['[CII]', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)']
-    # devise way to pick hcn or hcop with simply toggle
-    mol_idx = 2*int(hcop_if_true_else_hcn) + 1
-    molecule = 'hcop' if hcop_if_true_else_hcn else 'hcn'
+    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits"]
+    colors = ['r',] + ['b', 'cyan',]*3
+    names = ['[CII]', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '12CO(1-0)', '12CO(1-0) (CII beam)']
+    short_names = ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
+    # mol_idx is an arg, starting at 1 for the molecules
     trim_lists = lambda l : [l[0]] + l[mol_idx:mol_idx+2]
     # trim all lists so we can just loop through them and only get one molecular line
     cube_filenames = trim_lists(cube_filenames)
@@ -364,11 +365,12 @@ def compare_carma_to_sofia_pv(selected_region=0, hcop_if_true_else_hcn=False):
             sl.header['CTYPE2'] = 'VRAD' # thanks to the note in m16_pictures.single_parallel_pillar_pvs
             contour_args = (reproject_interp((sl.data, sl.header), sl_grid_header, return_footprint=False),)
         contour_args_list.append(contour_args)
-        if not (i == img_for_background):
+        if True: #not (i == img_for_background):
             # don't save kwargs for the image layer, no need
             contour_kwargs_list.append(dict(linewidths=1.2, colors=colors[i]))
 
-    ax_sl.imshow(*contour_args_list.pop(img_for_background), origin='lower', cmap='viridis')
+    # ax_sl.imshow(*contour_args_list.pop(img_for_background), origin='lower', cmap='viridis')
+    ax_sl.imshow(*contour_args_list[img_for_background], origin='lower', cmap='viridis')
     for contour_args, contour_kwargs in zip(contour_args_list, contour_kwargs_list):
         ax_sl.contour(*contour_args, **contour_kwargs)
 
@@ -392,11 +394,11 @@ def compare_carma_to_sofia_pv(selected_region=0, hcop_if_true_else_hcn=False):
     ax_img = plt.subplot2grid((1, 2), (0, 0), projection=w)
     ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
 
-    handles = [mpatches.Patch(color=c, label=n) for ii, n, c in zip(range(len(cube_filenames)), names, colors) if ii != img_for_background] # adjust for cii as image
+    handles = [mpatches.Patch(color=c, label=n) for ii, n, c in zip(range(len(cube_filenames)), names, colors)]# if ii != img_for_background] # adjust for cii as image
     ax_sl.legend(handles=handles, loc='lower right')
     ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'))
     # plt.show()
-    fig.savefig(f"/home/ramsey/Pictures/2021-06-01-work/pv_{selected_region}_{molecule}.png")
+    fig.savefig(f"/home/ramsey/Pictures/2021-06-25-work/pv_{selected_region}_{short_names[mol_idx]}.png")
 
 
 def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, vel_stop=25.5, savefig=True):
@@ -1063,6 +1065,38 @@ def save_transparent_moment_img():
     plt.savefig("/home/ramsey/Pictures/2021-06-10-work/transparent_pillars_3.png", transparent=True)
 
 
+def peak_temperature():
+    """
+    June 28, 2021
+    This is re: Marc's suggestion to see the peak temperatures of CII,
+    CO, HCN, and HCO+ in his June 25, 2021 email
+    I'll start with the convolved-to-SOFIA versions
+    """
+    cube_filenames = ["sofia/M16_CII_U.fits", "bima/M16_12CO1-0_14x14.fits",
+        "carma/M16.ALL.hcn.sdi.cm.subpv.SOFIAbeam.fits", "carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits"]
+    names = ["[CII]", "12CO(1-0) (CII beam)", "HCN (CII beam)", "HCO+ (CII beam)"]
+    short_names = ["cii", "co10CONV", "hcnCONV", "hcopCONV"]
+    fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+    axes = sum((list(x) for x in axes), [])
+    for i in range(4):
+        if i == 0:
+            cube = cps2.cutout_subcube(length_scale_mult=7., reg_index=2)
+        else:
+            cube = cube_utils.CubeData(cube_filenames[i])
+            cube.convert_to_K()
+            cube = cube.data
+        cube = cube.with_spectral_unit(kms).spectral_slab(19*kms, 27*kms)
+        # full_power_idx = cube.argmax(axis=0)
+        # full_power_loc = cube.spectral_axis[full_power_idx].to_value()
+        full_power = cube.max(axis=0).to_value()
+        ax = axes[i]
+        im = ax.imshow(full_power, origin='lower', cmap='nipy_spectral')
+        ax.set_title(names[i])
+        fig.colorbar(im, ax=ax)
+    plt.tight_layout()
+    fig.savefig("/home/ramsey/Pictures/2021-06-28-work/peak_temperature.png")
+
+
 
 if __name__ == "__main__":
     """
@@ -1073,8 +1107,10 @@ if __name__ == "__main__":
     # identify_components_2()
     # identify_components_with_co()
 
-    save_transparent_moment_img()
+    # for i in [1, 3, 5]:
+    #     compare_carma_to_sofia_pv(selected_region=0, mol_idx=i)
 
+    peak_temperature()
 
     # for i in [1, 2]:
     #     compare_carma_to_sofia_crosscut(selected_region=i)
