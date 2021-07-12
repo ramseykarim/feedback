@@ -1094,28 +1094,108 @@ def peak_temperature():
         ax.set_title(names[i])
         fig.colorbar(im, ax=ax)
     plt.tight_layout()
-    fig.savefig("/home/ramsey/Pictures/2021-06-28-work/peak_temperature.png")
+    # fig.savefig("/home/ramsey/Pictures/2021-06-28-work/peak_temperature.png")
+
+
+def highlight_threads_regions():
+    """
+    July 6, 2021
+    This follows from Marc's recommendation in our last meeting to highlight
+    the structure of P1's head in optical and identify those components
+    in velocity space
+    """
+    reg_fn = catalog.utils.search_for_file("catalogs/pillar2_samples.reg") # or threads3
+    reg_list = regions.read_ds9(reg_fn)
+    # cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
+    # cube.convert_to_K()
+    # wcs_flat = cube.wcs_flat
+    # cube = cube.data.with_spectral_unit(kms)
+    line_name = "HCN"
+    line_stub = "hcn"
+    cube = cps2.cutout_subcube(length_scale_mult=4, reg_index=2, data_filename=f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.fits")
+    wcs_flat = cube[0].wcs
+
+    # (23, 24), (24, 25), (25, 26) approximately
+    # or 23.5, 24.7, 25.8
+    # fourth one is the bulk of the head, wider velocity range
+    colors = ['b', 'r', 'g', 'cyan']
+    # velocities = [23.5, 25.8, 24.7, (23, 26)] # for p1 threads3
+    # velocities = [(20.8, 22.1), (21.6, 22.6), (22, 23)] # wide band for p2 samples
+    velocities = [21.5, 22, 22.5] # channels for p2 samples
+
+
+    # load HST
+    hst_img, hst_hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
+    hst_wcs = WCS(hst_hdr)
+    hst_name = "HST F657N"
+    # hst_img = cube[100].to_value()
+    # hst_wcs = wcs_flat
+    hst_vlims = dict(vmin=0.1, vmax=0.8)
+
+
+    fig = plt.figure(figsize=(20, 9))
+    ax1 = plt.subplot2grid((2, 6), (0, 2), projection=wcs_flat)
+    ax2 = plt.subplot2grid((2, 6), (0, 3), projection=wcs_flat)
+    ax3 = plt.subplot2grid((2, 6), (0, 4), projection=wcs_flat)
+    axes = [ax1, ax2, ax3]
+    if len(reg_list) > 3:
+        ax4 = plt.subplot2grid((2, 6), (0, 5), projection=wcs_flat)
+        axes.append(ax4)
+
+    ax_img = plt.subplot2grid((2, 6), (0, 0), rowspan=2, colspan=2, projection=hst_wcs)
+    ax_img.imshow(hst_img, origin='lower', **hst_vlims, cmap='Greys_r')
+    ax_img.set_title(hst_name)
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+
+    ax_spec = plt.subplot2grid((2, 6), (1, 2), colspan=4)
+
+
+    for i in range(len(reg_list)):
+        v = velocities[i]
+        if isinstance(v, tuple):
+            v_tup = tuple(x*kms for x in v)
+            subcube_img = cube.spectral_slab(*v_tup).moment0()
+            v_stub = make_vel_stub(v_tup)
+            del v_tup
+            ax_spec.axvspan(*v, color=colors[i], alpha=0.1)
+        else:
+            idx_csc = cube.closest_spectral_channel(v*kms)
+            subcube_img = cube[idx_csc]
+            v_csc = cube.spectral_axis[idx_csc]
+            v_stub = f"{v_csc.to_value():.1f} {v_csc.unit}"
+            del v_csc, idx_csc
+            ax_spec.axvline(v, color=colors[i], alpha=0.2)
+        axes[i].imshow(subcube_img.to_value(), origin='lower', vmin=0, cmap='nipy_spectral')
+        lon, lat = axes[i].coords[0], axes[i].coords[1]
+        for coord in axes[i].coords:
+            coord.set_ticks_visible(False)
+            coord.set_ticklabel_visible(False)
+            coord.set_axislabel('')
+        axes[i].set_title(f"{line_name} {v_stub}", fontsize=7)
+
+        reg = reg_list[i]
+        pixreg = reg.to_pixel(subcube_img.wcs)
+        pixreg.plot(ax=axes[i], color=colors[i], linestyle='--')
+        pixreg = reg.to_pixel(hst_wcs)
+        pixreg.plot(ax=ax_img, color=colors[i], linestyle='--')
+        subcube_spec = cube.subcube_from_regions([reg])
+        spectrum = subcube_spec.mean(axis=(1, 2))
+        ax_spec.plot(cube.spectral_axis.to_value(), spectrum.to_value(), color=colors[i])
+
+    # plt.show()
+    plt.tight_layout()
+    fig.savefig(f"/home/ramsey/Pictures/2021-07-09-work/p2_spectra_{line_stub}_0.png")
+
+
+
 
 
 
 if __name__ == "__main__":
-    """
-    TODO (as of June 3 2021):
-    fix pillar_sample_spectra plots so they look nice. remove ticks: ax.set_xticks([])
-    this only works on jupiter for some reason.. will need to do this from the office for ease
-    """
-    # identify_components_2()
-    # identify_components_with_co()
-
-    # for i in [1, 3, 5]:
-    #     compare_carma_to_sofia_pv(selected_region=0, mol_idx=i)
-
-    peak_temperature()
-
-    # for i in [1, 2]:
-    #     compare_carma_to_sofia_crosscut(selected_region=i)
-    #     compare_carma_to_sofia_pv(selected_region=i, hcop_if_true_else_hcn=True)
-
+    highlight_threads_regions()
 
 
     ### the code for making all the RGB images

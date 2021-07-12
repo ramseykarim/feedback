@@ -91,6 +91,7 @@ def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
         )
 
     cube = cube_utils.CubeData(data_filename)
+    cube.convert_to_K()
     cube_info['dir'] = cube.directory
     if length_scale_mult is None:
         return cube.data.with_spectral_unit(u.km/u.s)

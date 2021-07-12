@@ -45,7 +45,9 @@ if __name__ != "__main__":
     raise RuntimeError("Where the hell are you importing this to, dependencies are already on thin ice")
 
 def main():
+    # m16_pv_again2()
     try_reproject_pv()
+
 
 def pv_thru_p3_shelves():
     """
@@ -129,6 +131,13 @@ def try_reproject_pv():
         Also using APEXbeam resolution for all 4 lines
         Jan 29 update: how about that GME stock, huh? replicating this same cut/image as
         a crosscut, bc Marc thinks the point would come across more clearly that way
+
+        July 12, 2021: prepping for the Future of Airborne astro workshop and
+        thinking to use a similar image here, maybe just one pillar at a time?
+        I think I would also cap resolution at SOFIA and get rid of APEX CO3-2
+        I won't do this yet, I might stick to one line at a time in which case
+        I'll use a different function. And I'll push this code before I mess
+        with anything
     """
     colors = ['r', 'b', 'DarkOrchid', 'DarkGreen']
     linestyles = ['-', '--', ':', '--']
@@ -211,8 +220,8 @@ def try_reproject_pv():
     ax_img.set_xlabel(" ")
     ax_img.set_ylabel(" ")
     plt.subplots_adjust(left=0.05, right=0.99)
-    fig.savefig("/home/ramsey/Pictures/2021-01-26-imgs/across_all_2.png")
-    # plt.show()
+    # fig.savefig("/home/ramsey/Pictures/2021-01-26-imgs/across_all_2.png")
+    plt.show()
 
 
 """
@@ -389,6 +398,12 @@ def m16_pv_again():
 def m16_pv_again2():
     """
     did not find anything interesting in those parallel cuts. try across??
+
+    July 12, 2021 update: I might edit this (I will push to github first)
+    for use in the upcoming Future of Airborne astro conference.
+    The only thing is, I don't think I need multuple paths overlaid?
+    Can just reference this function and write it into m16_deepdive.easy_pv
+    with each pv in a different subplot and all the paths on the HST
     """
     colors = ['MediumOrchid', 'LimeGreen', 'DarkOrange', 'MediumBlue']
     cmap = mpl_cm.get_cmap('autumn')

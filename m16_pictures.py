@@ -122,14 +122,15 @@ def marcs_rgb_in_cii():
 
 
 def m16_channel_maps():
-    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
-    cube = SpectralCube.read(fn)
+    # fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    # cube = SpectralCube.read(fn)
+    cube = cps2.cutout_subcube(length_scale_mult=12., reg_index=2)
     cube._unit = u.K
     # cube.plot_channel_maps(2, 2, [50, 60, 70, 80], cmap='jet')
-    moments = make_moment_series(cube, (2.5*kms, 40*kms), 2.5*kms)
+    moments = make_moment_series(cube, (15*kms, 35*kms), 1*kms)
     # assert len(moments) == 20
-    grid_shape = (3, 5)
-    fig = plt.figure(figsize=(20, 13))
+    grid_shape = (5, 4)
+    fig = plt.figure(figsize=(16, 20))
     stretch = np.arcsinh
     ax, im = None, None
     for i in range(len(moments)):
@@ -139,7 +140,7 @@ def m16_channel_maps():
         for axis_name in ('x', 'y'):
             ax.tick_params(axis=axis_name, direction='in')
             ax.tick_params(axis=axis_name, labelbottom=False, labelleft=False)
-        ax.text(0.1, 0.9, f"{v_left.to_value():.1f}$-${v_right.to_value():.1f} {v_left.unit}", transform=ax.transAxes, fontsize=16)
+        ax.text(0.07, 0.95, f"{v_left.to_value():.1f}$-${v_right.to_value():.1f}\n{v_left.unit}", transform=ax.transAxes, fontsize=16, va='top', color='white')
     plt.tight_layout(h_pad=0, w_pad=0, pad=1.01)
     # dx, dy = 0.01, 0.015
     # plt.subplots_adjust(wspace=0, hspace=0, left=dx, right=1-dx, top=1-dy, bottom=dy)
@@ -159,8 +160,8 @@ def m16_channel_maps():
     insetcax.yaxis.set_ticks_position('left')
     ax.text(0.62, 0.05, "T (K km/s)", transform=ax.transAxes, fontsize=14, zorder=10)
 
-    # plt.savefig("/home/ramsey/Pictures/12-21-20-work/m16_channel_maps.png")
-    plt.show()
+    plt.savefig("/home/ramsey/Pictures/2021-07-02-work/m16_channel_maps_1kms_zoom.png")
+    # plt.show()
 
 
 def m16_individual_channel_maps():
@@ -773,8 +774,8 @@ def compare_32_65_10():
         ax.set_title(f"APEX 12CO(6-5) compared to {overlay_stub}", fontsize=10)
     ax.set_xlabel("RA"); ax.set_ylabel("Dec")
     ax.legend(handles=handles)
-    # plt.show()
-    plt.savefig("/home/ramsey/Pictures/2021-05-12-work/CO_65_10.png")
+    plt.show()
+    # plt.savefig("/home/ramsey/Pictures/2021-05-12-work/CO_65_10.png")
 
 if __name__ == "__main__":
-    make_image_thin_channel_maps()
+    m16_channel_maps()
