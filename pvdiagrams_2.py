@@ -45,8 +45,7 @@ if __name__ != "__main__":
     raise RuntimeError("Where the hell are you importing this to, dependencies are already on thin ice")
 
 def main():
-    # m16_pv_again2()
-    try_reproject_pv()
+    m16_pv_again2()
 
 
 def pv_thru_p3_shelves():
@@ -395,6 +394,18 @@ def m16_pv_again():
     plt.show()
 
 
+def save_smoothed_carma():
+    raise RuntimeError("Already ran this on July 12, 2021")
+    line_stub = "hcop"
+    line_fn = catalog.utils.search_for_file(f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.fits")
+    save_fn = line_fn.replace('.fits', '.SMOOTH.fits')
+    subcube = cps2.cutout_subcube(length_scale_mult=None, data_filename=line_fn)
+    subcube = cps2.smooth(subcube)
+    subcube.meta['HISTORY'] = "Smoothed with 7-spaxel Hamming window"
+    subcube.write(save_fn, format='fits')
+
+
+
 def m16_pv_again2():
     """
     did not find anything interesting in those parallel cuts. try across??
@@ -405,51 +416,67 @@ def m16_pv_again2():
     Can just reference this function and write it into m16_deepdive.easy_pv
     with each pv in a different subplot and all the paths on the HST
     """
-    colors = ['MediumOrchid', 'LimeGreen', 'DarkOrange', 'MediumBlue']
-    cmap = mpl_cm.get_cmap('autumn')
-    colors = [mpl_colors.to_hex(cmap(x)) for x in (0, 0.33, 0.66, 0.99)]
-    reg_filename = catalog.utils.search_for_file("catalogs/across_each_pillar.reg") # 5 regions in this now
+    # colors = ['MediumOrchid', 'LimeGreen', 'DarkOrange', 'MediumBlue']
+    reg_filename = catalog.utils.search_for_file("catalogs/pillar1_threads_pv.reg") # 6 total, 4 in sequene and 2 in diff sequence
     path_list = pvdiagrams.path_from_ds9(reg_filename, None, width=pvdiagrams.m16_allpillars_series_kwargs['pvpath_width'])
 
     fig = plt.figure(figsize=(9.5, 5))
-    pillar_names = ['Pillar 1', 'Pillar 2', 'Pillar 3']
-    path_name = ['North', 'Mid-N', 'Mid', 'South']
-    selected_pillar = 1
-    path_list = path_list[selected_pillar*4:(selected_pillar+1)*4]
-    if selected_pillar == 2:
-        path_name.pop(1)
-        levels = [7, 9]
+    # this is either 0 or 1, "0" is first 4 (transverse), "1" is last 2 (vertical, threads)
+    selected_set = 0
+    if selected_set == 0:
+        path_list = path_list[:4]
+        path_name = [str(x) for x in range(1, 5)]
     else:
-        path_name[2] += '-S'
-        # levels = [15, 20]
-        levels = [20]
-        if selected_pillar == 1:
-            levels = [10] + levels[:1]
-    reg_index = selected_pillar*4 + 1
-    paths = []
+        path_list = path_list[4:]
+        path_name = [str(x) for x in range(1, 3)]
+    cmap = mpl_cm.get_cmap('viridis')
+    colors = [mpl_colors.to_hex(cmap(x)) for x in np.linspace(0., 0.99, len(path_list))]
+    colors = ['k', 'r', 'b', 'cyan']
     axes_sl = []
     handles = []
-
+    reg_index = 1
     # data_filename=f"apex/M16_12CO3-2_truncated.fits",
-    subcube = cps2.cutout_subcube(reg_filename=reg_filename, reg_index=reg_index, length_scale_mult=2)
-    subcube = cps2.smooth(subcube)
-    vel_lims = (18*u.km/u.s, 36*u.km/u.s)
+    line_stub = "hcn"
+    if line_stub == "cii":
+        line_fn = None
+        levels = [15, 20, 25, 30]
+    else:
+        line_fn = f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SMOOTH.fits"
+        levels = [2, 3, 4, 5, 6]
+    vel_lims = (22*u.km/u.s, 28*u.km/u.s)
+    subcube = cps2.cutout_subcube(reg_filename=reg_filename, reg_index=reg_index, length_scale_mult=2, data_filename=line_fn).spectral_slab(*vel_lims)
+    # if line_fn is not None and "SMOOTH" not in line_fn:
+    # # if line_fn is None or "SMOOTH" not in line_fn:
+    #     print("SMOOTHING")
+    #     subcube = cps2.smooth(subcube)
+    cargs_list, ckwargs_list = [], []
     for idx in range(len(path_list)):
         path = path_list[idx]
-        sl = pvextractor.extract_pv_slice(subcube.spectral_slab(*vel_lims), path)
+        sl = pvextractor.extract_pv_slice(subcube, path)
         if idx == 0:
             sl_wcs = WCS(sl.header)
             ax_sl = plt.subplot2grid((2, 2), (0, 1), rowspan=2, projection=sl_wcs)
             axes_sl.append(ax_sl)
-            im = ax_sl.imshow(sl.data, origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap='Greys')
+            # im = ax_sl.imshow(sl.data, origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap='Greys')
             ax_sl.coords[1].set_format_unit(u.km/u.s)
             ax_sl.coords[1].set_major_formatter('x.xx')
             ax_sl.coords[0].set_format_unit(u.arcsec)
             ax_sl.coords[0].set_major_formatter('x.xx')
-            ax_sl.set_title(f"{path_name[idx]} PV slice")
+            ax_sl.set_title(f"{line_stub} PV diagrams")
         contour_args = (sl.data,)
-        contour_kwargs = dict(linewidths=0.7, colors=[colors[idx]], alpha=1, levels=levels)
-        ax_sl.contour(*contour_args, **contour_kwargs)
+        cargs_list.append(contour_args)
+        contour_kwargs = dict(linewidths=1.2, colors=[colors[idx]], alpha=1)
+        ckwargs_list.append(contour_kwargs)
+    # Figure out contour levels automatically, if not already specified
+    if levels is None:
+        global_sl_max = max([np.max(x) for (x,) in cargs_list])
+        print("GLOBAL MAX",global_sl_max)
+        levels = np.linspace(0, global_sl_max, 15)[4:-1:2]
+    print("LEVELS",levels)
+    for idx in range(len(path_list)):
+        contour_args = cargs_list[idx]
+        contour_kwargs = ckwargs_list[idx]
+        ax_sl.contour(*contour_args, **contour_kwargs, levels=levels)
         handles.append(mpatches.Patch(color=colors[idx], label=path_name[idx]))
     ax_sl.legend(handles=handles)
 
@@ -458,7 +485,8 @@ def m16_pv_again2():
         img = subcube.moment0().to(u.K * u.km / u.s)
         w = img.wcs
         img = img.to_value()
-        vlims = dict(vmin=45, vmax=200)
+        # vlims = dict(vmin=45, vmax=200)
+        vlims = dict(vmin=None, vmax=None)
     elif img_select == 'hst':
         img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
         w = WCS(hdr)
@@ -466,10 +494,10 @@ def m16_pv_again2():
     else:
         raise NotImplementedError
     ax_img = plt.subplot2grid((2, 2), (0, 0), rowspan=2, projection=w)
-    im = ax_img.imshow(img, origin='lower', **vlims, cmap='Greys')
+    im = ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
     for idx, p in enumerate(path_list):
         ax_img.plot([c.ra.deg for c in p._coords], [c.dec.deg for c in p._coords], color=colors[idx], transform=ax_img.get_transform('world'), label=path_name[idx])
-    ax_img.set_title(f"Paths across {pillar_names[selected_pillar]}")
+    ax_img.set_title(f"Paths across P1")
     # Plot the beam on the image
     patch = subcube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform([0.1, 0.9]), misc_utils.get_pixel_scale(w))
     patch.set_alpha(0.5)
@@ -481,10 +509,10 @@ def m16_pv_again2():
     beamtransform = mpl_transforms.blended_transform_factory(ax_sl.get_transform('world'), ax_sl.transAxes)
     x_offset = 5*u.arcsec.to(u.deg)
     # Plot the beam in degrees in the x coord and axes in the y coord
-    ax_sl.plot([x_offset, x_offset + beam_size_mean], [0.9, 0.9], transform=beamtransform, color='k', marker='|', alpha=0.5)
-    # fig.savefig(f"/home/ramsey/Pictures/11-11-20-work/pillar{selected_pillar+1}_PVs_{img_select}.png")
-    plt.show()
+    ax_sl.plot([x_offset, x_offset + beam_size_mean], [0.1, 0.1], transform=beamtransform, color='k', marker='|', alpha=0.5)
+    fig.savefig(f"/home/ramsey/Pictures/2021-07-13-work/pillar_series{selected_set}_{line_stub}_PVs.png")
+    # plt.show()
 
 
 if __name__ == "__main__":
-    main()
+    cube = main()

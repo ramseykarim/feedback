@@ -1156,14 +1156,14 @@ def get_all_subcubes(**kwargs):
     return subcubes
 
 
-def smooth(cube):
+def smooth(cube, width=7):
     """
     Smooth a cube with a 7-spaxel long Hamming window
     :param cube: SpectralCube instance
     :returns: SpectralCube instance, same shape and everything, just smoothed
     """
     # Hamming smooth the spectrum
-    smooth_kernel = convolution.kernels.CustomKernel(signal.hamming(7))
+    smooth_kernel = convolution.kernels.CustomKernel(signal.hamming(width))
     return cube.spectral_smooth(smooth_kernel)
 
 
