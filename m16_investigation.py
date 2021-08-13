@@ -449,7 +449,7 @@ def compare_carma_to_sofia_pv(selected_region=0, mol_idx=False):
     fig.savefig(f"/home/ramsey/Pictures/2021-07-15-work/pv_{selected_region}_{short_names[mol_idx]}.png")
 
 
-def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, vel_stop=25.5, savefig=True):
+def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefig=True):
     """
     May 27, 2021 (post-MVA appt)
     This will be similar to m16_pictures.make_image_thin_channel_maps
@@ -460,6 +460,13 @@ def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, ve
     May 28: this function has been really successful and generalized to a few different
     molecular lines and any combination between them. I will extend it to CO 6-5
     and 3-2.
+
+    August 5, 2021: (at Vigilante!)
+    I want to re-make these using contours, since I think that's a clearer way
+    to convey positional shifts. It may be noisier, but I think it's worthwhile.
+    August 10, 2021: gonna add IRAC 4 to the mix, but will need to modify
+    this to work with a layer that isn't a cube (......DataLayer?? I wish I had
+    time to refactor all this)
     """
     kms = u.km/u.s
     # copied from the crosscut version
@@ -467,10 +474,10 @@ def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, ve
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
-    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits"]
-    colors = ['r', 'b', 'cyan', 'violet', 'magenta', 'LimeGreen', 'g']
-    names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '12CO(1-0)', '12CO(1-0) (CII beam)']
-    short_names = ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
+    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits", "spitzer/SPITZER_I4_mosaic.fits"]
+    # colors = ['r', 'b', 'cyan', 'violet', 'magenta', 'LimeGreen', 'g']
+    names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)', '8$\mu$m']
+    short_names = ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV', 'irac4']
     vlims_r = [[-0.5, 0], # cii
         [-1, 0], [-0.5, 0], # hcn/CONV
         [-1, 0], [-0.5, 0], #hcop/CONV
@@ -486,6 +493,14 @@ def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, ve
         [-1, -1], [-1, 0], #hcop/CONV
         [0, 0], [0, 0],] # co10/CONV
 
+    contour_levels = [
+        np.linspace(20, 80, 11), # cii
+        None, None, # hcn
+        None, None, # hcop
+        np.linspace(30, 130, 7), np.linspace(20, 110, 7), # co10/CONV
+        np.linspace(200, 1000, 8),
+    ]
+
     if not isinstance(c1_idx, int):
         print(c1_idx, end=': ')
         c1_idx = short_names.index(c1_idx)
@@ -498,11 +513,8 @@ def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, ve
     # c1_idx = 0
     # c2_idx = 2
     unique_label = f"{short_names[c1_idx]}-{short_names[c2_idx]}"
-    # blue_if_true = True # green if False
-    c1_lo, c1_hi = vlims_r[c1_idx]
-    c2_lo, c2_hi = (vlims_b if blue_if_true else vlims_g)[c2_idx]
-    cube1 = cube_utils.CubeData(cube_filenames[c1_idx]).data # Cube 1 should have larger footprint (CII)
-    cube2 = cube_utils.CubeData(cube_filenames[c2_idx]).data
+    cube1 = cube_utils.CubeData(cube_filenames[c1_idx]).convert_to_K().data # Cube 1 should have larger footprint (CII)
+    cube2 = cube_utils.CubeData(cube_filenames[c2_idx]).convert_to_K().data
     vel_start *= kms
     vel_stop *= kms
     channel_width = 1*kms
@@ -514,46 +526,129 @@ def thin_channel_images_rb(c1_idx, c2_idx, blue_if_true=True, vel_start=24.5, ve
         if not savefig:
             fig = plt.figure(figsize=(12, 12))
         vel_lims = (current_velocity, current_velocity + channel_width)
-        img1_raw = cube1.spectral_slab(*vel_lims).moment0()
-        img2_raw = cube2.spectral_slab(*vel_lims).moment0()
+        img1_raw = cube1.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+        img2_raw = cube2.spectral_slab(*vel_lims).moment0().to(u.K*kms)
         img2, fp = reproject_interp((img2_raw.to_value(), img2_raw.wcs), img1_raw.wcs, shape_out=img1_raw.shape, return_footprint=True)
         min_cutout_sl = minimum_valid_cutout(fp > 0.5)
         img1 = img1_raw.to_value()[min_cutout_sl]
         img2 = img2[min_cutout_sl]
-        nanmask = np.isnan(img1) | np.isnan(img2)
-        stretch = np.arcsinh # adjust & apply this later
-        img1[nanmask] = np.min(img1)
-        img1 -= np.min(img1)
-        img2[nanmask] = np.min(img2)
-        img2 -= np.min(img2)
-        img1, img2 = stretch(img1), stretch(img2)
-        # img1 = mpl_colors.Normalize(*misc_utils.flquantiles(img1.flatten(), 1000))(img1)
-        img1 = mpl_colors.Normalize(np.median(img1)+c1_lo*np.std(img1), np.max(img1)+c1_hi*np.std(img1))(img1)
-        # img2 = mpl_colors.Normalize()(img1)
-        # img2 = mpl_colors.Normalize(*misc_utils.flquantiles(img2.flatten(), 20))(img2)
-        img2 = mpl_colors.Normalize(np.median(img2)+c2_lo*np.std(img2), np.max(img2)+c2_hi*np.std(img2))(img2)
-        # img2 = mpl_colors.Normalize()(img2)
-        # Stack in RGB order for matplotlib imshow
-        maps = [img1, img2, np.zeros_like(img1)] # just 2 valid layers (R G B order)
-        if blue_if_true:
-            maps = [maps[0]] + maps[1:][::-1]
-        maps = np.stack(maps, axis=-1)
+
         fig.clear()
-        ax = plt.subplot(111)
-        ax.imshow(maps, origin='lower')
+        ax = plt.subplot(111, projection=img1_raw.wcs)
+
+        # ax.imshow(img1, origin='lower') # DEBUG PLOT
+        ax.imshow(np.zeros_like(img2), origin='lower', vmin=0, vmax=1, cmap='Greys')
+        ax.contour(img1, colors=marcs_colors[0], levels=contour_levels[c1_idx])
+        ax.contour(img2, colors=marcs_colors[1], levels=contour_levels[c2_idx])
+
         vel_str = f"{current_velocity.to_value():.1f}$-${(current_velocity + channel_width).to_value():.1f} {current_velocity.unit}"
-        ax.text(0.05, 0.90, f"R: {names[c1_idx]}", transform=ax.transAxes, c='r')
-        ax.text(0.05, 0.85, f"{('B' if blue_if_true else 'G')}: {names[c2_idx]}", transform=ax.transAxes, c=('b' if blue_if_true else 'g'))
+        ax.text(0.05, 0.90, f"{names[c1_idx]}", transform=ax.transAxes, c=marcs_colors[0], fontsize=25)
+        ax.text(0.05, 0.85, f"{names[c2_idx]}", transform=ax.transAxes, c=marcs_colors[1], fontsize=25)
         ax.set_xlabel("RA"), ax.set_ylabel("Dec")
-        ax.set_title(f"R-{('B' if blue_if_true else 'G')} image with channel maps at {vel_str}")
+        ax.set_title(f"Channel maps at {vel_str}")
+        # ax.legend()
         if savefig:
-            try:
-                fig.savefig(f"/home/ramsey/Pictures/2021-05-27-work/rgb/{unique_label.replace('CONV', '')}/r{('b' if blue_if_true else 'g')}_{unique_label}_{current_velocity.to_value():04.1f}.png")
-            except:
-                fig.savefig(f"/home/ramsey/Pictures/2021-05-27-work/rgb/r{('b' if blue_if_true else 'g')}_{unique_label}_{current_velocity.to_value():04.1f}.png")
+            fig.savefig(f"/home/ramsey/Pictures/2021-08-05-work/contouroverlay_{unique_label}_{current_velocity.to_value():04.1f}.png")
         current_velocity += channel_width
     if not savefig:
         plt.show()
+
+
+def overlaid_contours_for_offset():
+    """
+    August 6, 2021
+    This is going to be very similar to the function above, the repurposed RB
+    plots that use contours instead. It's going to be contours overlaid (kind of
+    like the CO 6-5 comparison plots) but with 13CO 1-0 and 13CO 3-2 against
+    the high density tracers (HCO+ probably)
+    This is for Rolf to look into the offsets
+
+    Also reference m16_pictures.compare_32_65_10
+    Aug 10 2021: added CII
+    """
+    plot_co10 = True
+    plot_co32 = False
+    plot_cii = False
+    plot_co65 = False
+    plot_irac4 = True
+    plot_hcop = False
+
+    thirteen = False
+
+    handles = []
+    if thirteen:
+        co10_fn = catalog.utils.search_for_file("bima/M16.BIMA.13co.mom0.fits")
+        co10_img, co10_hdr = fits.getdata(co10_fn, header=True)
+        co10_wcs = WCS(co10_hdr)
+        s = "13"
+        co10_levels = np.linspace(1.5, 14, 7) # used to be 2.5
+    else:
+        co10_fn = catalog.utils.search_for_file("bima/M16_12CO1-0_7x4_mom0.fits")
+        co10_img, co10_hdr = fits.getdata(co10_fn, header=True)
+        co10_wcs = WCS(co10_hdr, naxis=2)
+        co10_img = co10_img[0, :, :]
+        s = "12"
+        co10_levels = np.linspace(10, 105, 7) # 7.5 or 15
+    plt.figure(figsize=(8, 8))
+    plt.subplot(111, projection=co10_wcs)
+    plt.imshow(np.zeros_like(co10_img), origin='lower', vmin=0, vmax=1, cmap='Greys')
+    if plot_co10:
+        # noise for 12co is about 2.5 and centered roughly around 0
+        # noise for 12co is about 0.2 and centered roughly around 0.6
+        plt.contour(co10_img, levels=co10_levels, colors=marcs_colors[0], linewidths=1)
+        handles.append(mpatches.Patch(color=marcs_colors[0], label="$^{"+s+"}$CO(1-0)"))
+
+
+    if plot_co32:
+        if thirteen:
+            s = "13"
+        else:
+            s = "12"
+        co32_levels = np.linspace(10, 48, 5)
+        co32_img = reproject_interp(catalog.utils.search_for_file(f"apex/M16_{s}CO3-2_mom0.fits"), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
+        plt.contour(co32_img, levels=co32_levels, colors=marcs_colors[1], linewidths=1)
+        handles.append(mpatches.Patch(color=marcs_colors[1], label="$^{"+s+"}$CO(3-2)"))
+
+    if plot_cii:
+        cii_levels = np.linspace(20, 240, 15)
+        cii_img, cii_hdr = fits.getdata(catalog.utils.search_for_file("sofia/M16_CII_mom0.fits"), header=True)
+        cii_wcs = WCS(cii_hdr, naxis=2)
+        cii_img = reproject_interp((cii_img[0, :, :], cii_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False) / 1e3 # I prefer K km/s
+        plt.contour(cii_img, levels=cii_levels, colors=marcs_colors[1], linewidths=1)
+        handles.append(mpatches.Patch(color=marcs_colors[1], label="[CII]"))
+
+    if plot_co65:
+        co65_levels = np.linspace(15, 55, 5)
+        co65_img = reproject_interp(catalog.utils.search_for_file("apex/M16_12CO6-5_mom0.fits"), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
+        plt.contour(co65_img, levels=co65_levels, colors=marcs_colors[4], linewidths=1)
+        handles.append(mpatches.Patch(color=marcs_colors[4], label="$^{12}$CO(6-5)"))
+
+    if plot_irac4:
+        irac4_levels = np.exp(np.linspace(np.log(100), np.log(1000), 5))
+        irac4_img = reproject_interp(catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic.fits"), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
+        # plt.contour(irac4_img, levels=irac4_levels, colors=marcs_colors[2], linewidths=1)
+        handles.append(mpatches.Patch(color=marcs_colors[2], label="8 $\mu$m"))
+
+        img = irac4_img
+        plt.imshow(img, origin='lower', cmap='Greys_r', vmax=500)
+        # plt.figure()
+        # plt.hist(img.ravel(), bins=128, range=(0, 500))
+        # x = 20
+        # print(f"<{x}", np.mean(img[(img<x) & (img>0)]), np.std(img[(img<x) & (img>0)]))
+        # return
+
+
+    if plot_hcop:
+        hcop_levels = np.linspace(2, 20, 7)
+        hcop_img, hcop_hdr = fits.getdata(catalog.utils.search_for_file("carma/M16.ALL.hcop.sdi.mom0pv.fits"), header=True)
+        hcop_wcs = WCS(hcop_hdr, naxis=2)
+        hcop_img = reproject_interp((hcop_img[0, :, :], hcop_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
+        plt.contour(hcop_img, levels=hcop_levels, colors=marcs_colors[6], linewidths=1)
+        handles.append(mpatches.Patch(color=marcs_colors[6], label="HCO+"))
+
+    plt.legend(handles=handles)
+    # plt.savefig("/home/ramsey/Pictures/2021-08-10-work/12co10_irac4.png")
+    plt.show()
 
 
 
@@ -1245,9 +1340,13 @@ def highlight_threads_regions():
 
 
 if __name__ == "__main__":
-    for j in [1, 3, 5]:
-        for i in [0, 1]:
-            compare_carma_to_sofia_pv(selected_region=i, mol_idx=j)
+    # vel_lims = dict(vel_start=24.5, vel_stop=25.5)
+    # vel_lims = dict(vel_start=19.5, vel_stop=27.5)
+    # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
+    # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
+
+
+    overlaid_contours_for_offset()
 
     ### showing the colors
     # plt.subplot(111)

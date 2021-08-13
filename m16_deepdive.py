@@ -72,33 +72,27 @@ def easy_pv():
     right where the light feature is
     But I suppose I can test it on whatever if it's supposed to be general
     And remember the VOPT VRAD thing..
+
+    August 2, 2021: tried this with filament_p23south.reg and it doesn't look
+    that great. So OK to overwrite all this
     """
     # This PV will be in color and perhaps also in contour
     main_pv_fn = "sofia/M16_CII_U.fits"
-    # The rest of them will be in contours
-    extra_pv_fns = []
-
-    all_pv_fns = [main_pv_fn] + extra_pv_fns
-    # Generator to save memory
-    all_cubes = (cube_utils.CubeData(fn) for fn in all_pv_fns)
+    cube = cube_utils.CubeData(main_pv_fn).data
     # Is that necessary? Can it just wait for the loop?
+    reg_filename = catalog.utils.search_for_file("catalogs/filament_p23south.reg")
+    pv_path = pvdiagrams.path_from_ds9(reg_filename, 0, width=15*u.arcsec)
+    sl = pvextractor.extract_pv_slice(cube.spectral_slab(17*kms, 24*kms), pv_path)
+    sl_wcs = WCS(sl.header)
+    ax_sl = plt.subplot(111, projection=sl_wcs)
+    ax_sl.imshow(sl.data, origin='lower', aspect=2)
+    ax_sl.coords[1].set_format_unit(u.km/u.s)
+    ax_sl.coords[1].set_major_formatter('x.xx')
+    ax_sl.coords[0].set_format_unit(u.arcsec)
+    ax_sl.coords[0].set_major_formatter('x.xx')
+    ax_sl.contour(sl.data, colors='k')
+    plt.show()
 
-    """
-    Todo: get regions together
-    Write the main loop through the cubes
-    Decide how you'll pick the reference image (HST? always nice)
-    Maybe overlay other regions on the reference (like the polygons to
-    point out where the light feature is)
-
-    I'll return to P2 soon, I need to just focus on P1 for the poster I think
-    Though this could also work well for the poster if I run with "are these
-    all just threads/tails and not gradients?"
-
-    I'm going to reference pvdiagrams_2.m16_pv_again2 and pvdiagrams_2.try_reproject_pv
-    """
-    # Make this an argument eventually
-    reg_filename = catalog.utils.search_for_file("catalogs/pillar1_threads_pv.reg")
-    path_list = pvdiagrams.path_from_ds9(reg_filename, None)
 
 
 
@@ -159,10 +153,12 @@ def simple_mom0():
     July 20, 2021
     Moment 0 images for the presentation at the Stuttgart conference
     HCO+, CII, CO1-0
+
+    Edited and reused: August 2, 2021
     """
-    # cube = cps2.cutout_subcube(length_scale_mult=6, reg_index=2)
-    # vlims = dict(vmin=0, vmax=200)
-    # levels = list(np.linspace(60, 225, 8))
+    cube = cps2.cutout_subcube(length_scale_mult=2.5, reg_index=0, reg_filename='catalogs/shelf.reg')
+    vlims = dict(vmin=0, vmax=140)
+    levels = list(np.linspace(45, 150, 7))
 
     # cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
     # cube.convert_to_K()
@@ -170,13 +166,13 @@ def simple_mom0():
     # vlims = dict(vmin=0, vmax=40)
     # levels = list(np.linspace(4, 42, 5))
 
-    cube = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits")
-    cube.convert_to_K()
-    cube = cube.data
-    vlims = dict(vmin=0, vmax=300)
-    levels = list(np.linspace(80, 300, 5))
+    # cube = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits")
+    # cube.convert_to_K()
+    # cube = cube.data
+    # vlims = dict(vmin=0, vmax=300)
+    # levels = list(np.linspace(80, 300, 5))
 
-    cube = cube.with_spectral_unit(kms).spectral_slab(20*kms, 27*kms)
+    cube = cube.with_spectral_unit(kms).spectral_slab(20*kms, 24*kms)
     mom0 = cube.moment0()
     fig = plt.figure(figsize=(12, 10))
     ax = plt.subplot(111, projection=mom0.wcs)
@@ -187,9 +183,9 @@ def simple_mom0():
         coord.set_ticks_visible(False)
         coord.set_ticklabel_visible(False)
         coord.set_axislabel('')
-    # ax.set_title("upGREAT [CII] 158$\mu$m, integrated between 20$-$27 km/s")
+    ax.set_title("upGREAT [CII] 158$\mu$m, integrated between 20$-$24 km/s")
     # ax.set_title("HCO+, integrated between 20$-$27 km/s")
-    ax.set_title("$^{12}$CO (J=1$-$0), integrated between 20$-$27 km/s")
+    # ax.set_title("$^{12}$CO (J=1$-$0), integrated between 20$-$27 km/s")
     patch = cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.06]), misc_utils.get_pixel_scale(mom0.wcs))
     patch.set_alpha(0.9)
     patch.set_facecolor('grey')
@@ -197,7 +193,7 @@ def simple_mom0():
     ax.add_artist(patch)
     # plt.show(); return
     plt.tight_layout()
-    plt.savefig("/home/ramsey/Pictures/2021-07-20-work/co10.png")
+    plt.savefig("/home/ramsey/Pictures/2021-08-02-work/cii_sharedbase.png")
 
 
 
@@ -205,4 +201,4 @@ def simple_mom0():
 
 
 if __name__ == "__main__":
-    cube = simple_mom0()
+    simple_mom0()

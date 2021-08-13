@@ -132,6 +132,7 @@ class CubeData:
     def convert_to_K(self):
         if self.data.unit != u.K:
             self.data = self.data.to(u.K, equivalencies=self.equivalency())
+        return self
 
     def refresh_wcs(self):
         """

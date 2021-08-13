@@ -45,7 +45,7 @@ if __name__ != "__main__":
     raise RuntimeError("Where the hell are you importing this to, dependencies are already on thin ice")
 
 def main():
-    m16_pv_again2()
+    try_reproject_pv()
 
 
 def pv_thru_p3_shelves():
@@ -510,8 +510,8 @@ def m16_pv_again2():
     x_offset = 5*u.arcsec.to(u.deg)
     # Plot the beam in degrees in the x coord and axes in the y coord
     ax_sl.plot([x_offset, x_offset + beam_size_mean], [0.1, 0.1], transform=beamtransform, color='k', marker='|', alpha=0.5)
-    fig.savefig(f"/home/ramsey/Pictures/2021-07-13-work/pillar_series{selected_set}_{line_stub}_PVs.png")
-    # plt.show()
+    # fig.savefig(f"/home/ramsey/Pictures/2021-07-13-work/pillar_series{selected_set}_{line_stub}_PVs.png")
+    plt.show()
 
 
 if __name__ == "__main__":
