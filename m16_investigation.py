@@ -467,6 +467,10 @@ def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefi
     August 10, 2021: gonna add IRAC 4 to the mix, but will need to modify
     this to work with a layer that isn't a cube (......DataLayer?? I wish I had
     time to refactor all this)
+
+    August 14, 2021: (in Sac)
+    I want to redo these again with image/contour combinations and better
+    contour levels (closer to a couple sigma above the noise)
     """
     kms = u.km/u.s
     # copied from the crosscut version
@@ -494,11 +498,18 @@ def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefi
         [0, 0], [0, 0],] # co10/CONV
 
     contour_levels = [
-        np.linspace(20, 80, 11), # cii
+        np.linspace(10, 80, 11), # cii
         None, None, # hcn
         None, None, # hcop
-        np.linspace(30, 130, 7), np.linspace(20, 110, 7), # co10/CONV
-        np.linspace(200, 1000, 8),
+        np.linspace(10, 130, 10), np.linspace(5, 110, 10), # co10/CONV
+        np.linspace(200, 1000, 8), # irac4
+    ]
+    img_vlims = [
+        (0, 80), # cii
+        None, None, # hcn
+        None, None, # hcop
+        (0, 120), (0, 100),
+        (50, 500), # irac4
     ]
 
     if not isinstance(c1_idx, int):
@@ -536,10 +547,13 @@ def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefi
         fig.clear()
         ax = plt.subplot(111, projection=img1_raw.wcs)
 
-        # ax.imshow(img1, origin='lower') # DEBUG PLOT
-        ax.imshow(np.zeros_like(img2), origin='lower', vmin=0, vmax=1, cmap='Greys')
-        ax.contour(img1, colors=marcs_colors[0], levels=contour_levels[c1_idx])
-        ax.contour(img2, colors=marcs_colors[1], levels=contour_levels[c2_idx])
+        # im = ax.imshow(img1, origin='lower', cmap='plasma', vmin=img_vlims[c1_idx][0], vmax=img_vlims[c1_idx][1])
+        im = ax.imshow(img2, origin='lower', cmap='plasma', vmin=img_vlims[c2_idx][0], vmax=None)
+        fig.colorbar(im, ax=ax, label='Integrated intensity (K km/s)')
+
+        # ax.imshow(np.zeros_like(img2), origin='lower', vmin=0, vmax=1, cmap='Greys')
+        ax.contour(img1, colors='k', levels=contour_levels[c1_idx])
+        # ax.contour(img2, colors='k', levels=contour_levels[c2_idx])
 
         vel_str = f"{current_velocity.to_value():.1f}$-${(current_velocity + channel_width).to_value():.1f} {current_velocity.unit}"
         ax.text(0.05, 0.90, f"{names[c1_idx]}", transform=ax.transAxes, c=marcs_colors[0], fontsize=25)
@@ -548,7 +562,7 @@ def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefi
         ax.set_title(f"Channel maps at {vel_str}")
         # ax.legend()
         if savefig:
-            fig.savefig(f"/home/ramsey/Pictures/2021-08-05-work/contouroverlay_{unique_label}_{current_velocity.to_value():04.1f}.png")
+            fig.savefig(f"/home/ramsey/Pictures/2021-08-14-work/contouroverlay_{unique_label}_{current_velocity.to_value():04.1f}.png")
         current_velocity += channel_width
     if not savefig:
         plt.show()
@@ -566,12 +580,12 @@ def overlaid_contours_for_offset():
     Also reference m16_pictures.compare_32_65_10
     Aug 10 2021: added CII
     """
-    plot_co10 = True
+    plot_co10 = False
     plot_co32 = False
     plot_cii = False
     plot_co65 = False
-    plot_irac4 = True
-    plot_hcop = False
+    plot_irac4 = False
+    plot_hcop = True
 
     thirteen = False
 
@@ -589,14 +603,15 @@ def overlaid_contours_for_offset():
         co10_img = co10_img[0, :, :]
         s = "12"
         co10_levels = np.linspace(10, 105, 7) # 7.5 or 15
-    plt.figure(figsize=(8, 8))
-    plt.subplot(111, projection=co10_wcs)
+    fig = plt.figure(figsize=(10, 10))
+    ax = plt.subplot(111, projection=co10_wcs)
     plt.imshow(np.zeros_like(co10_img), origin='lower', vmin=0, vmax=1, cmap='Greys')
     if plot_co10:
         # noise for 12co is about 2.5 and centered roughly around 0
         # noise for 12co is about 0.2 and centered roughly around 0.6
-        plt.contour(co10_img, levels=co10_levels, colors=marcs_colors[0], linewidths=1)
-        handles.append(mpatches.Patch(color=marcs_colors[0], label="$^{"+s+"}$CO(1-0)"))
+        plt.contour(co10_img, levels=co10_levels, colors='k', linewidths=1)
+        handles.append(mpatches.Patch(color='k', label="$^{"+s+"}$CO(1-0)"))
+        # plt.imshow(co10_img, origin='lower', cmap='plasma')
 
 
     if plot_co32:
@@ -614,8 +629,9 @@ def overlaid_contours_for_offset():
         cii_img, cii_hdr = fits.getdata(catalog.utils.search_for_file("sofia/M16_CII_mom0.fits"), header=True)
         cii_wcs = WCS(cii_hdr, naxis=2)
         cii_img = reproject_interp((cii_img[0, :, :], cii_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False) / 1e3 # I prefer K km/s
-        plt.contour(cii_img, levels=cii_levels, colors=marcs_colors[1], linewidths=1)
-        handles.append(mpatches.Patch(color=marcs_colors[1], label="[CII]"))
+        plt.contour(cii_img, levels=cii_levels, colors='k', linewidths=1)
+        handles.append(mpatches.Patch(color='k', label="[CII]"))
+        # plt.imshow(cii_img, origin='lower', cmap='plasma')
 
     if plot_co65:
         co65_levels = np.linspace(15, 55, 5)
@@ -624,30 +640,36 @@ def overlaid_contours_for_offset():
         handles.append(mpatches.Patch(color=marcs_colors[4], label="$^{12}$CO(6-5)"))
 
     if plot_irac4:
-        irac4_levels = np.exp(np.linspace(np.log(100), np.log(1000), 5))
+        irac4_levels = np.exp(np.linspace(np.log(100), np.log(1000), 10))
         irac4_img = reproject_interp(catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic.fits"), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
-        # plt.contour(irac4_img, levels=irac4_levels, colors=marcs_colors[2], linewidths=1)
-        handles.append(mpatches.Patch(color=marcs_colors[2], label="8 $\mu$m"))
+        # plt.contour(irac4_img, levels=irac4_levels, colors='k', linewidths=1)
+        # handles.append(mpatches.Patch(color='k', label="8 $\mu$m"))
+        plt.imshow(irac4_img, origin='lower', cmap='plasma', vmax=500)
 
-        img = irac4_img
-        plt.imshow(img, origin='lower', cmap='Greys_r', vmax=500)
-        # plt.figure()
-        # plt.hist(img.ravel(), bins=128, range=(0, 500))
-        # x = 20
-        # print(f"<{x}", np.mean(img[(img<x) & (img>0)]), np.std(img[(img<x) & (img>0)]))
-        # return
 
 
     if plot_hcop:
-        hcop_levels = np.linspace(2, 20, 7)
+        hcop_levels = np.sinh(np.linspace(np.arcsinh(0.5), np.arcsinh(20), 9))
         hcop_img, hcop_hdr = fits.getdata(catalog.utils.search_for_file("carma/M16.ALL.hcop.sdi.mom0pv.fits"), header=True)
         hcop_wcs = WCS(hcop_hdr, naxis=2)
         hcop_img = reproject_interp((hcop_img[0, :, :], hcop_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
         plt.contour(hcop_img, levels=hcop_levels, colors=marcs_colors[6], linewidths=1)
         handles.append(mpatches.Patch(color=marcs_colors[6], label="HCO+"))
+        img = hcop_img
+        plt.imshow(img, origin='lower')
+        # plt.figure()
+        # plt.hist(img.ravel(), bins=128)
+        # x = 5
+        # print(f"<{x}", np.mean(img[(img<x) & (img>0)]), np.std(img[(img<x) & (img>0)]))
+        # return
 
     plt.legend(handles=handles)
-    # plt.savefig("/home/ramsey/Pictures/2021-08-10-work/12co10_irac4.png")
+    for coord in ax.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+    # plt.tight_layout()
+    # plt.savefig("/home/ramsey/Pictures/2021-08-13-work/XXXXXXXX.png")
     plt.show()
 
 
@@ -1340,13 +1362,13 @@ def highlight_threads_regions():
 
 
 if __name__ == "__main__":
-    # vel_lims = dict(vel_start=24.5, vel_stop=25.5)
-    # vel_lims = dict(vel_start=19.5, vel_stop=27.5)
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
-    # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
+    # vel_lims = dict(vel_start=24.5, vel_stop=25.5)
+    vel_lims = dict(vel_start=19.5, vel_stop=27.5)
+    thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
 
 
-    overlaid_contours_for_offset()
+    # overlaid_contours_for_offset()
 
     ### showing the colors
     # plt.subplot(111)

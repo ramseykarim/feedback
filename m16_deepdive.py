@@ -34,6 +34,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
+from astropy.table import Table
 
 from photutils import centroids
 
@@ -148,31 +149,113 @@ def oi_image():
     # plt.show()
 
 
-def simple_mom0():
+def simple_mom0(selected_region=0, selected_line=0):
     """
     July 20, 2021
     Moment 0 images for the presentation at the Stuttgart conference
     HCO+, CII, CO1-0
 
     Edited and reused: August 2, 2021
+    Edited again: August 16, 2021
+        catalogs/shelf.reg , catalogs/filament_p23south.reg
+        set up to highlight the four "features" that I'm discussing around the
+        pillars
     """
-    cube = cps2.cutout_subcube(length_scale_mult=2.5, reg_index=0, reg_filename='catalogs/shelf.reg')
-    vlims = dict(vmin=0, vmax=140)
-    levels = list(np.linspace(45, 150, 7))
+    # blue streamer, P4, shared base, shelf
+    # selected_region = 0
+    region_name = ['bluestreamer', 'p4', 'sharedbase', 'shelf'][selected_region]
 
-    # cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
-    # cube.convert_to_K()
-    # cube = cube.data
-    # vlims = dict(vmin=0, vmax=40)
-    # levels = list(np.linspace(4, 42, 5))
+    # select region file
+    if selected_region < 2:
+        reg_filename = "catalogs/filament_p23south.reg"
+        length_scale_mult = 2
+    else:
+        reg_filename = "catalogs/shelf.reg"
+        length_scale_mult = 2.5
 
-    # cube = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits")
-    # cube.convert_to_K()
-    # cube = cube.data
-    # vlims = dict(vmin=0, vmax=300)
-    # levels = list(np.linspace(80, 300, 5))
+    # select line; cii, hcop, 12co10
+    # selected_line = 1
 
-    cube = cube.with_spectral_unit(kms).spectral_slab(20*kms, 24*kms)
+    if selected_line == 0:
+        # set up velocity / color limits for CII
+        if selected_region == 0:
+            # blue streamer
+            vel_lims = (19, 22)
+            vlims = dict(vmin=0, vmax=70)
+            levels = np.sinh(np.linspace(np.arcsinh(20), np.arcsinh(80), 8)) # np.linspace(20, 80, 8)
+            levels_stub = "arcsinh"
+        elif selected_region == 1:
+            # P4
+            vel_lims = (20, 24)
+            vlims = dict(vmin=0, vmax=140)
+            levels = np.linspace(30, 150, 8)
+            levels_stub = "linear"
+        elif selected_region == 2:
+            # shared base
+            vel_lims = (20, 24)
+            vlims = dict(vmin=0, vmax=140)
+            levels = np.linspace(30, 150, 8)
+            levels_stub = "linear"
+        elif selected_region == 3:
+            # shelf
+            vel_lims = (24, 27)
+            vlims = dict(vmin=0, vmax=140)
+            levels = np.linspace(30, 150, 8)
+            levels_stub = "linear"
+        else:
+            raise NotImplementedError("I only have 4 regions in m16_deepdive.simple_mom0 right now")
+        cube = cps2.cutout_subcube(length_scale_mult=length_scale_mult, reg_index=0, reg_filename=reg_filename)
+        line_title = "upGREAT [CII] 158$\mu$m"
+        line_stub = 'cii'
+
+    elif selected_line == 1:
+        vlims = dict(vmin=0, vmax=40)
+        levels = list(np.linspace(4, 42, 5))
+        # set up velocity / color limits for CII
+        if selected_region == 0:
+            # blue streamer
+            vel_lims = (19, 22)
+            vlims = dict(vmin=0, vmax=10)
+            levels = np.linspace(1.2, 10, 6)
+            levels_stub = "linear"
+        elif selected_region == 1:
+            # P4
+            vel_lims = (20, 24)
+            vlims = dict(vmin=0, vmax=20)
+            levels = (np.linspace(np.sqrt(1.5), np.sqrt(20), 6))**2 #np.linspace(1.5, 20, 5)
+            levels_stub = "sqrt"
+        elif selected_region == 2:
+            # shared base
+            vel_lims = (20, 24)
+            vlims = dict(vmin=0, vmax=20)
+            levels = (np.linspace(np.sqrt(1.5), np.sqrt(20), 6))**2 #np.linspace(1.5, 20, 5)
+            levels_stub = "sqrt"
+        elif selected_region == 3:
+            # shelf
+            vel_lims = (24, 27)
+            vlims = dict(vmin=0, vmax=40)
+            levels = (np.linspace(np.sqrt(1.2), np.sqrt(37), 8))**2 #np.linspace(1.2, 38, 8)
+            levels_stub = "sqrt"
+        else:
+            raise NotImplementedError("I only have 4 regions in m16_deepdive.simple_mom0 right now")
+
+        cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
+        cube.convert_to_K()
+        cube = cube.data
+        line_title = "HCO+"
+        line_stub = 'hcop'
+
+    elif selected_line == 2:
+        vlims = dict(vmin=0, vmax=300)
+        levels = list(np.linspace(80, 300, 5))
+
+        cube = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits")
+        cube.convert_to_K()
+        cube = cube.data
+        line_title = "$^{12}$CO (J=1$-$0)"
+        line_stub = "12co10"
+
+    cube = cube.with_spectral_unit(kms).spectral_slab(*(v*kms for v in vel_lims))
     mom0 = cube.moment0()
     fig = plt.figure(figsize=(12, 10))
     ax = plt.subplot(111, projection=mom0.wcs)
@@ -183,9 +266,8 @@ def simple_mom0():
         coord.set_ticks_visible(False)
         coord.set_ticklabel_visible(False)
         coord.set_axislabel('')
-    ax.set_title("upGREAT [CII] 158$\mu$m, integrated between 20$-$24 km/s")
-    # ax.set_title("HCO+, integrated between 20$-$27 km/s")
-    # ax.set_title("$^{12}$CO (J=1$-$0), integrated between 20$-$27 km/s")
+    ax.set_title(f"{line_title}, integrated between {vel_lims[0]}$-${vel_lims[1]} km/s")
+    # ax.set_title(", integrated between 20$-$27 km/s")
     patch = cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.06]), misc_utils.get_pixel_scale(mom0.wcs))
     patch.set_alpha(0.9)
     patch.set_facecolor('grey')
@@ -193,12 +275,90 @@ def simple_mom0():
     ax.add_artist(patch)
     # plt.show(); return
     plt.tight_layout()
-    plt.savefig("/home/ramsey/Pictures/2021-08-02-work/cii_sharedbase.png")
+    plt.savefig(f"/home/ramsey/Pictures/2021-08-16-work/{line_stub}_{region_name}.png", metadata={"Comment": f"{levels_stub} spaced contours; m16_deepdive.simple_mom0"})
 
 
 
+def prepare_pdrt_tables():
+    """
+    Created: Aug 16, 2021
+    Creating the ASCII tables for PDRT
+    going to start with just CII and CII/CO10
+    Then can branch out to CO 32 and 65 (pending alignment correction)
+    And can search for FIR (Nicola should know where it is)
 
+
+    Todo:
+    get cii, integrate between 20-24
+    remap co10 (14x14) moment 0 to the same grid
+    use catalogs/pdrt_test_pillar2.reg to grab the pixels at that location
+    save cii and cii/co10 to tables (and figure out how tables work)
+    tables: https://docs.astropy.org/en/stable/io/unified.html#ascii-formats and https://docs.astropy.org/en/stable/table/io.html#getting-started
+    """
+    vel_lims = (20*kms, 24*kms)
+    cii_mom0 = cps2.cutout_subcube(length_scale_mult=4, reg_index=2).spectral_slab(*vel_lims).moment0()
+    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pdrt_test_pillar2.reg"))
+    reg = reg_list.pop()
+    pixreg = reg.to_pixel(cii_mom0.wcs)
+    reg_mask = pixreg.to_mask().to_image(cii_mom0.shape)
+    cii_values = cii_mom0.to_value()[np.where(reg_mask==1)]
+    cii_ID = ['CII_158']*len(cii_values)
+    cii_uncertainty = [10.]*len(cii_values) # using 10%
+    # CII noise RMS is about 1; but this DOESNT account for the moment0 part!!!! needs a sqrt(N) term...
+
+    # t = Table([cii_values, cii_uncertainty, cii_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158'}, units={'uncertainty': '%'})
+    # t.write("/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/cii_pillar2.txt", format='ipac')
+    # return
+
+    co10_mom0 = cube_utils.CubeData("bima/M16_12CO1-0_14x14.fits").convert_to_K().data.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+    co10_reproj = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), cii_mom0.wcs, shape_out=cii_mom0.shape, return_footprint=False)
+    co10_values = co10_reproj[np.where(reg_mask==1)]
+    cii_to_co10_values = cii_values/co10_values
+
+    cii_to_co10_ID = ["CII_158/CO_10"]*len(cii_values) # CHECK THIS
+    cii_to_co10_uncertainty = cii_uncertainty # also use 10%
+    # co10_uncertainty = [4]*len(cii_to_co10_ID) # CHECK THIS TOO; needs sqrt(N) term.... but N depends on number of channels.. CO10 RMS is around 4
+
+    # t = Table([cii_to_co10_values, cii_to_co10_uncertainty, cii_to_co10_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158/CO_10'}, units={'uncertainty': '%'})
+    # t.write("/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/cii_to_co10_pillar2.txt", format='ipac')
+    """
+    TODO: convert K km/s to erg cm-2 s-1 sr-1 ????????
+    Solved:
+    >>> from astropy import units as u
+    >>> v = 3*u.km/u.s
+    >>> restfreq = (158*u.micron).to(u.GHz, equivalencies=u.spectral())
+    >>> restfreq
+    <Quantity 1897.42062025 GHz>
+
+    >>> vel_to_freq = u.doppler_optical(restfreq)
+    >>> (1*u.km/u.s).to(u.GHz, equivalencies=vel_to_freq)
+    <Quantity 1897.41429116 GHz>
+    >>> (50*u.km/u.s).to(u.GHz, equivalencies=vel_to_freq)
+    <Quantity 1897.10421733 GHz>
+    >>> vel_to_freq_f = lambda v : v.to(u.Hz, equivalencies=vel_to_freq)
+
+    >>> kms = u.km/u.s
+    >>> vel_to_freq_f(24*kms) - vel_to_freq_f(20*kms)
+    <Quantity -25312740.45532227 Hz>
+    >>> (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms)).to(u.GHz)
+    <Quantity 0.02531274 GHz>
+    >>> (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms))
+    <Quantity 25312740.45532227 Hz>
+
+    >>> T = 10*u.K
+    >>> (T).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(restfreq))
+    <Quantity 1.106112e+12 Jy / sr>
+    >>> jysr = (T).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(restfreq))
+    >>> jysr
+    <Quantity 1.106112e+12 Jy / sr>
+    >>> (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms))
+    <Quantity 25312740.45532227 Hz>
+    >>> dv = (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms))
+    >>> (jysr*dv).to(u.erg / (u.s * u.sr * u.cm**2))
+    <Quantity 0.00027999 erg / (cm2 s sr)>
+    ok go forth and prosper
+    """
 
 
 if __name__ == "__main__":
-    simple_mom0()
+    prepare_pdrt_tables()
