@@ -34,7 +34,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
-from astropy.table import Table
+from astropy.table import Table, QTable
 
 from photutils import centroids
 
@@ -295,32 +295,59 @@ def prepare_pdrt_tables():
     save cii and cii/co10 to tables (and figure out how tables work)
     tables: https://docs.astropy.org/en/stable/io/unified.html#ascii-formats and https://docs.astropy.org/en/stable/table/io.html#getting-started
     """
-    vel_lims = (20*kms, 24*kms)
-    cii_mom0 = cps2.cutout_subcube(length_scale_mult=4, reg_index=2).spectral_slab(*vel_lims).moment0()
-    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pdrt_test_pillar2.reg"))
-    reg = reg_list.pop()
-    pixreg = reg.to_pixel(cii_mom0.wcs)
-    reg_mask = pixreg.to_mask().to_image(cii_mom0.shape)
-    cii_values = cii_mom0.to_value()[np.where(reg_mask==1)]
-    cii_ID = ['CII_158']*len(cii_values)
-    cii_uncertainty = [10.]*len(cii_values) # using 10%
-    # CII noise RMS is about 1; but this DOESNT account for the moment0 part!!!! needs a sqrt(N) term...
 
-    # t = Table([cii_values, cii_uncertainty, cii_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158'}, units={'uncertainty': '%'})
-    # t.write("/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/cii_pillar2.txt", format='ipac')
-    # return
+    # vel_lims = (20*kms, 24*kms) # P2 regions
+    vel_lims = (20*kms, 28*kms) # P1 regions
 
-    co10_mom0 = cube_utils.CubeData("bima/M16_12CO1-0_14x14.fits").convert_to_K().data.spectral_slab(*vel_lims).moment0().to(u.K*kms)
-    co10_reproj = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), cii_mom0.wcs, shape_out=cii_mom0.shape, return_footprint=False)
-    co10_values = co10_reproj[np.where(reg_mask==1)]
-    cii_to_co10_values = cii_values/co10_values
+    cii_cube = cps2.cutout_subcube(length_scale_mult=4, reg_index=2)
+    cii_restfreq = cii_cube.header['RESTFRQ'] * u.Hz
+    cii_mom0 = cii_cube.spectral_slab(*vel_lims).moment0()
+    del cii_cube
 
-    cii_to_co10_ID = ["CII_158/CO_10"]*len(cii_values) # CHECK THIS
-    cii_to_co10_uncertainty = cii_uncertainty # also use 10%
-    # co10_uncertainty = [4]*len(cii_to_co10_ID) # CHECK THIS TOO; needs sqrt(N) term.... but N depends on number of channels.. CO10 RMS is around 4
+    cii_vel_to_freq_equiv = u.doppler_optical(cii_restfreq)
+    cii_vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=cii_vel_to_freq_equiv)
+    cii_dv = (cii_vel_to_freq_f(vel_lims[0]) - cii_vel_to_freq_f(vel_lims[1]))
+    ### that's a conversion factor from km/s (over the moment0 integration limits) to Hz
 
-    # t = Table([cii_to_co10_values, cii_to_co10_uncertainty, cii_to_co10_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158/CO_10'}, units={'uncertainty': '%'})
-    # t.write("/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/cii_to_co10_pillar2.txt", format='ipac')
+    co10_cube = cube_utils.CubeData("bima/M16_12CO1-0_14x14.fits").convert_to_K().data
+    co10_restfreq = co10_cube.header['RESTFRQ'] * u.Hz
+    co10_mom0 = co10_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+    del co10_cube
+
+    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pdrt/pdrt_test_pillar1.reg"))
+    for i, reg in enumerate(reg_list):
+        pixreg = reg.to_pixel(cii_mom0.wcs)
+        reg_mask = pixreg.to_mask().to_image(cii_mom0.shape)
+
+        cii_values = cii_mom0[np.where(reg_mask==1)]
+        cii_values = (cii_values/kms)
+        cii_values = cii_values.to(u.Jy/u.sr, equivalencies=u.brightness_temperature(cii_restfreq))
+        cii_values = (cii_values * cii_dv).to(u.erg / (u.s * u.sr * u.cm**2))
+        cii_ID = ['CII_158']*len(cii_values)
+        cii_uncertainty = [10.]*len(cii_values) # using 10%
+        ### CII noise RMS is about 1; but this DOESNT account for the moment0 part!!!! needs a sqrt(N) term...
+
+        t = QTable([cii_values, cii_uncertainty, cii_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158'}, units={'uncertainty': '%'})
+        t.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/cii_pillar1_{i}.txt", format='ipac')
+
+        co10_vel_to_freq_equiv = u.doppler_optical(co10_restfreq)
+        co10_vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=co10_vel_to_freq_equiv)
+        co10_dv = co10_vel_to_freq_f(vel_lims[0]) - co10_vel_to_freq_f(vel_lims[1])
+
+        co10_reproj = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), cii_mom0.wcs, shape_out=cii_mom0.shape, return_footprint=False)
+        co10_values = co10_reproj[np.where(reg_mask==1)] * co10_mom0.unit
+        co10_values = (co10_values/kms)
+        co10_values = co10_values.to(u.Jy/u.sr, equivalencies=u.brightness_temperature(co10_restfreq))
+        co10_values = (co10_values * co10_dv).to(u.erg / (u.s * u.sr * u.cm**2))
+
+        cii_to_co10_values = cii_values/co10_values
+
+        cii_to_co10_ID = ["CII_158/CO_10"]*len(cii_values) # CHECK THIS
+        cii_to_co10_uncertainty = cii_uncertainty # also use 10%
+        # co10_uncertainty = [4]*len(cii_to_co10_ID) # CHECK THIS TOO; needs sqrt(N) term.... but N depends on number of channels.. CO10 RMS is around 4
+
+        t = QTable([cii_to_co10_values, cii_to_co10_uncertainty, cii_to_co10_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158/CO_10'}, units={'uncertainty': '%'})
+        t.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/cii_to_co10_pillar1_{i}.txt", format='ipac')
     """
     TODO: convert K km/s to erg cm-2 s-1 sr-1 ????????
     Solved:
@@ -356,9 +383,10 @@ def prepare_pdrt_tables():
     >>> dv = (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms))
     >>> (jysr*dv).to(u.erg / (u.s * u.sr * u.cm**2))
     <Quantity 0.00027999 erg / (cm2 s sr)>
+    based on the pdrtpy-nb/notebooks/rcw49_nc_cii158.tab, this is of the right order of magnitude
     ok go forth and prosper
     """
 
 
 if __name__ == "__main__":
-    prepare_pdrt_tables()
+    cube = prepare_pdrt_tables()
