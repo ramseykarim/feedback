@@ -579,59 +579,142 @@ def overlaid_contours_for_offset():
 
     Also reference m16_pictures.compare_32_65_10
     Aug 10 2021: added CII
-    """
-    plot_co10 = False
-    plot_co32 = False
-    plot_cii = False
-    plot_co65 = False
-    plot_irac4 = False
-    plot_hcop = True
 
-    thirteen = False
+    Aug 29 2021: saving 23-27 km/s mom0s to avoid APEX 3-2 OFF contamination
+    """
+    if False: # save 23-27 km/s mom0s
+        vel_lims = (23*kms, 27*kms)
+        co10_fn = catalog.utils.search_for_file("bima/M16_12CO1-0_7x4.fits")
+        new_co10_fn = co10_fn.replace('.fits', '.mom0.23-27.fits')
+        co10_cube = cube_utils.CubeData(co10_fn).convert_to_K().data
+        co10_mom0 = co10_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+        # co10_mom0.write(new_co10_fn, format='fits')
+        reproj_hdr = co10_mom0.wcs.to_header()
+        del reproj_hdr['RESTFRQ'], reproj_hdr['DATE-OBS'], reproj_hdr['MJD-OBS'], reproj_hdr['MJDREF'], reproj_hdr['SPECSYS']
+
+        cii_fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+        new_cii_fn = cii_fn.replace('.fits', '.mom0.23-27.fits')
+        cii_cube = cube_utils.CubeData(cii_fn).data
+        cii_mom0 = cii_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+        cii_mom0_reproj = reproject_interp((cii_mom0.to_value(), cii_mom0.wcs), co10_mom0.wcs, shape_out=co10_mom0.shape, return_footprint=False)
+        cii_hdr = fits.Header()
+        cii_hdr.update(reproj_hdr)
+        for k in ['RESTFRQ', 'BMAJ', 'BMIN', 'BPA', 'LINE', 'OBJECT',]:
+            cii_hdr[k] = (cii_mom0.header[k], cii_mom0.header.comments[k])
+        hdu = fits.PrimaryHDU(data=cii_mom0_reproj, header=cii_hdr)
+        hdu.header['BUNIT'] = 'K km s-1'
+        # hdu.writeto(new_cii_fn, overwrite=True)
+
+        hcop_fn = catalog.utils.search_for_file("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
+        new_hcop_fn = hcop_fn.replace('cm.subpv.fits', '.mom0.23-27.fits')
+        hcop_cube = cube_utils.CubeData(hcop_fn).convert_to_K().data
+        hcop_mom0 = hcop_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+        hcop_mom0_reproj = reproject_interp((hcop_mom0.to_value(), hcop_mom0.wcs), co10_mom0.wcs, shape_out=co10_mom0.shape, return_footprint=False)
+        hcop_hdr = hcop_mom0.header
+        hcop_hdr.update(reproj_hdr)
+        hdu = fits.PrimaryHDU(data=hcop_mom0_reproj, header=hcop_hdr)
+        hdu.header['BUNIT'] = 'K km s-1'
+        # hdu.writeto(new_hcop_fn, overwrite=True)
+
+        co32_fn = catalog.utils.search_for_file("apex/M16_12CO3-2.fits")
+        new_co32_fn = co32_fn.replace('.fits', '.mom0.23-27.fits')
+        co32_cube = cube_utils.CubeData(co32_fn).convert_to_K().data
+        co32_mom0 = co32_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+        co32_mom0_reproj = reproject_interp((co32_mom0.to_value(), co32_mom0.wcs), co10_mom0.wcs, shape_out=co10_mom0.shape, return_footprint=False)
+        co32_hdr = fits.Header()
+        co32_hdr.update(reproj_hdr)
+        for k in ['RESTFRQ', 'BMAJ', 'BMIN', 'BPA', 'LINE', 'OBJECT',]:
+            co32_hdr[k] = (co32_mom0.header[k], co32_mom0.header.comments[k])
+        hdu = fits.PrimaryHDU(data=co32_mom0_reproj, header=co32_hdr)
+        hdu.header['BUNIT'] = 'K km s-1'
+        # hdu.writeto(new_co32_fn, overwrite=True)
+
+        print("DONE")
+        return
+
+    selected_img = "12co32"
+    selected_contours = ["13co32"]
+
+    supported_data = ["12co10", "13co10", "12co32", "13co32", "cii", "12co65", "irac4", "hcop"]
+    filenames = ["bima/M16_12CO1-0_7x4.mom0.23-27.fits", "apex/M16_12CO3-2.mom0.23-27.fits", "apex/M16_13CO3-2.mom0.23-27.fits",
+        "sofia/M16_CII_U.mom0.23-27.fits", "bima/M16.BIMA.13co.mom0.fits", "apex/M16_12CO6-5_mom0.fits", "spitzer/SPITZER_I4_mosaic.fits", "carma/M16.ALL.hcop.sdi..mom0.23-27.fits"]
+    labels = ["$^{12}$CO(1-0) 23-27 km/s", "$^{13}$CO(1-0)", "$^{12}$CO(3-2) 23-27 km/s", "$^{13}$CO(3-2) 23-27 km/s", "[CII] 23-27 km/s", "$^{12}$CO(6-5)",
+        "8 $\mu$m", "HCO+ 23-27 km/s"]
+    vlims = [(None, None),]*6 + [(None, 400), (None, None)]
+    contour_levels = [np.linspace(1.5, 14, 7), np.linspace(30, 250, 6), # co10
+        np.linspace(18, 105, 7), np.linspace(5, 45, 7), # co32
+        np.linspace(20, 140, 7), np.linspace(15, 55, 5), # cii, co65
+        np.exp(np.linspace(np.log(100), np.log(1000), 10)), np.linspace(2.5, 42, 5)] # irac4, hcop
+    # cube_utils.Beam.from_fits_header(fits.getheader(file))
+
+    colors = ['k', marcs_colors[2], marcs_colors[6]]
 
     handles = []
-    if thirteen:
+    img_idx = supported_data.index(selected_img)
+    img_data, img_hdr = fits.getdata(catalog.utils.search_for_file(filenames[img_idx]), header=True)
+    img_wcs = WCS(img_hdr, naxis=2)
+    img_data = np.squeeze(img_data)
+    fig = plt.figure(figsize=(10, 10))
+    ax = plt.subplot(111, projection=img_wcs)
+    im = ax.imshow(img_data, origin='lower', cmap='plasma', vmin=vlims[img_idx][0], vmax=vlims[img_idx][1])
+    ax.set_title("Image: "+labels[img_idx])
+    cbar = fig.colorbar(im, ax=ax)
+
+    for i, selected_contour in enumerate(selected_contours):
+        contour_idx = supported_data.index(selected_contour)
+        contour_data, contour_hdr = fits.getdata(catalog.utils.search_for_file(filenames[img_idx]), header=True)
+        contour_wcs = WCS(contour_hdr, naxis=2)
+        contour_img_reproj = reproject_interp((contour_data, contour_wcs), img_wcs, shape_out=img_data.shape, return_footprint=False)
+        ax.contour(contour_img_reproj, linewidths=1, colors=colors[i])
+        handles.append(mpatches.Patch(color=colors[i], label=labels[contour_idx]))
+
+
+
+    """
+    if False:
         co10_fn = catalog.utils.search_for_file("bima/M16.BIMA.13co.mom0.fits")
         co10_img, co10_hdr = fits.getdata(co10_fn, header=True)
         co10_wcs = WCS(co10_hdr)
         s = "13"
         co10_levels = np.linspace(1.5, 14, 7) # used to be 2.5
     else:
-        co10_fn = catalog.utils.search_for_file("bima/M16_12CO1-0_7x4_mom0.fits")
+        co10_fn = catalog.utils.search_for_file("bima/M16_12CO1-0_7x4.mom0.23-27.fits")
         co10_img, co10_hdr = fits.getdata(co10_fn, header=True)
         co10_wcs = WCS(co10_hdr, naxis=2)
-        co10_img = co10_img[0, :, :]
+        # co10_img = co10_img[0, :, :]
         s = "12"
-        co10_levels = np.linspace(10, 105, 7) # 7.5 or 15
+        # co10_levels = np.linspace(10, 105, 7) # 7.5 or 15 # this is for the original mom0 map
+        co10_levels = np.linspace(30, 250, 6) # this is for the 23-27 mom0
     fig = plt.figure(figsize=(10, 10))
     ax = plt.subplot(111, projection=co10_wcs)
     plt.imshow(np.zeros_like(co10_img), origin='lower', vmin=0, vmax=1, cmap='Greys')
     if plot_co10:
         # noise for 12co is about 2.5 and centered roughly around 0
         # noise for 12co is about 0.2 and centered roughly around 0.6
-        plt.contour(co10_img, levels=co10_levels, colors='k', linewidths=1)
-        handles.append(mpatches.Patch(color='k', label="$^{"+s+"}$CO(1-0)"))
-        # plt.imshow(co10_img, origin='lower', cmap='plasma')
+        plt.contour(co10_img, levels=co10_levels, colors=marcs_colors[2], linewidths=1) ; handles.append(mpatches.Patch(color=marcs_colors[2], label="$^{"+s+"}$CO(1-0) 23-27 km/s"))
+        # plt.imshow(co10_img, origin='lower', cmap='plasma') ; plt.title("$^{"+s+"}$CO(1-0) 23-27 km/s")
 
 
     if plot_co32:
         if thirteen:
             s = "13"
+            co32_levels = np.linspace(5, 45, 7) # for 13CO 23-27 mom0
         else:
             s = "12"
-        co32_levels = np.linspace(10, 48, 5)
-        co32_img = reproject_interp(catalog.utils.search_for_file(f"apex/M16_{s}CO3-2_mom0.fits"), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
-        plt.contour(co32_img, levels=co32_levels, colors=marcs_colors[1], linewidths=1)
-        handles.append(mpatches.Patch(color=marcs_colors[1], label="$^{"+s+"}$CO(3-2)"))
+            co32_levels = np.linspace(18, 105, 7) # for 12CO 23-27 mom0
+        # co32_levels = np.linspace(10, 48, 5) # for regular mom0
+        co32_img = reproject_interp(catalog.utils.search_for_file(f"apex/M16_{s}CO3-2.mom0.23-27.fits"), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
+        plt.contour(co32_img, levels=co32_levels, colors='k', linewidths=1) ; handles.append(mpatches.Patch(color='k', label="$^{"+s+"}$CO(3-2) 23-27 km/s"))
+        # plt.imshow(co32_img, origin='lower', cmap='plasma') ; plt.title("$^{"+s+"}$CO(3-2) 23-27 km/s")
 
     if plot_cii:
-        cii_levels = np.linspace(20, 240, 15)
-        cii_img, cii_hdr = fits.getdata(catalog.utils.search_for_file("sofia/M16_CII_mom0.fits"), header=True)
+        # cii_levels = np.linspace(20, 240, 15) # for the regular mom0
+        cii_levels = np.linspace(20, 140, 7) # for 23-27 mom0
+        cii_img, cii_hdr = fits.getdata(catalog.utils.search_for_file("sofia/M16_CII_U.mom0.23-27.fits"), header=True)
         cii_wcs = WCS(cii_hdr, naxis=2)
-        cii_img = reproject_interp((cii_img[0, :, :], cii_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False) / 1e3 # I prefer K km/s
-        plt.contour(cii_img, levels=cii_levels, colors='k', linewidths=1)
-        handles.append(mpatches.Patch(color='k', label="[CII]"))
-        # plt.imshow(cii_img, origin='lower', cmap='plasma')
+        cii_img = reproject_interp((cii_img, cii_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
+        # plt.contour(cii_img, levels=cii_levels, colors='k', linewidths=1) ; handles.append(mpatches.Patch(color='k', label="[CII] 23-27 km/s"))
+        plt.imshow(cii_img, origin='lower', cmap='plasma') ; plt.title("[CII] 23-27 km/s")
 
     if plot_co65:
         co65_levels = np.linspace(15, 55, 5)
@@ -642,34 +725,34 @@ def overlaid_contours_for_offset():
     if plot_irac4:
         irac4_levels = np.exp(np.linspace(np.log(100), np.log(1000), 10))
         irac4_img = reproject_interp(catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic.fits"), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
-        # plt.contour(irac4_img, levels=irac4_levels, colors='k', linewidths=1)
-        # handles.append(mpatches.Patch(color='k', label="8 $\mu$m"))
+        # plt.contour(irac4_img, levels=irac4_levels, colors='k', linewidths=1) ; handles.append(mpatches.Patch(color='k', label="8 $\mu$m"))
         plt.imshow(irac4_img, origin='lower', cmap='plasma', vmax=500)
 
 
 
     if plot_hcop:
-        hcop_levels = np.sinh(np.linspace(np.arcsinh(0.5), np.arcsinh(20), 9))
-        hcop_img, hcop_hdr = fits.getdata(catalog.utils.search_for_file("carma/M16.ALL.hcop.sdi.mom0pv.fits"), header=True)
+        # hcop_levels = np.sinh(np.linspace(np.arcsinh(0.5), np.arcsinh(20), 9)) # this is for the original mom0
+        hcop_levels = np.sinh(np.linspace(np.arcsinh(2.5), np.arcsinh(42), 5)) # this is for 23-27
+        hcop_img, hcop_hdr = fits.getdata(catalog.utils.search_for_file("carma/M16.ALL.hcop.sdi..mom0.23-27.fits"), header=True)
         hcop_wcs = WCS(hcop_hdr, naxis=2)
-        hcop_img = reproject_interp((hcop_img[0, :, :], hcop_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
-        plt.contour(hcop_img, levels=hcop_levels, colors=marcs_colors[6], linewidths=1)
-        handles.append(mpatches.Patch(color=marcs_colors[6], label="HCO+"))
+        hcop_img = reproject_interp((hcop_img, hcop_wcs), co10_wcs, shape_out=co10_img.shape, return_footprint=False)
+        plt.contour(hcop_img, levels=hcop_levels, colors=marcs_colors[6], linewidths=1) ; handles.append(mpatches.Patch(color=marcs_colors[6], label="HCO+ 23-27 km/s"))
         img = hcop_img
-        plt.imshow(img, origin='lower')
+        plt.imshow(img, origin='lower', cmap='plasma') ; plt.title("HCO+ 23-27 km/s")
         # plt.figure()
         # plt.hist(img.ravel(), bins=128)
         # x = 5
         # print(f"<{x}", np.mean(img[(img<x) & (img>0)]), np.std(img[(img<x) & (img>0)]))
         # return
+    """
 
     plt.legend(handles=handles)
     for coord in ax.coords:
         coord.set_ticks_visible(False)
         coord.set_ticklabel_visible(False)
         coord.set_axislabel('')
-    # plt.tight_layout()
-    # plt.savefig("/home/ramsey/Pictures/2021-08-13-work/XXXXXXXX.png")
+    plt.tight_layout()
+    # plt.savefig("/home/ramsey/Pictures/2021-09-01-work/contours-hcop-12co10-"+s+"co32.23-27.png")
     plt.show()
 
 
@@ -1364,11 +1447,11 @@ def highlight_threads_regions():
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5)
-    vel_lims = dict(vel_start=19.5, vel_stop=27.5)
-    thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
+    # vel_lims = dict(vel_start=19.5, vel_stop=27.5)
+    # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
 
 
-    # overlaid_contours_for_offset()
+    overlaid_contours_for_offset()
 
     ### showing the colors
     # plt.subplot(111)

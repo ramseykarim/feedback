@@ -278,7 +278,6 @@ def simple_mom0(selected_region=0, selected_line=0):
     plt.savefig(f"/home/ramsey/Pictures/2021-08-16-work/{line_stub}_{region_name}.png", metadata={"Comment": f"{levels_stub} spaced contours; m16_deepdive.simple_mom0"})
 
 
-
 def prepare_pdrt_tables():
     """
     Created: Aug 16, 2021

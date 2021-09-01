@@ -46,6 +46,7 @@ mpl_transforms = pvdiagrams.mpl_transforms
 mpatches = pvdiagrams.mpatches
 
 make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
+marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
 kms = u.km/u.s
 
@@ -122,17 +123,61 @@ def marcs_rgb_in_cii():
 
 
 def m16_channel_maps():
-    # fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
-    # cube = SpectralCube.read(fn)
-    cube = cps2.cutout_subcube(length_scale_mult=12., reg_index=2)
-    cube._unit = u.K
+    """
+    CII: vlims: 2, 150 (arcsinh)
+        label text position: 0.62, 0.05
+        ticks: 5, 25, 125
+        velocity limits: 15, 35
+        grid shape: 5, 4
+        figure size: 16, 20
+        text color: black
+    CO10: vlims: 4, 125 (arcsinh)
+        label text position: 0.70, 0.68
+        ticks: 5, 25, 125
+        velocity limits: 15, 31
+        grid shape: 4, 4
+        figure size: 16, 16
+        text color: white
+    HCO+ & HCN & CS: vlims: 0, 15 (arcsinh)
+        label text position: 0.70, 0.68
+        ticks: 1, 3, 10
+        velocity limits: 18, 30
+        grid shape: 4, 3
+        figure size: 12, 16
+        text color: white
+    N2HP: vlims: 0, 7
+        ticks: 1, 3, 7
+        all else same as above
+    12CO32: vlims: 0, 75
+        ticks: 0, 25, 75
+        velocity lims: 15, 35
+        grid shape: 5, 4
+        figsize: 24, 30
+    13CO32: vlims: 0, 25
+        ticks: 1, 5, 25
+        all else same as 12CO32
+    """
+    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    # fn = catalog.utils.search_for_file("bima/M16_12CO1-0_7x4.fits")
+    # fn = catalog.utils.search_for_file("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
+    # fn = catalog.utils.search_for_file("carma/M16.ALL.hcn.sdi.cm.subpv.fits")
+    # fn = catalog.utils.search_for_file("carma/M16.ALL.cs.sdi.cm.subpv.fits")
+    # fn = catalog.utils.search_for_file("carma/M16.ALL.n2hp.sdi.cm.subpv.fits")
+    # fn = catalog.utils.search_for_file("apex/M16_13CO3-2_truncated.fits")
+    cube = cube_utils.CubeData(fn).convert_to_K().data
+    # cube = cps2.cutout_subcube(length_scale_mult=22., reg_index=2, data_filename=fn)
+    # cube._unit = u.K
     # cube.plot_channel_maps(2, 2, [50, 60, 70, 80], cmap='jet')
-    moments = make_moment_series(cube, (15*kms, 35*kms), 1*kms)
+    moments = make_moment_series(cube, (5*kms, 40*kms), 1*kms)
     # assert len(moments) == 20
-    grid_shape = (5, 4)
-    fig = plt.figure(figsize=(16, 20))
+    grid_shape = (7, 5)
+    fig = plt.figure(figsize=(20, 28))
     stretch = np.arcsinh
     ax, im = None, None
+
+    # img_to_contour, img_to_contour_hdr = fits.getdata(catalog.utils.search_for_file("sofia/M16_CII_U.mom0.18-28.fits"), header=True)
+    # contour_args = None
+
     for i in range(len(moments)):
         v_left, v_right, mom0 = moments[i]
         ax = plt.subplot2grid(grid_shape, (i//grid_shape[1], i%grid_shape[1]), projection=mom0.wcs)
@@ -140,7 +185,10 @@ def m16_channel_maps():
         for axis_name in ('x', 'y'):
             ax.tick_params(axis=axis_name, direction='in')
             ax.tick_params(axis=axis_name, labelbottom=False, labelleft=False)
-        ax.text(0.07, 0.95, f"{v_left.to_value():.1f}$-${v_right.to_value():.1f}\n{v_left.unit}", transform=ax.transAxes, fontsize=16, va='top', color='white')
+        ax.text(0.07, 0.95, f"{v_left.to_value():.1f}$-${v_right.to_value():.1f}\n{v_left.unit}", transform=ax.transAxes, fontsize=16, va='top', color='k')
+        # if contour_args is None:
+        #     contour_args = (reproject_interp((img_to_contour, img_to_contour_hdr), mom0.wcs, shape_out=mom0.shape, return_footprint=False),)
+        # ax.contour(*contour_args, colors=marcs_colors[6], linewidths=1, levels=np.linspace(30, 260, 8))
     plt.tight_layout(h_pad=0, w_pad=0, pad=1.01)
     # dx, dy = 0.01, 0.015
     # plt.subplots_adjust(wspace=0, hspace=0, left=dx, right=1-dx, top=1-dy, bottom=dy)
@@ -157,10 +205,11 @@ def m16_channel_maps():
     cbar = fig.colorbar(im, cax=insetcax, orientation='vertical',
                         ticks=stretch(ticks))
     insetcax.set_yticklabels([f"{x:d}" for x in ticks], fontsize=14)
+    insetcax.tick_params(axis='y', colors='k')
     insetcax.yaxis.set_ticks_position('left')
-    ax.text(0.62, 0.05, "T (K km/s)", transform=ax.transAxes, fontsize=14, zorder=10)
+    ax.text(0.62, 0.05, "T (K km/s)", color='k', transform=ax.transAxes, fontsize=14, zorder=10)
 
-    plt.savefig("/home/ramsey/Pictures/2021-07-02-work/m16_channel_maps_1kms_zoom.png")
+    plt.savefig("/home/ramsey/Pictures/2021-08-31-work/m16_cii_channel_maps_1kms.png")
     # plt.show()
 
 
