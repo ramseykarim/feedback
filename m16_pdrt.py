@@ -35,17 +35,32 @@ def make_plot():
     # Loop through the 10 regions
     for i in range(10):
         # Add to the list the CII/CO1-0 measurement and the CII/FIR measurement with the correct labels
-        m16_measurements.append(Measurement.read(os.path.join(data_dir, f"cii_to_co10_pillar{pillar}_{i}.fits"), identifier='CII_158/CO_10'))
-        m16_measurements.append(Measurement.read(os.path.join(data_dir, f"cii_to_fir_pillar{pillar}_{i}.fits"), identifier='CII_158/FIR'))
+        cii_m = Measurement.read(os.path.join(data_dir, f"cii_pillar{pillar}_{i}.fits"), identifier='CII_158')
+        co10_m = Measurement.read(os.path.join(data_dir, f"co10_pillar{pillar}_{i}.fits"), identifier='CO_10')
+        fir_m = Measurement.read(os.path.join(data_dir, f"fir_pillar{pillar}_{i}.fits"), identifier='FIR')
+        cii_m_converted = utils.convert_integrated_intensity(cii_m)
+        # cii_m_converted.header['BUNIT'] = 'erg / (cm2 s sr)' # Marc's fix
+        cii_to_fir_m = cii_m_converted / fir_m
+        #### at this point, the cii_to_fir_m has a unit of cm2/cm2 which should have reduced
+        #### Marc recommends papering over it by assigning everything to unitless, but I'll see if it'll run without
+        co10_m_converted = utils.convert_integrated_intensity(co10_m)
+        cii_to_co10_m = cii_m_converted / co10_m_converted
+        m16_measurements.append(cii_to_co10_m)
+        m16_measurements.append(cii_m_converted)
     # Create the plot using the same labels
-    mp.phasespace(['CII_158/CO_10', 'CII_158/FIR'], nax1_clip=[1E2,1E5]*u.Unit("cm-3"), nax2_clip=[1E1,1E6]*utils.habing_unit, measurements=m16_measurements, label=None,fmt=['k+', 'r+', 'g+', 'b+', 'y+', 'c+', 'ko', 'ro', 'go', 'yo'], title=f'M16 Pillar {pillar}')
-    mp.savefig(f"/home/rkarim/Pictures/2021-09-09-work/cii_co_fir_pdrt_p{pillar}.png")
+    mp.phasespace(['CII_158', 'CII_158/CO_10'], nax1_clip=[1E2,1E5]*u.Unit("cm-3"), nax2_clip=[1E1,1E6]*utils.habing_unit, measurements=m16_measurements, label=None,fmt=['k+', 'r+', 'g+', 'b+', 'y+', 'c+', 'ko', 'ro', 'go', 'yo'], title=f'M16 Pillar {pillar}')
+    mp.savefig(f"/home/ramsey/Pictures/2021-09-14-work/cii_co_pdrt_p{pillar}.png")
 
 
-def make_measurement_tables_from_fits():
+def make_measurements_from_fits():
     """
     Created: Sept 8, 2021
     This is a direct follow-up to m16_deepdive.prepare_pdrt_tables_2
+
+    Updated: Sept 14, 2021 following Marc's email working through my pilot error
+    The issue was that I need to manually encourage a unit conversion
+    I was also not making tables, I was making "measurements" which are FITS.
+    That's fine, Marc said, it'll work fine for the phase space plots.
     """
     # Filepath to the masked FITS images
     tmp_path = "/home/ramsey/Downloads/tmp"

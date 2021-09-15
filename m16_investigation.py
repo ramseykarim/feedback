@@ -581,6 +581,12 @@ def overlaid_contours_for_offset():
     Aug 10 2021: added CII
 
     Aug 29 2021: saving 23-27 km/s mom0s to avoid APEX 3-2 OFF contamination
+
+    Sept 14, 2021: returning to the Aug 14 or so vision (according to the
+    images I made back then. more notes would've been nice!). Adjustable moment
+    (let the functions decide the vlims and contours) for quick highlighting of
+    features. (I haven't implemented this yet, so TODO: update this when I
+    do it)
     """
     selected_img = "12co10"
     selected_contours = ["hcop", "12co32",]
