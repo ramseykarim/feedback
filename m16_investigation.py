@@ -7,6 +7,11 @@ absorption thing
 
 This is meant as a continuation of m16_pictures.py so that that file doesn't
 get too long
+
+The channel maps and contour-image overlays are in here, including stuff looking
+at the spatial offset of CO3-2
+Towards the end of the file, there's all the stuff I did to look at the
+CII background features towards pillar 1
 """
 __author__ = "Ramsey Karim"
 
@@ -587,20 +592,31 @@ def overlaid_contours_for_offset():
     (let the functions decide the vlims and contours) for quick highlighting of
     features. (I haven't implemented this yet, so TODO: update this when I
     do it)
+    OK here's what I gotta do (im tired rn): manually input the "beams" for
+    8 and 70 micron so they can be displayed. Add in an argument for velocity
+    range. Then just do it.
+    Can skip beams for now?
+    TODO: need special handling for the PACS and IRAC images, should do a cutout
+    We have all that weird WCS footprint code somewhere in "catalog", can
+    try to use that to do a regrid to the proper WCS. TOMORROW
     """
-    selected_img = "12co10"
-    selected_contours = ["hcop", "12co32",]
+    selected_img = "irac4"
+    selected_contours = ["cii",]
+    vel_lims = (19*kms, 27*kms) # marc's cubes are usually 19-27
+    vel_str = f"{vel_lims[0].to_value():.1f}-{vel_lims[1].to_value():.1f} {vel_lims[0].unit}"
 
-    supported_data = ["12co10", "13co10", "12co32", "13co32", "cii", "12co65", "irac4", "hcop"]
-    filenames = ["bima/M16_12CO1-0_7x4.mom0.23-27.fits", "bima/M16.BIMA.13co.mom0.fits", # co10
-        "apex/M16_12CO3-2.mom0.23-27.fits", "apex/M16_13CO3-2.mom0.23-27.fits", # co32
-        "sofia/M16_CII_U.mom0.23-27.fits", "apex/M16_12CO6-5_mom0.fits", # cii, co65
-        "spitzer/SPITZER_I4_mosaic.fits", "carma/M16.ALL.hcop.sdi..mom0.23-27.fits"] # irac4, hcop
-    labels = ["$^{12}$CO(1-0) 23-27 km/s", "$^{13}$CO(1-0)", "$^{12}$CO(3-2) 23-27 km/s", "$^{13}$CO(3-2) 23-27 km/s", "[CII] 23-27 km/s", "$^{12}$CO(6-5)",
-        "8 $\mu$m", "HCO+ 23-27 km/s"]
-    short_labels = ["$^{12}$CO(1-0)", "$^{13}$CO(1-0)", "$^{12}$CO(3-2)", "$^{13}$CO(3-2)", "[CII]", "$^{12}$CO(6-5)",
-        "8 $\mu$m", "HCO+"]
-    vlims = [(None, None),]*6 + [(None, 400), (None, None)]
+    supported_data = ["12co10", "13co10", "12co32", "13co32", "cii", "12co65", "irac4", "hcop", "pacs70"]
+    filenames = ["bima/M16_12CO1-0_7x4.fits", "bima/M16.BIMA.13co-1.fits", # co10
+        "apex/M16_12CO3-2_truncated.fits", "apex/M16_13CO3-2_truncated.fits", # co32
+        "sofia/M16_CII_U.fits", "apex/M16_12CO6-5.fits", # cii, co65
+        "spitzer/SPITZER_I4_mosaic.fits", "carma/M16.ALL.hcop.sdi.cm.subpv.fits", # irac4, hcop
+        "herschel/anonymous1603389167/1342218995/level2_5/HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz"] # 70micron, needs unit conversion
+    labels = ["$^{12}$CO(1-0)", "$^{13}$CO(1-0)", "$^{12}$CO(3-2)", "$^{13}$CO(3-2)", "[CII]", "$^{12}$CO(6-5)",
+        "8 $\mu$m", "HCO+", "70 $\mu$m"]
+    # short_labels = ["$^{12}$CO(1-0)", "$^{13}$CO(1-0)", "$^{12}$CO(3-2)", "$^{13}$CO(3-2)", "[CII]", "$^{12}$CO(6-5)",
+    #     "8 $\mu$m", "HCO+", "70 $\mu$m"]
+    only_2D = ['irac4', 'pacs70']
+    vlims = [(None, None),]*6 + [(None, 400), (None, None), (None, None)]
     contour_levels = [np.linspace(1.5, 14, 7), np.linspace(30, 250, 6), # co10
         np.linspace(18, 105, 7), np.linspace(5, 45, 7), # co32
         np.linspace(20, 140, 7), np.linspace(15, 55, 5), # cii, co65
@@ -615,43 +631,59 @@ def overlaid_contours_for_offset():
 
     handles = []
     img_idx = supported_data.index(selected_img)
-    img_data, img_hdr = fits.getdata(catalog.utils.search_for_file(filenames[img_idx]), header=True)
-    img_wcs = WCS(img_hdr, naxis=2)
-    img_data = np.squeeze(img_data)
+    img_label = labels[img_idx]
+    if selected_img in only_2D:
+        img_data, img_hdr = fits.getdata(catalog.utils.search_for_file(filenames[img_idx]), header=True)
+        img_wcs = WCS(img_hdr, naxis=2)
+        img_data = np.squeeze(img_data)
+    else:
+        cube = cube_utils.CubeData(filenames[img_idx]).convert_to_K().data
+        mom0 = cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+        img_data = mom0.to_value()
+        img_wcs = mom0.wcs
+        img_label += " " + vel_str
     fig = plt.figure(figsize=(10, 10))
     ax = plt.subplot(111, projection=img_wcs)
     im = ax.imshow(img_data, origin='lower', cmap='cividis', vmin=vlims[img_idx][0], vmax=vlims[img_idx][1])
-    ax.set_title("Image: "+labels[img_idx])
+    ax.set_title("Image: "+img_label)
     cbar = fig.colorbar(im, ax=ax)
-    beam_patch_x = 0.9
-    beam_patch_y = 0.08
-    img_beam_patch = cube_utils.Beam.from_fits_header(img_hdr).ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_patch_x, beam_patch_y]), misc_utils.get_pixel_scale(img_wcs))
-    format_beam_patch(img_beam_patch)
-    ax.add_artist(img_beam_patch)
-    beam_text_y = beam_patch_y - 0.05
-    ax.text(beam_patch_x, beam_text_y, short_labels[img_idx], color='white', ha='center', va='center', transform=ax.transAxes, fontsize=12)
-    beam_patch_offset = 0.15
-    beam_patch_x -= beam_patch_offset
+    # beam_patch_x = 0.9
+    # beam_patch_y = 0.08
+    # img_beam_patch = cube_utils.Beam.from_fits_header(img_hdr).ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_patch_x, beam_patch_y]), misc_utils.get_pixel_scale(img_wcs))
+    # format_beam_patch(img_beam_patch)
+    # ax.add_artist(img_beam_patch)
+    # beam_text_y = beam_patch_y - 0.05
+    # ax.text(beam_patch_x, beam_text_y, short_labels[img_idx], color='white', ha='center', va='center', transform=ax.transAxes, fontsize=12)
+    # beam_patch_offset = 0.15
+    # beam_patch_x -= beam_patch_offset
 
     for i, selected_contour in enumerate(selected_contours):
         contour_idx = supported_data.index(selected_contour)
-        contour_data, contour_hdr = fits.getdata(catalog.utils.search_for_file(filenames[contour_idx]), header=True)
-        contour_wcs = WCS(contour_hdr, naxis=2)
+        contour_label = labels[contour_idx]
+        if selected_contour in only_2D:
+            contour_data, contour_hdr = fits.getdata(catalog.utils.search_for_file(filenames[contour_idx]), header=True)
+            contour_wcs = WCS(contour_hdr, naxis=2)
+        else:
+            cube = cube_utils.CubeData(filenames[contour_idx]).convert_to_K().data
+            mom0 = cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+            contour_data = mom0.to_value()
+            contour_wcs = mom0.wcs
+            contour_label += " " + vel_str
         contour_img_reproj = reproject_interp((contour_data, contour_wcs), img_wcs, shape_out=img_data.shape, return_footprint=False)
         # contours
         if len(selected_contours) == 1:
             ax.contour(contour_img_reproj, linewidths=1, cmap='hot', levels=12)
-            ax.text(0.95, 0.95, "Contours: "+labels[contour_idx], transform=ax.transAxes, color=('k' if selected_img == 'hcop' else 'white'), fontsize=16, ha='right')
+            ax.text(0.95, 0.95, "Contours: "+contour_label, transform=ax.transAxes, color=('k' if selected_img == 'hcop' else 'white'), fontsize=16, ha='right')
         else:
             ax.contour(contour_img_reproj, linewidths=1, colors=colors[i], levels=12)
             handles.append(mpatches.Patch(color=colors[i], label=labels[contour_idx]))
-        # beam
-        if not selected_contour == selected_img:
-            contour_beam_patch = cube_utils.Beam.from_fits_header(contour_hdr).ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_patch_x, beam_patch_y]), misc_utils.get_pixel_scale(contour_wcs))
-            format_beam_patch(contour_beam_patch)
-            ax.add_artist(contour_beam_patch)
-            ax.text(beam_patch_x, beam_text_y, short_labels[contour_idx], color='white', ha='center', va='center', transform=ax.transAxes, fontsize=12)
-            beam_patch_x -= beam_patch_offset
+        ##### beam
+        # if not selected_contour == selected_img:
+        #     contour_beam_patch = cube_utils.Beam.from_fits_header(contour_hdr).ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_patch_x, beam_patch_y]), misc_utils.get_pixel_scale(contour_wcs))
+        #     format_beam_patch(contour_beam_patch)
+        #     ax.add_artist(contour_beam_patch)
+        #     ax.text(beam_patch_x, beam_text_y, short_labels[contour_idx], color='white', ha='center', va='center', transform=ax.transAxes, fontsize=12)
+        #     beam_patch_x -= beam_patch_offset
 
     if len(selected_contours) > 1:
         plt.legend(handles=handles)
@@ -661,7 +693,7 @@ def overlaid_contours_for_offset():
         coord.set_axislabel('')
     plt.tight_layout()
     contour_stub = "contours_" + "-".join(selected_contours)
-    plt.savefig(f"/home/ramsey/Pictures/2021-09-07-work/{selected_img}-{contour_stub}.png")
+    plt.savefig(f"/home/ramsey/Pictures/2021-09-14-work/{selected_img}-{contour_stub}.png")
     # plt.show()
 
 
