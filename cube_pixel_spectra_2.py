@@ -114,6 +114,7 @@ def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
     if img_cutout is not None:
         # Make a subcube using those slices. This has good WCS (even though it doesn't look like it)
         subcube = cube.data[:, img_cutout.slices_original[0], img_cutout.slices_original[1]]
+        cube_info['cutout'] = img_cutout # save the slices
     else:
         subcube = cube.data
     return subcube.with_spectral_unit(u.km/u.s)

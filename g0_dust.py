@@ -24,12 +24,15 @@ F[W m-2 Hz-1] = B(T) * (1 - e^-tau) * (solid angle per pixel)
 """
 
 # Laptop directory
-filename = "herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits"; prefix='solution'
+# filename = "herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits"; prefix='solution'
+filename = "herschel/results/M16_2p_3BAND_beta2.0.fits"; prefix='solution'
 # filename = "herschel/colorsoln_1.fits"; prefix=''
 filename = catalog.utils.search_for_file(filename)
 
-herschel_ref_filename = catalog.utils.search_for_file("herschel/RCW49large_2p_2BAND_160grid_beta2.0.fits")
-cii_filename = catalog.utils.search_for_file("sofia/mom0_fullrange.fits")
+# herschel_ref_filename = catalog.utils.search_for_file("herschel/RCW49large_2p_2BAND_160grid_beta2.0.fits")
+herschel_ref_filename = filename
+# cii_filename = catalog.utils.search_for_file("sofia/mom0_fullrange.fits")
+cii_filename = catalog.utils.search_for_file("sofia/M16_CII_mom0.fits")
 
 
 """
@@ -91,10 +94,11 @@ def make_plot_g0():
     plt.title("70um")
     plt.colorbar()
     plt.subplot(122)
-    plt.imshow(G0.value, origin='lower', cmap='cividis', vmin=0, vmax=25)
+    plt.imshow(G0.value, origin='lower', cmap='cividis', vmin=0, vmax=3)
     plt.colorbar()
-    plt.title("G0")
-    plt.show()
+    plt.title("G0 from an equation")
+    # plt.show()
+    plt.savefig("/home/rkarim/Pictures/2021-09-09-work/g0_fir_equation.png")
 
 
 """
@@ -144,6 +148,9 @@ def plot_dust():
 
 
 def fir_intensity():
+    """
+    Reused September 9, 2021 for M16
+    """
     with fits.open(filename) as hdul:
         T = hdul[prefix+'T'].data
         tau = hdul[prefix+'tau'].data
@@ -183,25 +190,30 @@ def fir_intensity():
     # F_array = F_array * pixel_area
     # L_FIR = (4. * np.pi * (4.16*u.kpc)**2. * F_array).to('erg s-1 sr-1')
 
-    header_kws = dict(COMMENT='I_FIR map of RCW 49 from 70 and 160 micron',
-        HISTORY='from same SED fits as published paper, beta=2',
-        DATE='April 30, 2021', CREATOR='Ramsey Karim', BUNIT='erg s-1 cm-2 sr-1')
+    header_kws = dict(COMMENT='I_FIR map of M16 from 70-160-250 micron',
+        HISTORY='beta=2',
+        DATE='September 9, 2021', CREATOR='Ramsey Karim', BUNIT='erg s-1 cm-2 sr-1')
     new_hdr = w.to_header()
     new_hdr.update(header_kws)
     hdu = fits.PrimaryHDU(data=F_array.to_value(), header=new_hdr)
-    hdu.writeto(catalog.utils.feedback_path + 'rcw49_data/herschel/rcw49-I_FIR.fits', overwrite=True)
+    hdu.writeto(catalog.utils.feedback_path + 'm16_data/herschel/results/m16-I_FIR.fits', overwrite=True)
 
     plt.imshow(F_array.to_value(), origin='lower')
     plt.show()
 
 
 def check_I_FIR_G0():
-    I_FIR_filename = catalog.utils.search_for_file("herschel/rcw49-I_FIR.fits")
+    I_FIR_filename = catalog.utils.search_for_file("herschel/results/m16-I_FIR.fits")
     I_FIR, hdr = fits.getdata(I_FIR_filename, header=True)
     g0_fir = 0.5 * I_FIR / 1.3e-4
-    plt.imshow(g0_fir, origin='lower')
-    plt.show()
+    plt.imshow(g0_fir, origin='lower', vmax=3e3)
+    plt.colorbar(label="G0 in Habing units")
+    plt.title("G0 from FIR intensity")
+    # plt.show()
+    plt.savefig("/home/rkarim/Pictures/2021-09-09-work/g0_fir.png")
 
 
 if __name__ == "__main__":
-    check_I_FIR_G0()
+    # fir_intensity()
+    # check_I_FIR_G0()
+    make_plot_g0()

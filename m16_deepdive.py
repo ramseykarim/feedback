@@ -393,6 +393,8 @@ def prepare_pdrt_tables_2():
     sequel to the first one, but this time using Measurement properly
     """
     pillar = 1 # 1 or 2
+    select = "fir"
+
     if pillar == 1:
         vel_lims = (20*kms, 28*kms) # P1 regions
     elif pillar == 2:
@@ -402,42 +404,53 @@ def prepare_pdrt_tables_2():
     cii_restfreq = cii_cube.header['RESTFRQ'] * u.Hz
     cii_mom0 = cii_cube.spectral_slab(*vel_lims).moment0()
     del cii_cube
-
+    reproj_wcs = cii_mom0.wcs
+    reproj_shape = cii_mom0.shape
     reproj_hdr = cii_mom0.wcs.to_header()
     del reproj_hdr['RESTFRQ'], reproj_hdr['SPECSYS']
 
-    cii_vel_to_freq_equiv = u.doppler_optical(cii_restfreq)
-    cii_vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=cii_vel_to_freq_equiv)
-    cii_dv = (cii_vel_to_freq_f(vel_lims[0]) - cii_vel_to_freq_f(vel_lims[1]))
-    ### that's a conversion factor from km/s (over the moment0 integration limits) to Hz
+    if select == "ciico":
 
-    co10_cube = cube_utils.CubeData("bima/M16_12CO1-0_14x14.fits").convert_to_K().data
-    co10_restfreq = co10_cube.header['RESTFRQ'] * u.Hz
-    co10_mom0 = co10_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
-    del co10_cube
-    co10_reproj = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), cii_mom0.wcs, shape_out=cii_mom0.shape, return_footprint=False)
-    co10_hdr = co10_mom0.header
-    co10_hdr.update(reproj_hdr)
+        cii_vel_to_freq_equiv = u.doppler_optical(cii_restfreq)
+        cii_vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=cii_vel_to_freq_equiv)
+        cii_dv = (cii_vel_to_freq_f(vel_lims[0]) - cii_vel_to_freq_f(vel_lims[1]))
+        ### that's a conversion factor from km/s (over the moment0 integration limits) to Hz
+
+        co10_cube = cube_utils.CubeData("bima/M16_12CO1-0_14x14.fits").convert_to_K().data
+        co10_restfreq = co10_cube.header['RESTFRQ'] * u.Hz
+        co10_mom0 = co10_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+        del co10_cube
+        co10_reproj = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), reproj_wcs, shape_out=reproj_shape, return_footprint=False)
+        co10_hdr = co10_mom0.header
+        co10_hdr.update(reproj_hdr)
+    elif select == "fir":
+        fir_img, fir_hdr = fits.getdata(catalog.utils.search_for_file("herschel/results/m16-I_FIR.fits"), header=True)
+        fir_img = fir_img[cps2.cube_info['cutout'].slices_original]
 
     reg_list = regions.read_ds9(catalog.utils.search_for_file(f"catalogs/pdrt/pdrt_test_pillar{pillar}.reg"))
-    tmp_path = '/home/ramsey/Downloads/tmp'
+    tmp_path = '/home/rkarim/Downloads/tmp'
     if not os.path.exists(tmp_path):
         print("creating directory ", tmp_path)
         os.mkdir(tmp_path)
     else:
         print("tmp directory already exists")
     for i, reg in enumerate(reg_list):
-        pixreg = reg.to_pixel(cii_mom0.wcs)
-        reg_mask = pixreg.to_mask().to_image(cii_mom0.shape)
+        pixreg = reg.to_pixel(reproj_wcs)
+        reg_mask = pixreg.to_mask().to_image(reproj_shape)
         tmp_filename = os.path.join(tmp_path, f'reg_p{pillar}_cii_{i}.fits')
         # cii_img_copy = cii_mom0.copy()
         # cii_img_copy[~(reg_mask==1)] = np.nan
         # cii_img_copy.write(tmp_filename)
 
-        tmp_filename = os.path.join(tmp_path, f'reg_p{pillar}_co10_{i}.fits')
-        co10_img_copy = co10_reproj.copy()
-        co10_img_copy[~(reg_mask==1)] = np.nan
-        fits.PrimaryHDU(data=co10_img_copy, header=co10_hdr).writeto(tmp_filename)
+        # tmp_filename = os.path.join(tmp_path, f'reg_p{pillar}_co10_{i}.fits')
+        # co10_img_copy = co10_reproj.copy()
+        # co10_img_copy[~(reg_mask==1)] = np.nan
+        # fits.PrimaryHDU(data=co10_img_copy, header=co10_hdr).writeto(tmp_filename)
+
+        tmp_filename = os.path.join(tmp_path, f'reg_p{pillar}_fir_{i}.fits')
+        fir_img_copy = fir_img.copy()
+        fir_img_copy[~(reg_mask==1)] = np.nan
+        fits.PrimaryHDU(data=fir_img_copy, header=fir_hdr).writeto(tmp_filename)
 
     print("done")
 
