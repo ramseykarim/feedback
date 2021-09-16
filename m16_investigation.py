@@ -337,6 +337,10 @@ def compare_carma_to_sofia_pv(selected_region=0, mol_idx=False):
         That's CII (in all PVs for reference), HCN, HCO+, and 12CO1-0.
         I pushed the prev version to github on July 12 so go look there for the
         single line (+CII) version
+    Updated September 16, 2021 to actually do the thing I mentioned above.
+        Right now (check 2021-07-15 images) the contour-on-contour PVs look great
+        I just want to see CO(1-0) and HCO+ in the same image
+        ACTUALLY going to do this in a new file:  m16_threads
     """
     # copied from the crosscut version
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
@@ -1391,8 +1395,8 @@ if __name__ == "__main__":
     # vel_lims = dict(vel_start=19.5, vel_stop=27.5)
     # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
 
-
-    overlaid_contours_for_offset()
+    compare_carma_to_sofia_pv(mol_idx=3)
+    # overlaid_contours_for_offset()
 
     ### showing the colors
     # plt.subplot(111)

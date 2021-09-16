@@ -456,4 +456,4 @@ def prepare_pdrt_tables_2():
 
 
 if __name__ == "__main__":
-    cube = prepare_pdrt_tables_2()
+    easy_pv()
