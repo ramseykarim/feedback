@@ -66,7 +66,7 @@ kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
 
-def pv(selected_region=0, mol_idx=False):
+def pv(selected_region=0):
     """
     September 16, 2021
         Follows from m16_investigation.compare_carma_to_sofia_pv (copy+paste+edit)
@@ -79,24 +79,11 @@ def pv(selected_region=0, mol_idx=False):
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
     # get all the filenames at once
-    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits"]
-    colors = [marcs_colors[0],] + [marcs_colors[1], marcs_colors[6],]*3
-    names = ['[CII]', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '12CO(1-0)', '12CO(1-0) (CII beam)']
-    short_names = ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
-    levels = [list(np.linspace(15, 40, 9))] + [list(np.linspace(2, 9, 8))]*2 + [list(np.linspace(2, 7, 7))]*2 + [list(np.linspace(25, 80, 8))]*2
-    # not always necessary but
-    img_for_background = 0
-
-    if mol_idx is False:
-        mol_idx = 1 # 1 is hcn, 3 is hcop, 5 is co10
-    # mol_idx is an arg, starting at 1 for the molecules
-    trim_lists = lambda l : [l[0]] + l[mol_idx:mol_idx+2]
-    # trim all lists so we can just loop through them and only get one molecular line
-    # if we use multiple lines at once, remove these calls
-    cube_filenames = trim_lists(cube_filenames)
-    colors = trim_lists(colors)
-    names = trim_lists(names)
-    levels = trim_lists(levels)
+    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits"]
+    colors = [marcs_colors[0],] + [marcs_colors[1], marcs_colors[6],]*2
+    names = ['[CII]', 'HCO+', 'HCO+ (CII beam)', '12CO(1-0)', '12CO(1-0) (CII beam)']
+    short_names = ['cii', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
+    levels = [list(np.linspace(15, 40, 9))] + [list(np.linspace(2, 7, 7))]*2 + [list(np.linspace(25, 80, 8))]*2
 
     # set up the vectors
     reg_filename = catalog.utils.search_for_file("catalogs/p1_threads_pathsandcircles.reg")
@@ -104,63 +91,52 @@ def pv(selected_region=0, mol_idx=False):
     vel_limits = np.array([22, 28])*u.km/u.s
 
     fig = plt.figure(figsize=(14, 7))
-    # The two PV slice axes, which will be stacked on the right hand side
-    ax_sl_unconv, ax_sl_conv = None, None
-    # Stuff from the PV slices
-    sl_grid_wcs, sl_grid_shape, sl_grid_header = None, None, None
-    # For contours; first one will be CII, second will be unconv, third conv
-    contour_args_list, contour_kwargs_list = [], []
+
+    # Get slices on their native grids; first one will be CII; then unconv,conv for hcop and again for co10
+    sl_list_nativegrid = []
     for i, c_fn in enumerate(cube_filenames):
-        cube = cube_utils.CubeData(c_fn)
-        cube.convert_to_K()
-        # should actually use cps2 cutout as wrapper for this and save
-        # the one that will make the reference image
-        sl = pvextractor.extract_pv_slice(cube.data.spectral_slab(*vel_limits), pv_path)
-        if ax_sl_unconv is None:
-            sl_grid_wcs = WCS(sl.header)
-            sl_grid_header = sl.header
-            ax_sl_unconv = plt.subplot2grid((2, 2), (0, 1), colspan=1, projection=sl_grid_wcs)
-            ax_sl_conv = plt.subplot2grid((2, 2), (1, 1), colspan=1, projection=sl_grid_wcs)
-            sl_grid_shape = sl.data.shape
-            contour_args = (sl.data,) # marc suggested that one of the layers should be an image instead of all contours
-        else:
-            sl.header['CTYPE2'] = 'VRAD' # thanks to the note in m16_pictures.single_parallel_pillar_pvs
-            contour_args = (reproject_interp((sl.data, sl.header), sl_grid_header, return_footprint=False),)
-        contour_args_list.append(contour_args)
-        contour_kwargs_list.append(dict(linewidths=1.2, colors=colors[i], levels=levels[i]))
+        cube = cube_utils.CubeData(c_fn).convert_to_K().data
+        sl = pvextractor.extract_pv_slice(cube.spectral_slab(*vel_limits), pv_path)
+        sl.header['CTYPE2'] = 'VRAD' # thanks to the note in m16_pictures.single_parallel_pillar_pvs
+        sl_list_nativegrid.append(sl)
+    # identify cii slice
+    cii_sl = sl_list_nativegrid[0]
 
-    print("GRID SHAPE", sl_grid_shape)
-    # ax_sl.imshow(*contour_args_list.pop(img_for_background), origin='lower', cmap='viridis')
-    ax_sl_unconv.imshow(*contour_args_list[img_for_background], origin='lower', cmap='viridis')
-    for i, ax_sl in enumerate([ax_sl_unconv, ax_sl_conv]):
-        ax_sl.contour(*contour_args_list[i+1], **contour_kwargs_list[i+1])
-        ax_sl.contour(*contour_args_list[0], **contour_kwargs_list[0])
-        # ax_sl.imshow(*contour_args_list[i+1], origin='lower', cmap='viridis')
+    # now loop thru the two lines
+    for i, molecule in enumerate(["hcop", "co10"]):
+        mol_idx = short_names.index(molecule)
+        # get the unconv and conv slices (they are next to each other in the list)
+        slices = sl_list_nativegrid[mol_idx:mol_idx+2]
+        ax_sl_unconv = plt.subplot2grid((2, 3), (0, 1+i), projection=WCS(slices[0].header))
+        ax_sl_conv = plt.subplot2grid((2, 3), (1, 1+i), projection=WCS(slices[1].header))
+        axes = [ax_sl_unconv, ax_sl_conv]
+        # reproject CII to unconv (conv should have same WCS)
+        cii_reproj = reproject_interp((cii_sl.data, cii_sl.header), slices[0].header, return_footprint=False)
+        # plot the molecule slices as images on each of axes
+        for j, ax, sl in zip(range(len(axes)), axes, slices):
+            ax.imshow(sl.data, origin='lower', cmap='Greys')
+            ax.contour(sl.data, linewidths=1.2, colors=colors[mol_idx+j])
+            ax.contour(cii_reproj, linewidths=1.2, colors=colors[0])
+            ax.coords[1].set_format_unit(u.km/u.s)
+            ax.coords[0].set_format_unit(u.arcsec)
+            ax.coords[0].set_major_formatter('x')
+            if j == 1:
+                ax.set_xlabel("Offset, from E to W (arcseconds)")
+            else:
+                ax.set_xlabel(" ")
+                ax.set_title(f"PV Diagrams (Greyscale: {names[mol_idx+j]})")
+            ax.set_ylabel("V (km/s)")
+            ax.tick_params(axis='x', direction='in')
+            ax.tick_params(axis='y', direction='in')
+            handles = [mpatches.Patch(color=c, label=n) for ii, n, c in zip(range(len(cube_filenames)), names, colors) if ii in (0, mol_idx+j)]
+            ax.legend(handles=handles, loc='lower right')
 
-        ax_sl.coords[1].set_format_unit(u.km/u.s)
-        ax_sl.coords[0].set_format_unit(u.arcsec)
-        ax_sl.coords[0].set_major_formatter('x')
-        if i == 1:
-            ax_sl.set_xlabel("Offset, from E to W (arcseconds)")
-        else:
-            ax_sl.set_xlabel(" ")
-        ax_sl.set_ylabel("V (km/s)")
-        ax_sl.tick_params(axis='x', direction='in')
-        ax_sl.tick_params(axis='y', direction='in')
-
-        handles = [mpatches.Patch(color=c, label=n) for ii, n, c in zip(range(len(cube_filenames)), names, colors) if (2-i)!=ii]
-        ax_sl.legend(handles=handles, loc='lower right')
-
-    ax_sl_unconv.set_title(f"PV Diagrams")
-    # vel_limits = [(24.4, 25.5), (24.8, 25.7), (23.7, 25.8), (25., 27.)][selected_region]
-    # cube = cube_utils.CubeData(cube_filenames[0]) # can also use cps2 cutout function
-    # img = cube.data.spectral_slab(*(v*u.km/u.s for v in vel_limits)).moment0().to(u.K * u.km / u.s)
 
     img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
     w = WCS(hdr)
     vlims = dict(vmin=0.1, vmax=0.8)
 
-    ax_img = plt.subplot2grid((2, 2), (0, 0), rowspan=2, projection=w)
+    ax_img = plt.subplot2grid((2, 3), (0, 0), rowspan=2, projection=w)
     ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
 
     ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'))
@@ -176,6 +152,6 @@ def pv(selected_region=0, mol_idx=False):
 
 
 if __name__ == "__main__":
-    pv(mol_idx=3)
+    pv()
 
 
