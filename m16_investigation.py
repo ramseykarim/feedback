@@ -234,19 +234,20 @@ def convolve_carma_to_sofia():
     I want to investigate those "threads" coming from the tip of Pillar 1
     I want to see if they're visible at SOFIA ~14x14 resolution and compare to
     SOFIA.
+    Reused September 21, 2021 for 13CO and C18O (1-0), roughly the same code
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     """
     This contains:
     CS, N2H+, HCO+, HCN
     """
-    raise RuntimeError("You already ran this on May 25, 2021")
+    # raise RuntimeError("You already ran this on May 25, 2021")
     fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
     cube_cii = SpectralCube.read(fn)
     cube_cii._unit = u.K
 
-    cube_mol = cube_utils.CubeData([f for f in filepaths if 'hcop' in f].pop())
-    cube_mol.convert_to_K()
+    # cube_mol = cube_utils.CubeData([f for f in filepaths if 'hcop' in f].pop())
+    cube_mol = cube_utils.CubeData("bima/M16.BIMA.c18o.cm.fits").convert_to_K()
     write_path, original_mol_fn = os.path.split(cube_mol.full_path)
     write_fn = original_mol_fn.replace('.fits', '.SOFIAbeam.fits')
     print(write_path)
@@ -1395,8 +1396,11 @@ if __name__ == "__main__":
     # vel_lims = dict(vel_start=19.5, vel_stop=27.5)
     # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
 
-    compare_carma_to_sofia_pv(mol_idx=3)
+    # compare_carma_to_sofia_pv(mol_idx=3)
     # overlaid_contours_for_offset()
+
+
+    convolve_carma_to_sofia()
 
     ### showing the colors
     # plt.subplot(111)

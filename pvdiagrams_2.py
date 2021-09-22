@@ -45,7 +45,7 @@ if __name__ != "__main__":
     raise RuntimeError("Where the hell are you importing this to, dependencies are already on thin ice")
 
 def main():
-    try_reproject_pv()
+    save_smoothed_carma()
 
 
 def pv_thru_p3_shelves():
@@ -395,9 +395,15 @@ def m16_pv_again():
 
 
 def save_smoothed_carma():
-    raise RuntimeError("Already ran this on July 12, 2021")
+    """
+    I guess I created this July 12, 2021
+    Reusing it September 21, 2021 to do it again with the SOFIAbeam versions
+    and again (same day) for c18o (1-0)
+    """
+    raise RuntimeError("Already ran this on September 21, 2021")
     line_stub = "hcop"
-    line_fn = catalog.utils.search_for_file(f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.fits")
+    line_fn = catalog.utils.search_for_file(f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SOFIAbeam.fits")
+    line_fn = catalog.utils.search_for_file("bima/M16.BIMA.c18o.cm.SOFIAbeam.fits")
     save_fn = line_fn.replace('.fits', '.SMOOTH.fits')
     subcube = cps2.cutout_subcube(length_scale_mult=None, data_filename=line_fn)
     subcube = cps2.smooth(subcube)
