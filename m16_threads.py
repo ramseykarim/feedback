@@ -172,7 +172,7 @@ def sample_spectra(selected_region=0):
     names = ['[CII]', 'HCO+', 'HCO+ (CII beam)', '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)']
     short_names = ['cii', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
 
-    co = 18
+    co = 12
     if co == 12:
         co_stub = ""
     elif co == 13:
@@ -196,7 +196,7 @@ def sample_spectra(selected_region=0):
     circle_reg_list = circle_reg_list[selected_region*2:(selected_region+1)*2] # index the correct 2 of them
     # set up background sample circle
     bg_reg_filename = catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple.reg")
-    bg_reg = [regions.read_ds9(bg_reg_filename)[0]]
+    bg_reg = [regions.read_ds9(bg_reg_filename)[2]]
 
     fig = plt.figure(figsize=(15, 10))
 
@@ -257,8 +257,8 @@ def sample_spectra(selected_region=0):
         coord.set_axislabel('')
 
     plt.tight_layout()
-    plt.show()
-    # fig.savefig(f"/home/rkarim/Pictures/2021-09-21-work/sample_spectra_{selected_region}{co_stub}.png")
+    # plt.show()
+    fig.savefig(f"/home/rkarim/Pictures/2021-09-21-work/sample_spectra_{selected_region}{co_stub}_BG3.png")
 
 
 def sample_spectra_2(selected_region=0):
@@ -357,9 +357,10 @@ def investigate_cii_background():
     # get the CII cube
     cube = cube_utils.CubeData("sofia/M16_CII_U.fits").convert_to_K().data
     spectral_axis = cube.spectral_axis.to(kms).to_value()
-    bg_reg_filename = catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_3.reg")
+    idx = 4
+    bg_reg_filename = catalog.utils.search_for_file(f"catalogs/pillar_background_sample_multiple_{idx}.reg")
     bg_reg_list = regions.read_ds9(bg_reg_filename)
-    bg_reg_labels = ['Nominal background', 'BG sample 2', 'BG sample 3']
+    bg_reg_labels = [f'BG sample {i}' for i in range(1, 5)]
 
     fig = plt.figure(figsize=(14, 7))
     ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2)
@@ -373,6 +374,7 @@ def investigate_cii_background():
     ax_spec.set_title("[CII] background")
     ax_spec.axhline(0, color='k', alpha=0.3)
     ax_spec.legend()
+    ax_spec.set_ylim([-1, 12])
 
     # load reference image (HST)
     img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
@@ -392,7 +394,7 @@ def investigate_cii_background():
 
     plt.tight_layout()
     # plt.show()
-    fig.savefig("/home/rkarim/Pictures/2021-09-21-work/cii_background_3.png")
+    fig.savefig(f"/home/rkarim/Pictures/2021-09-28-work/cii_background_{idx}.png")
 
 
 def check_mom1():

@@ -393,11 +393,17 @@ def single_parallel_pillar_pvs():
     parallelpillars_single.reg is just 3 cuts, one for each pillar. They're
         selected to match up to both the CO and CII as best as possible. The
         cut for pillar 1 goes between the horns, doesn't go over either
+
+    Updated September 23, 2021: regridding to CO10 instead of CII to take advantage
+    of CII spectral resolution
     """
-    colors = ['r', 'k']
+    colors = marcs_colors[:2][::-1] # ['r', 'k']
     reg_filename = catalog.utils.search_for_file("catalogs/parallelpillars_single.reg") # 3 regions in this file
-    path_list = pvdiagrams.path_from_ds9(reg_filename, None, width=pvdiagrams.m16_allpillars_series_kwargs['pvpath_width'])
-    chosen_cmap = 'Greys'
+    pvpath_width = pvdiagrams.m16_allpillars_series_kwargs['pvpath_width']
+    pvpath_width = None
+    path_list = pvdiagrams.path_from_ds9(reg_filename, None, width=pvpath_width)
+    print("WIDTH", 'interpolate' if pvpath_width is None else pvpath_width.to(u.arcsec))
+    chosen_cmap = 'Greys' # 'cool'
 
     fig = plt.figure(figsize=(20, 14))
     pillar_names = ['Pillar 1', 'Pillar 2', 'Pillar 3']
@@ -409,28 +415,41 @@ def single_parallel_pillar_pvs():
     # CII, native resolution
     subcube_cii = cps2.cutout_subcube(**subcube_kwargs).with_spectral_unit(u.km/u.s)
     # CO 1-0 BIMA, 14x14
-    fn_co = "bima/M16_12CO1-0_14x14.fits"
-    cube_co = cube_utils.CubeData(fn_co)
-    subcube_co = cps2.cutout_subcube(data_filename=fn_co, **subcube_kwargs)
-    cube_co.data = subcube_co
-    cube_co.refresh_wcs()
-    cube_co.convert_to_K()
-    cube_co.data = cube_co.data.with_spectral_unit(u.km/u.s)
-    subcube_co = cube_co.data
+
+    def process_co(fn):
+        cube_co = cube_utils.CubeData(fn)
+        cutout_co = cps2.cutout_subcube(data_filename=fn, **subcube_kwargs)
+        cube_co.data = cutout_co
+        cube_co.refresh_wcs()
+        cube_co.convert_to_K()
+        cube_co.data = cube_co.data.with_spectral_unit(kms)
+        return cube_co.data
+
+    subcube_co = process_co("bima/M16_12CO1-0_14x14.fits")
+    subcube_co_highres = process_co("bima/M16_12CO1-0_7x4.fits")
 
     # return subcube_cii, subcube_co
 
     vel_lims = (18*u.km/u.s, 30*u.km/u.s)
     vel_str = f"[{vel_lims[0].to_value():.0f}, {vel_lims[1].to_value():.0f}] km/s"
     for idx, path in enumerate(path_list):
-        sl = pvextractor.extract_pv_slice(subcube_cii.spectral_slab(*vel_lims), path)
+        sl = pvextractor.extract_pv_slice(subcube_co.spectral_slab(*vel_lims), path)
+        sl.header['CTYPE2'] = 'VRAD'
         sl_wcs = WCS(sl.header)
         ax_sl = plt.subplot2grid((3, 6), (1, idx*2), colspan=2, rowspan=2, projection=sl_wcs)
         # axes_sl.append(ax_sl)
-        im = ax_sl.imshow(np.zeros_like(sl.data), origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap=chosen_cmap, vmin=0, vmax=1)
+        ######### IMAGES
+        ### Several possibilities for the images
+        #########
+        # im = ax_sl.imshow(np.zeros_like(sl.data), origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap=chosen_cmap, vmin=0, vmax=1)
+        # im = ax_sl.imshow(sl.data, origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap=chosen_cmap)
+        sl_highres = pvextractor.extract_pv_slice(subcube_co_highres.spectral_slab(*vel_lims), path)
+        ax_sl.imshow(sl_highres.data, origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap=chosen_cmap)
+        ######### END images
         ax_sl.coords[1].set_format_unit(u.km/u.s)
         ax_sl.coords[0].set_format_unit(u.arcsec)
         ax_sl.coords[0].set_major_formatter('x')
+        ax_sl.invert_yaxis()
         if idx == 0:
             ax_sl.tick_params(axis='x', direction='in')
             ax_sl.tick_params(axis='y', direction='in')
@@ -445,26 +464,29 @@ def single_parallel_pillar_pvs():
         if idx == 2:
             levels = np.arange(8, 61, 4)
         else:
-            levels = np.arange(10, 61, 10)
-        contour_kwargs = dict(linewidths=1.2, colors=colors[0], alpha=1, levels=levels)
+            levels = np.arange(10, 71, 10)
+        contour_kwargs = dict(linewidths=1.2, colors=colors[1], alpha=1, levels=levels)
         c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=10)
         ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
         if idx == 0:
             handles = []
-            handles.append(mpatches.Patch(color=colors[0], label="[CII]"))
+            handles.append(mpatches.Patch(color=colors[1], label="CO (1$-$0)"))
 
-        sl_co = pvextractor.extract_pv_slice(subcube_co.spectral_slab(*vel_lims), path)
+        ##########
+        ### Now CO
+        ##########
+        sl_cii = pvextractor.extract_pv_slice(subcube_cii.spectral_slab(*vel_lims), path)
         ####################################################
-        sl_co.header['CTYPE2'] = 'VRAD' # this is super important and solved a lot of my problems!!!!1
+        # sl_co.header['CTYPE2'] = 'VRAD' # this is super important and solved a lot of my problems!!!!1
         ####################################################
-        contour_args = (reproject_interp((sl_co.data, sl_co.header), sl_wcs, shape_out=sl.data.shape, return_footprint=False),)
-        # contour_args = (sl_co.data,)
-        contour_kwargs['colors'] = colors[1]
+        contour_args = (reproject_interp((sl_cii.data, sl_cii.header), sl_wcs, shape_out=sl.data.shape, return_footprint=False),)
+        # im = ax_sl.imshow(contour_args[0], origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap=chosen_cmap)
+        contour_kwargs['colors'] = colors[0]
         contour_kwargs['alpha'] = 1
         c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=9)
         ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
         if idx == 0:
-            handles.append(mpatches.Patch(color=colors[1], label="CO (1$-$0)"))
+            handles.append(mpatches.Patch(color=colors[0], label="[CII]"))
             ax_sl.legend(handles=handles, loc='lower right')
 
 
@@ -504,7 +526,7 @@ def single_parallel_pillar_pvs():
     cbar.ax.set_ylabel("Integrated intensity (K km/s)")
     plot_ellipse_patch(ax_img, w, subcube_cii)
 
-    img = subcube_co.spectral_slab(*vel_lims).moment0().to(u.K * u.km / u.s)
+    img = subcube_co_highres.spectral_slab(*vel_lims).moment0().to(u.K * u.km / u.s)
     w = img.wcs
     img = img.to_value()
     ax_img = plt.subplot2grid((3, 6), (0, 3), colspan=3, projection=w)
@@ -520,14 +542,14 @@ def single_parallel_pillar_pvs():
     cbar = fig.colorbar(im, ax=ax_img, ticks=stretch(ticks))
     cbar.ax.set_yticklabels([f"{x:d}" for x in ticks])
     cbar.ax.set_ylabel("Integrated intensity (K km/s)")
-    plot_ellipse_patch(ax_img, w, subcube_co)
+    plot_ellipse_patch(ax_img, w, subcube_co_highres)
 
 
 
 
     plt.tight_layout(h_pad=0, w_pad=0, pad=5)
-    # plt.savefig("/home/ramsey/Pictures/12-29-20-iposter/pv_along.png")
-    plt.show()
+    plt.savefig("/home/rkarim/Pictures/2021-09-23-work/pv_along.png")
+    # plt.show()
 
 """
 I used carma_pvdiagrams.across_pillars_carma to make the across-pillar cuts
@@ -827,4 +849,5 @@ def compare_32_65_10():
     # plt.savefig("/home/ramsey/Pictures/2021-05-12-work/CO_65_10.png")
 
 if __name__ == "__main__":
-    m16_channel_maps()
+    # m16_channel_maps()
+    single_parallel_pillar_pvs()
