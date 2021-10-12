@@ -26,7 +26,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_STResolver_Q()
+    return test_L_vs_T_vs_g()
 
 
 def plot_sptype_calibration_stuff():

@@ -149,6 +149,30 @@ class CubeData:
         self.wcs_flat = self.data[0, :, :].wcs
 
 
+def make_moment_series(cube, velocity_range, velocity_spacing):
+    """
+    :param cube: SpectralCube with at least good velocity units
+    :param velocity_range: two-element sequence of (low, high) velocity
+        limits. The high limit is not inclusive, the low limit is.
+        The limits should be Quantities.
+        These are the first two arguments for a "range" function
+    :param velocity_spacing: Spacing for the channel maps. Should be a Quantity.
+        This is the third argument to a "range" function.
+
+    2021-10-11: Moved from m16_pictures.py to cube_utils.py
+    """
+    v_unit = velocity_spacing.unit
+    # This is the "left edge" of each channel map. The right edge will be this
+    # plus velocity_spacing
+    v0_range = np.arange(*(v.to(v_unit).to_value() for v in velocity_range), velocity_spacing.to_value()) * v_unit
+    # Gather moments into list
+    moments = []
+    for v0 in v0_range:
+        v1 = v0 + velocity_spacing
+        moments.append((v0, v1, cube.spectral_slab(v0, v1).moment0().to(u.K*v_unit)))
+    return moments
+
+
 
 def montage_ProjectCube(filename_cube, filename_target):
     """

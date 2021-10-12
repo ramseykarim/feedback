@@ -161,6 +161,7 @@ def sample_spectra(selected_region=0):
     """
     Created: September 21, 2021
     Figure out how to make selected_region 0 or 1 and use the correct regions
+    2021-10-12: switched from averaging over circles to just using a single spectrum along the line
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
@@ -188,15 +189,18 @@ def sample_spectra(selected_region=0):
 
 
     # set up regions
-    reg_filename = catalog.utils.search_for_file("catalogs/p1_threads_pathsandcircles.reg")
-    # set up the vector
-    pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=10*u.arcsec)
-    circle_reg_list = regions.read_ds9(reg_filename) # only reads 4 circles, doesn't "see" vectors
-    # set up the circles
-    circle_reg_list = circle_reg_list[selected_region*2:(selected_region+1)*2] # index the correct 2 of them
+    reg_filename = catalog.utils.search_for_file("catalogs/p1_threads_pathsandpoints.reg")
+    # set up the vector; width=None
+    pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=None)
+    point_reg_list = regions.read_ds9(reg_filename) # only reads 4 points, doesn't "see" vectors
+    # set up the POINTS
+    point_reg_list = point_reg_list[selected_region*2:(selected_region+1)*2] # index the correct 2 of them
     # set up background sample circle
-    bg_reg_filename = catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple.reg")
-    bg_reg = [regions.read_ds9(bg_reg_filename)[2]]
+    bg_reg_filename = catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg")
+    bg_reg_all = regions.read_ds9(bg_reg_filename)
+    selected_bg = (0, 3)
+    bg_reg_selected = [bg_reg_all[i] for i in selected_bg]
+    bg_reg_labels = [f'BG sample {i+1}' for i in selected_bg]
 
     fig = plt.figure(figsize=(15, 10))
 
@@ -213,22 +217,28 @@ def sample_spectra(selected_region=0):
     for i, c_fn in enumerate(cube_filenames):
         if i in [1, 3]:
             continue
-        cube = cube_utils.CubeData(c_fn).convert_to_K().data
+        cube = cube_utils.CubeData(c_fn).convert_to_K()
+        cube_wcs_flat = cube.wcs_flat
+        cube = cube.data # get SpectralCube from CubeData
         spectra = []
-        for reg in circle_reg_list:
-            spectra.append(cube.subcube_from_regions([reg]).mean(axis=(1, 2)))
+        for reg in point_reg_list:
+            # spectra.append(cube.subcube_from_regions([reg]).mean(axis=(1, 2))) # for circle regions
+            point_center = reg.to_pixel(cube_wcs_flat).center.xy
+            spectra.append(cube[:, round(point_center[1]), round(point_center[0])])
         print(short_names[i], np.std(spectra[0][:20] - np.mean(spectra[0][:20])))
         print(short_names[i], np.std(spectra[1][:20] - np.mean(spectra[1][:20])))
         ax_spec = ax_spec_list[i//2]
         # ax_spec = ax_spec_list[0] if i == 0 else ax_spec_list[(i+1)//2] # if I want to use the unconv versions
-        ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[0], color=colors[i//2], linestyle='-', label=f"(NE) {names[i]}")
-        ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[1], color=colors[i//2], linestyle='--', label=f"(SW) {names[i]}")
+        ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[0], color=colors[i//2], linestyle='-', label=f"NE {names[i]}")
+        ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[1], color=colors[i//2], linestyle='--', label=f"SW {names[i]}")
         if i == 0:
             cii_spectra = spectra
-            cii_bg_spectra = cube.subcube_from_regions(bg_reg).mean(axis=(1, 2))
-            ax_spec.plot(cube.spectral_axis.to(kms).to_value(), cii_bg_spectra, color=colors[i//2], linestyle=':', label=f"BG {names[i]}")
-            ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[0]-cii_bg_spectra, color=marcs_colors[3], linestyle='-', label=f"(NE BGsub) {names[i]}")
-            ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[1]-cii_bg_spectra, color=marcs_colors[3], linestyle='--', label=f"(SW BGsub) {names[i]}")
+            # now im subtracting different BG spectra from each side of the pillar
+            cii_bg_spectra = [cube.subcube_from_regions([bg_reg]).mean(axis=(1, 2)) for bg_reg in bg_reg_selected]
+            ax_spec.plot(cube.spectral_axis.to(kms).to_value(), cii_bg_spectra[0], color='grey', linestyle='-', label=f"BG (for NE) {names[i]}")
+            ax_spec.plot(cube.spectral_axis.to(kms).to_value(), cii_bg_spectra[1], color='grey', linestyle='--', label=f"BG (for SW) {names[i]}")
+            ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[0]-cii_bg_spectra[0], color=marcs_colors[3], linestyle='-', label=f"NE BGsub {names[i]}")
+            ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[1]-cii_bg_spectra[1], color=marcs_colors[3], linestyle='--', label=f"SW BGsub {names[i]}")
     for i, ax_spec in enumerate(ax_spec_list):
         if i == 0:
             ax_spec.set_title("Spectra")
@@ -248,17 +258,25 @@ def sample_spectra(selected_region=0):
     ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
     ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'), alpha=0.3)
     # plot circles over reference
-    for i, reg in enumerate(circle_reg_list):
+    from matplotlib.lines import Line2D
+    for i, reg in enumerate(point_reg_list):
         pixreg = reg.to_pixel(w)
-        pixreg.plot(ax=ax_img, color='red', linestyle=['-', '--'][i])
+        artist = Line2D([pixreg.center.xy[0]], [pixreg.center.xy[1]], marker='x', markersize=8, color=colors[i])
+        ax_img.add_artist(artist)
+    # plot background samples
+    for i, reg in enumerate(bg_reg_selected):
+        pixreg = reg.to_pixel(w)
+        pixreg.plot(ax=ax_img, color='grey', linestyle=['-', '--'][i])
+
+    # axis stuff
     for coord in ax_img.coords:
         coord.set_ticks_visible(False)
         coord.set_ticklabel_visible(False)
         coord.set_axislabel('')
 
     plt.tight_layout()
-    # plt.show()
-    fig.savefig(f"/home/rkarim/Pictures/2021-09-21-work/sample_spectra_{selected_region}{co_stub}_BG3.png")
+    plt.show()
+    # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/sample_spectra_{selected_region}{co_stub}_BG{selected_bg[0]+1}-{selected_bg[1]+1}.png")
 
 
 def sample_spectra_2(selected_region=0):
@@ -432,8 +450,516 @@ def check_mom1():
     # fig.savefig("/home/rkarim/Pictures/2021-09-21-work/cii_mom1.png")
 
 
+def verify_background_doesnt_change_results(selected_region=0):
+    """
+    Created: September 29, 2021
+    Try a bunch of background subtraction combinations and see if the blue excess or
+    the peak shift changes
+    This is all for CII since CII is the only one with a noticeable background
+    """
+    cube_filename = ["sofia/M16_CII_U.fits", *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits"]
+    colors = [marcs_colors[0],] + [marcs_colors[1], marcs_colors[6]]
+    names = ['[CII]', 'HCO+', 'HCO+ (CII beam)', '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)']
+    short_names = ['cii', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
+
+    co = 12
+    if co == 12:
+        co_stub = ""
+    elif co == 13:
+        co_stub = "_13co10"
+        cube_filenames = cube_filenames[:-2] + ["bima/M16.BIMA.13co1-0.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits"]
+        names = names[:-2] + ["$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)"]
+        short_names = short_names[:-2] + ['13co10', '13co10CONV']
+    elif co == 18:
+        co_stub = "_c18o10"
+        cube_filenames = cube_filenames[:-2] + ["bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
+        names = names[:-2] + ["C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
+        short_names = short_names[:-2] + ['c18o10', 'c18o10CONV']
+
+
+    # set up regions
+    reg_filename = catalog.utils.search_for_file("catalogs/p1_threads_pathsandcircles.reg")
+    # set up the vector
+    pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=10*u.arcsec)
+    circle_reg_list = regions.read_ds9(reg_filename) # only reads 4 circles, doesn't "see" vectors
+    # set up the circles
+    circle_reg_list = circle_reg_list[selected_region*2:(selected_region+1)*2] # index the correct 2 of them
+    # set up background sample circle
+    bg_reg_filename = catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg")
+    bg_reg_all = regions.read_ds9(bg_reg_filename)
+    selected_bg = [(0, 1), (1, 0), (0, 2), (2, 0), (0, 3), (3, 0)]
+    bg_reg_selected = [tuple(bg_reg_all[i] for i in tup) for tup in selected_bg]
+    bg_reg_labels = [tuple(f'BG sample {i+1}' for i in tup) for tup in selected_bg]
+
+    fig = plt.figure(figsize=(15, 10))
+
+    ax_blue = plt.subplot2grid((1, 3), (0, 1))
+    ax_peak = plt.subplot2grid((1, 3), (0, 2))
+    ax_list = [ax_blue, ax_peak]
+
+    blue_excess_vel_lim = (22*kms, 24*kms)
+
+    # Get spectra; first one will be CII; then unconv,conv for hcop and again for co10
+    # each entry is a list of 2 (left,right circles)
+    spectra_lists = []
+    # identify cii spectra
+    cii_spectra = None
+    cii_bg_spectra = None
+    for i, c_fn in enumerate(cube_filenames):
+        if i in [1, 3]:
+            continue
+        cube = cube_utils.CubeData(c_fn).convert_to_K().data
+        spectra = []
+        for reg in circle_reg_list:
+            spectra.append(cube.subcube_from_regions([reg]).mean(axis=(1, 2)))
+        print(short_names[i], np.std(spectra[0][:20] - np.mean(spectra[0][:20])))
+        print(short_names[i], np.std(spectra[1][:20] - np.mean(spectra[1][:20])))
+        ax_spec = ax_spec_list[i//2]
+        # ax_spec = ax_spec_list[0] if i == 0 else ax_spec_list[(i+1)//2] # if I want to use the unconv versions
+        ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[0], color=colors[i//2], linestyle='-', label=f"NE {names[i]}")
+        ax_spec.plot(cube.spectral_axis.to(kms).to_value(), spectra[1], color=colors[i//2], linestyle='--', label=f"SW {names[i]}")
+        if i == 0:
+            # now im subtracting different BG spectra from each side of the pillar
+            cii_spectra = spectra
+            cii_bg_spectra = [cube.subcube_from_regions([bg_reg]).mean(axis=(1, 2)) for bg_reg in bg_reg_all]
+            blue_excess_mask = (cii_spectra.spectral_axis >= blue_excess_vel_lim[0]) & (cii_spectra.spectral_axis <= blue_excess_vel_lim[1])
+            print(blue_excess_mask)
+            for j, bg_idx_tup in enumerate(selected_bg):
+                # the indices contained in bg_idx_tup can be used to index cii_bg_spectra
+                bg_reg_tup = bg_reg_selected[j]
+                bg_label_tup = bg_reg_labels[j]
+                cii_spectra_bgsub = [spec - bg for spec, bg in zip(cii_spectra, [cii_bg_spectra[a] for a in bg_idx_tup])]
+                blue_excess_value = np.sum(cii_spectra_bgsub[0][blue_excess_mask]) - np.sum(cii_spectra_bgsub[1][blue_excess_mask])
+                peak_shift_value = cii_spectra.spectral_axis[cii_spectra_bgsub[0].argmax()] - cii_spectra.spectral_axis[cii_spectra_bgsub[1].argmax()]
+
+                ax_blue.plot([0], [blue_excess_value], color='grey', marker='x')
+                ax_peak.plot([0], [peak_shift_value], color='grey', marker='x')
+        else:
+            blue_excess_mask = (TODO) ###################################################################################################################### LEFT OF HERE
+    for i, ax_spec in enumerate(ax_spec_list):
+        if i == 0:
+            ax_spec.set_title("Spectra")
+        if i == 2:
+            ax_spec.set_xlabel("V (km/s)")
+        ax_spec.set_ylabel("T (K)")
+        ax_spec.legend()
+        ax_spec.set_xlim([18, 30])
+        ax_spec.axhline(0, color='k', alpha=0.3)
+
+    # load reference image (HST)
+    img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
+    w = WCS(hdr)
+    vlims = dict(vmin=0.1, vmax=0.8)
+    # plot reference image
+    ax_img = plt.subplot2grid((1, 3), (0, 0), projection=w)
+    ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
+    ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'), alpha=0.3)
+    # plot circles over reference
+    for i, reg in enumerate(circle_reg_list):
+        pixreg = reg.to_pixel(w)
+        pixreg.plot(ax=ax_img, color='red', linestyle=['-', '--'][i])
+    # plot background samples
+    for i, reg in enumerate(bg_reg_selected):
+        pixreg = reg.to_pixel(w)
+        pixreg.plot(ax=ax_img, color='grey', linestyle=['-', '--'][i])
+    # axis stuff
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+
+    plt.tight_layout()
+    # plt.show()
+    fig.savefig(f"/home/rkarim/Pictures/2021-09-28-work/sample_spectra_{selected_region}{co_stub}_BG{selected_bg[0]+1}-{selected_bg[1]+1}.png")
+
+
+
+def emission_peak_spectra(check_peak=True):
+    """
+    Created: October 5, 2021 (moms bday is tomorrow)
+    Compare the spectra at the emission peaks of CO10 and CII (and maybe other lines)
+    """
+
+    if check_peak:
+        co10_cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_14x14.fits", length_scale_mult=4)
+        cii_cube = cps2.cutout_subcube(length_scale_mult=4)
+
+        full_power_loc_list = []
+        full_power_val_list = []
+        mom0s = []
+        for cube in [co10_cube, cii_cube]:
+            full_power_idx = cube.argmax(axis=0)
+            full_power_loc = cube.spectral_axis[full_power_idx].to_value()
+            full_power_val = cube.max(axis=0).to_value()
+            full_power_loc_list.append(full_power_loc)
+            full_power_val_list.append(full_power_val)
+            mom0s.append(cube.moment0())
+
+        reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.reg"))
+
+        ax_cii = plt.subplot(121, projection=mom0s[1].wcs)
+        ax_co10 = plt.subplot(122, projection=mom0s[0].wcs)
+   
+        for img, mom0, ax in zip(full_power_val_list, mom0s, [ax_co10, ax_cii]):
+            # plot the moment 0 img
+            ax.imshow(img, origin='lower', cmap='viridis')
+            # overlay BOTH emission peak regions
+            for i, reg in enumerate(reg_list):
+                pixreg = reg.to_pixel(mom0.wcs)
+                pixreg.plot(ax=ax, color=marcs_colors[i])
+            # hide the coordinates
+            for coord in ax.coords:
+                coord.set_ticks_visible(False)
+                coord.set_ticklabel_visible(False)
+                coord.set_axislabel('')
+
+        def argmax(arr):
+            return np.where(arr == np.max(arr))
+        cii_max_loc = argmax(full_power_val_list[1])
+        co10_max_loc= argmax(full_power_val_list[0])
+        print(cii_max_loc, co10_max_loc) # I LEFT OFF HERE
+        # plt.savefig("/home/rkarim/Pictures/2021-10-05-work/emissionpeaks_DEBUG.png")
+        return
+
+    # this only runs if check_peak is False (I just don't want the entire function indented that far)
+    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.reg"))
+    co10_cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_14x14.fits", length_scale_mult=4)
+    cii_cube = cps2.cutout_subcube(length_scale_mult=4)
+    cube_list = [co10_cube, cii_cube]
+    names = ["$^{12}$CO (1$-$0)", "[CII]"]
+    # setup figure
+    fig = plt.figure(figsize=(12, 8))
+    ax_spec = plt.subplot2grid((2, 2), (1, 0), colspan=2)
+    ax_spec.set_title("Spectra within selected regions")
+    ax_spec.set_xlabel("Velocity (km/s)"); ax_spec.set_ylabel("Intensity (K)")
+    # ok now grab the spectra and plot them
+    spectra = []
+    for i, reg in enumerate(reg_list):
+        spectrum = cube_list[i].subcube_from_regions([reg]).mean(axis=(1, 2))
+        spectra.append(spectrum)
+        ax_spec.plot(cube_list[i].spectral_axis.to(kms).to_value(), spectrum / np.max(spectrum), color=marcs_colors[i], label=names[i])
+
+        spec2 = cube_list[i].subcube_from_regions([reg_list[1-i]]).mean(axis=(1, 2))
+        ax_spec.plot(cube_list[i].spectral_axis.to(kms).to_value(), spec2 / np.max(spec2), color=marcs_colors[1-i], label=names[i]+" ALT", linestyle=':')
+    ax_spec.set_xlim([15, 35])
+    # Plot the moment0s for reference; use 23-28 km/s
+    vel_limits = (23*kms, 28*kms)
+    # make moment0s
+    co10_mom0 = co10_cube.spectral_slab(*vel_limits).moment0().to(u.K*kms)
+    cii_mom0 = cii_cube.spectral_slab(*vel_limits).moment0().to(u.K*kms)
+    # make axes
+    ax_cii = plt.subplot2grid((2, 2), (0, 0), projection=cii_mom0.wcs)
+    ax_co10 = plt.subplot2grid((2, 2), (0, 1), projection=co10_mom0.wcs)
+    # title axes
+    ax_cii.set_title(names[1] + " " + make_vel_stub(vel_limits))
+    ax_co10.set_title(names[0] + " " + make_vel_stub(vel_limits))
+    for mom0, ax in zip([cii_mom0, co10_mom0], [ax_cii, ax_co10]):
+        # plot the moment 0 img
+        ax.imshow(mom0.to_value(), origin='lower', cmap='Greys_r')
+        # overlay BOTH emission peak regions
+        for i, reg in enumerate(reg_list):
+            pixreg = reg.to_pixel(mom0.wcs)
+            pixreg.plot(ax=ax, color=marcs_colors[i])
+        # hide the coordinates
+        for coord in ax.coords:
+            coord.set_ticks_visible(False)
+            coord.set_ticklabel_visible(False)
+            coord.set_axislabel('')
+
+
+    bg_reg_all = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg"))
+    selected_bg = bg_reg_all[0]
+    cii_bg_spectrum = cii_cube.subcube_from_regions([selected_bg]).mean(axis=(1, 2))
+    cii_spectrum_bgsub = spectra[1] - cii_bg_spectrum
+    ax_spec.plot(cii_cube.spectral_axis.to(kms).to_value(), cii_spectrum_bgsub/np.max(cii_spectrum_bgsub), color=marcs_colors[1], linestyle='--', label='[CII] BGSUB')
+
+    pixreg = selected_bg.to_pixel(cii_mom0.wcs)
+    pixreg.plot(ax=ax_cii, color='w', linestyle='--')
+    pix_center = pixreg.center.xy
+    ax_cii.text(*pix_center, "Background", color='w', fontsize=8, ha='center', va='center')
+
+    ax_spec.legend()
+    fig.savefig("/home/rkarim/Pictures/2021-10-05-work/emissionpeaks.png")
+
+
+
+def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=None, figsize=None, idx_for_img=None):
+    """
+    Created: October 11, 2021
+    Copied largely from m16_investigation.thin_channel_maps_rb
+    Repurposed to make improved channel maps of CII on CO / HCO+
+    And also grid them like in m16_pictures.m16_channel_maps
+    :param cube_idxs: The first argument in cube_idxs should have the largest footprint
+    :param idx_for_img: If None, all contours. If int, index of cube_idxs argument tuple that will be imshow'd
+    """
+    kms = u.km/u.s
+    # copied from the crosscut version
+    filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
+    filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
+    get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
+    get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
+    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits", "bima/M16.BIMA.13co1-0.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits", "bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
+    names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)', "$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)", "C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
+    short_names = ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV', '13co10', '13co10CONV', 'c18o10', 'c18o10CONV']
+
+
+    if idx_for_img is None:
+        colors = [marcs_colors[i] for i in [1, 0, 2]]
+        default_text_color = 'k'
+    else:
+        colors = [marcs_colors[i] for i in [0, 2, 1]]
+        default_text_color = 'white'
+
+    contour_levels = [
+        np.arange(15, 100, 7.5), # cii
+        np.arange(2, 20, 4), np.arange(2, 20, 4), # hcn
+        np.arange(2, 20, 4), np.arange(2, 20, 4), # hcop
+        np.arange(15, 130, 15), np.arange(15, 130, 15), # co10/CONV
+        np.arange(5, 60, 5), np.arange(3, 60, 3), # 13co
+        np.arange(3, 60, 3), np.arange(3, 60, 3), #c18o
+    ]
+    img_vlims = [
+        (0, 50), # cii
+        (0, 15), (0, 15), # hcn
+        (0, 15), (0, 15), # hcop
+        (0, 60), (0, 50), # co10/CONV
+        (0, 60), (0, 60), # 13co
+        (0, 60), (0, 60), # c18o
+    ]
+
+    def check_idx(idx):
+        if not isinstance(idx, int):
+            print(idx, end=": ")
+            idx = short_names.index(idx)
+            print(idx)
+        return idx
+
+    cube_idxs = [check_idx(idx) for idx in cube_idxs]
+
+    # c1_idx = 0
+    # c2_idx = 2
+    unique_label = "-".join([short_names[idx] for idx in cube_idxs]) + ("_img_" if idx_for_img is not None else "")
+    cubes = [cube_utils.CubeData(cube_filenames[idx]).convert_to_K().data for idx in cube_idxs]
+    vel_start *= kms
+    vel_stop *= kms
+    channel_width = 0.5*kms
+
+    def make_moment_series(cube):
+        return cube_utils.make_moment_series(cube, (vel_start, vel_stop), channel_width)
+
+    cube_moments = [make_moment_series(cube) for cube in cubes]
+    """
+    cube_moments has an entry for each line (CII, CO10, etc)
+    each entry of cube_moments is a list of moment 0 info tuples: (v0, v1, moment)
+    """
+    # assert len(cube_moments[0]) == 20 # good opportunity for a quick check
+    if grid_shape is None:
+        grid_shape = (5, 5)
+    fig = plt.figure(figsize=figsize)
+    ax, im = None, None
+    min_cutout_sl = None
+
+    for i in range(len(cube_moments[0])):
+        # Iterate through each channel and plot all lines' moments
+        v_left, v_right, img1_raw = cube_moments[0][i]
+        additional_imgs = []
+        footprints = []
+        for j in range(1, len(cube_moments)):
+            # Iterate through distinct molecular/atomic lines (CII, CO10, etc)
+            additional_img_raw = cube_moments[j][i][2]
+            additional_img, fp = reproject_interp((additional_img_raw.to_value(), additional_img_raw.wcs), img1_raw.wcs, shape_out=img1_raw.shape, return_footprint=True)
+            additional_imgs.append(additional_img)
+            footprints.append(fp > 0.5)
+        if min_cutout_sl is None:
+            min_cutout_sl = misc_utils.minimum_valid_cutout(np.all(footprints, axis=0))
+        img1 = img1_raw.to_value()[min_cutout_sl]
+        all_imgs = [img[min_cutout_sl] for img in additional_imgs]
+        all_imgs.insert(0, img1)
+        del additional_imgs
+
+        ax = plt.subplot2grid(grid_shape, (i//grid_shape[1], i%grid_shape[1])) # can't do projection=wcs easily since we used slices
+
+        if idx_for_img is not None:
+            vmin = img_vlims[cube_idxs[idx_for_img]][0]
+            vmax = img_vlims[cube_idxs[idx_for_img]][1] # alternatively, None for floating vmax
+            im = ax.imshow(all_imgs[idx_for_img], origin='lower', cmap='plasma', vmin=vmin, vmax=vmax)
+        else:
+            ax.imshow(np.zeros_like(all_imgs[0]), origin='lower', vmin=0, vmax=1, cmap='Greys')
+
+        color_idx = 0
+        text_x = 0.97
+        text_y = 0.90
+        text_y_step = 0.05
+        text_kwargs = dict(fontsize=12, transform=ax.transAxes, ha='right')
+        for j in range(len(cube_moments)):
+            if j != idx_for_img:
+                ax.contour(all_imgs[j], colors=colors[color_idx], levels=contour_levels[cube_idxs[j]])
+                if i == 0:
+                    ax.text(text_x, text_y, f"{names[cube_idxs[j]]}", c=colors[color_idx], **text_kwargs)
+                color_idx += 1
+            else:
+                if i == 0:
+                    ax.text(text_x, text_y, f"{names[cube_idxs[j]]} (color)", c=default_text_color, **text_kwargs)
+            text_y = text_y - text_y_step
+        vel_str = make_vel_stub((v_left, v_right))
+        ax.text(text_x, 0.95, vel_str, color=default_text_color, **text_kwargs)
+        for axis_name in ('x', 'y'):
+            ax.tick_params(axis=axis_name, direction='in')
+            ax.tick_params(axis=axis_name, labelbottom=False, labelleft=False)
+    plt.tight_layout(h_pad=0, w_pad=0, pad=1.01)
+    if idx_for_img is not None:
+        insetcax = inset_axes(ax, width="5%", height="60%", loc='lower right', bbox_to_anchor=(0, 0.01, 0.97, 1), bbox_transform=ax.transAxes)
+        cbar = fig.colorbar(im, cax=insetcax, orientation='vertical')
+        insetcax.tick_params(axis='y', colors='white')
+        insetcax.yaxis.set_ticks_position('left')
+
+    fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/contouroverlay_{unique_label}_channelmaps.png")
+    # plt.show()
+
+
+def m16_pv_again2():
+    """
+    did not find anything interesting in those parallel cuts. try across??
+
+    July 12, 2021 update: I might edit this (I will push to github first)
+    for use in the upcoming Future of Airborne astro conference.
+    The only thing is, I don't think I need multuple paths overlaid?
+    Can just reference this function and write it into m16_deepdive.easy_pv
+    with each pv in a different subplot and all the paths on the HST
+    """
+    # colors = ['MediumOrchid', 'LimeGreen', 'DarkOrange', 'MediumBlue']
+    """
+    pillar1_threads_pv.reg:
+    6 total, 4 in sequene and 2 in diff sequence
+    See 2021-07-13 pictures and slides 2-3 in google drive
+    4 are across P1, and 2 are down each thread (these are the ones I want)
+
+    2021-10-12: moved from pvdiagrams_2.py to m16_threads.py
+    """
+    reg_filename = catalog.utils.search_for_file("catalogs/pillar1_threads_pv_v3.reg")
+    path_list = pvdiagrams.path_from_ds9(reg_filename, None, width=None) # no width needed, just use the inherent beam dilation
+
+    fig = plt.figure(figsize=(15, 7))
+    # this is either 0 or 1, "0" is first 3 (transverse), "1" is last 3 (vertical, threads)
+    # "2" will select only the East and West vertical paths (not the Center)
+    selected_set = 0
+    if selected_set == 0:
+        path_list = path_list[:3]
+        path_name = ['North', 'Center', 'South']
+        direction_stub = "east to west"
+    elif selected_set == 1:
+        path_list = path_list[3:]
+        path_name = ['East', 'Center', 'West']
+        direction_stub = "south to north"
+    elif selected_set == 2:
+        path_list = [path_list[3], path_list[5]]
+        path_name = ['East', 'West']
+        direction_stub = "south to north"
+    cmap = mpl_cm.get_cmap('viridis')
+    colors = [mpl_colors.to_hex(cmap(x)) for x in np.linspace(0., 0.75, len(path_list))]
+    colors = marcs_colors
+    axes_sl = []
+    handles = []
+    reg_index = 1
+    # data_filename=f"apex/M16_12CO3-2_truncated.fits",
+    line_stubs = ['cii', 'hcop', 'hcn', 'nh2p', 'cs']
+    line_names = ['CII', 'HCO+', 'HCN', 'NH2+', 'CS']
+    line_stub = "cii"
+    if line_stub == "cii":
+        line_fn = None
+        levels = np.arange(10, 401, 10)
+    else:
+        line_fn = f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SMOOTH.fits"
+        if selected_set > 0:
+            levels = np.sinh(np.linspace(np.arcsinh(1), np.arcsinh(61), 10))
+        else:
+            levels = np.arange(1, 61, 1)
+    line_name = line_names[line_stubs.index(line_stub)]
+    vel_lims = (22*u.km/u.s, 28*u.km/u.s)
+    subcube = cps2.cutout_subcube(reg_filename=reg_filename, reg_index=reg_index, length_scale_mult=2, data_filename=line_fn).spectral_slab(*vel_lims)
+    # if line_fn is not None and "SMOOTH" not in line_fn:
+    # # if line_fn is None or "SMOOTH" not in line_fn:
+    #     print("SMOOTHING")
+    #     subcube = cps2.smooth(subcube)
+    cargs_list, ckwargs_list = [], []
+    for idx in range(len(path_list)):
+        path = path_list[idx]
+        sl = pvextractor.extract_pv_slice(subcube, path)
+        if idx == 0:
+            sl_wcs = WCS(sl.header)
+            ax_sl = plt.subplot2grid((1, 3), (0, 1), colspan=2, projection=sl_wcs)
+            ax_sl.imshow(np.zeros_like(sl.data), origin='lower', vmin=0, vmax=1, cmap='Greys', aspect=sl.data.shape[1]*0.7/sl.data.shape[0])
+            axes_sl.append(ax_sl)
+            # im = ax_sl.imshow(sl.data, origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), cmap='Greys')
+            ax_sl.coords[1].set_format_unit(u.km/u.s)
+            ax_sl.coords[1].set_major_formatter('x.xx')
+            ax_sl.coords[0].set_format_unit(u.arcsec)
+            ax_sl.coords[0].set_major_formatter('x.xx')
+            ax_sl.set_xlabel(f"Offset, from {direction_stub} (arcseconds)")
+            ax_sl.set_ylabel("Velocity (km/s)")
+            ax_sl.set_title(f"{line_name} PV diagrams")
+        contour_args = (sl.data,)
+        cargs_list.append(contour_args)
+        contour_kwargs = dict(linewidths=1.2, colors=[colors[idx]], alpha=1)
+        ckwargs_list.append(contour_kwargs)
+    # Figure out contour levels automatically, if not already specified
+    if levels is None:
+        global_sl_max = max([np.max(x) for (x,) in cargs_list])
+        print("GLOBAL MAX",global_sl_max)
+        levels = np.linspace(0, global_sl_max, 15)[4:-1:2]
+    print("LEVELS",levels)
+    for idx in range(len(path_list)):
+        contour_args = cargs_list[idx]
+        contour_kwargs = ckwargs_list[idx]
+        ax_sl.contour(*contour_args, **contour_kwargs, levels=levels)
+        handles.append(mpatches.Patch(color=colors[idx], label=path_name[idx]))
+    ax_sl.legend(handles=handles)
+
+    img_select = 'sofia'
+    if img_select == 'sofia':
+        img = subcube.moment0().to(u.K * u.km / u.s)
+        w = img.wcs
+        img = img.to_value()
+        # vlims = dict(vmin=45, vmax=200)
+        vlims = dict(vmin=None, vmax=None)
+    elif img_select == 'hst':
+        img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
+        w = WCS(hdr)
+        vlims = dict(vmin=0.1, vmax=0.7)
+    else:
+        raise NotImplementedError
+    ax_img = plt.subplot2grid((1, 3), (0, 0), projection=w)
+    im = ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
+    for idx, p in enumerate(path_list):
+        ax_img.plot([c.ra.deg for c in p._coords], [c.dec.deg for c in p._coords], color=colors[idx], transform=ax_img.get_transform('world'), label=path_name[idx])
+    ax_img.set_title(f"{line_name} integrated intensity {make_vel_stub(vel_lims)}")
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+    # Plot the beam on the image
+    patch = subcube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform([0.1, 0.9]), misc_utils.get_pixel_scale(w))
+    patch.set_alpha(0.5)
+    patch.set_facecolor('grey')
+    patch.set_edgecolor('k')
+    ax_img.add_artist(patch)
+    # Plot the beam as a line in the PV slice
+    beam_size_mean = np.sqrt(subcube.beam.major*subcube.beam.minor).to(u.deg).to_value()
+    beamtransform = mpl_transforms.blended_transform_factory(ax_sl.get_transform('world'), ax_sl.transAxes)
+    x_offset = 5*u.arcsec.to(u.deg)
+    # Plot the beam in degrees in the x coord and axes in the y coord
+    ax_sl.plot([x_offset, x_offset + beam_size_mean], [0.1, 0.1], transform=beamtransform, color='k', marker='|', alpha=0.5)
+    plt.subplots_adjust(left=0.05, right=0.95)
+    fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pillar_series{selected_set}_{line_stub}_PVs.png")
+    # plt.show()
+
+
 
 if __name__ == "__main__":
-    investigate_cii_background()
+    # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
+    # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
+    # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
+    # channel_maps_again('cii', '13co10', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
 
+    sample_spectra()
 

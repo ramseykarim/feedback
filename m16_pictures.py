@@ -168,7 +168,7 @@ def m16_channel_maps():
     # cube = cps2.cutout_subcube(length_scale_mult=22., reg_index=2, data_filename=fn)
     # cube._unit = u.K
     # cube.plot_channel_maps(2, 2, [50, 60, 70, 80], cmap='jet')
-    moments = make_moment_series(cube, (5*kms, 40*kms), 1*kms)
+    moments = cube_utils.make_moment_series(cube, (5*kms, 40*kms), 1*kms)
     # assert len(moments) == 20
     grid_shape = (7, 5)
     fig = plt.figure(figsize=(20, 28))
@@ -220,7 +220,7 @@ def m16_individual_channel_maps():
     kms = u.km/u.s
     crop = cps2.cutout_subcube(length_scale_mult=7, return_cutout=True)
     # cube.plot_channel_maps(2, 2, [50, 60, 70, 80], cmap='jet')
-    moments = make_moment_series(cube, (11*kms, 35*kms), 1*kms)
+    moments = cube_utils.make_moment_series(cube, (11*kms, 35*kms), 1*kms)
     # assert len(moments) == 20
     grid_shape = (3, 5)
     stretch = np.arcsinh
@@ -261,28 +261,6 @@ def m16_individual_channel_maps():
         print(i)
         # plt.savefig(f"/home/ramsey/Pictures/12-21-20-work/channelmaps/map{i:02d}.png")
 
-
-
-def make_moment_series(cube, velocity_range, velocity_spacing):
-    """
-    :param cube: SpectralCube with at least good velocity units
-    :param velocity_range: two-element sequence of (low, high) velocity
-        limits. The high limit is not inclusive, the low limit is.
-        The limits should be Quantities.
-        These are the first two arguments for a "range" function
-    :param velocity_spacing: Spacing for the channel maps. Should be a Quantity.
-        This is the third argument to a "range" function.
-    """
-    v_unit = velocity_spacing.unit
-    # This is the "left edge" of each channel map. The right edge will be this
-    # plus velocity_spacing
-    v0_range = np.arange(*(v.to(v_unit).to_value() for v in velocity_range), velocity_spacing.to_value()) * v_unit
-    # Gather moments into list
-    moments = []
-    for v0 in v0_range:
-        v1 = v0 + velocity_spacing
-        moments.append((v0, v1, cube.spectral_slab(v0, v1).moment0().to(u.K*v_unit)))
-    return moments
 
 
 def residuals_and_wings():

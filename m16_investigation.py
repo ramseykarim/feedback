@@ -141,30 +141,6 @@ def cii_systematic_emission_2():
     # fig.savefig(f"/home/ramsey/Pictures/2021-05-20-work/selected_spectra_{line_name}.png")
 
 
-def minimum_valid_cutout(img):
-    """
-    Isolate a sub-array from an array which has a padding of unnecessary or
-    invalid values. This function is general-purpose and can be thought of
-    as 1) the opposite of the np.pad function or 2) similar to the Cutout2D
-    function in astropy.
-    You pass in a boolean array where there are True values surrounded by
-    False values. The True vales should be confined to a small space, though
-    they don't necessarily have to cover a perfect rectangle or be uniform.
-    This function will return the array slices necessary to capture all the True
-    values and discard as many False edge values as possible.
-    The worst case scenario for this function is an isolated True value far
-    from the main cluster of True values; try to avoid that.
-    :param img: a boolean array where False values are unnecessary.
-        Ideally, the True values are limited to a single small rectangular
-        (aligned with array axes) region in which there are few, if any, False
-        values.
-    :returns: tuple(slice, slice) which can be applied to the original image
-        to obtain the valid subregion. Similar to the "slices" attribute
-        from astropy's Cutout2D.
-    """
-    return tuple(slice(np.min(x), np.max(x)+1) for x in np.where(img))
-
-
 def correlate_to_find_offset():
     """
     May 12, 2021
@@ -183,7 +159,7 @@ def correlate_to_find_offset():
     # co32_img = reproject_interp(catalog.utils.search_for_file("apex/M16_12CO3-2_mom0.fits"), co10_hdr, return_footprint=False)
     co32_img, co32_hdr = fits.getdata(catalog.utils.search_for_file("apex/M16_12CO3-2_mom0.fits"), header=True)
     co10_img, fp = reproject_interp((co10_img, co10_hdr), co32_hdr, return_footprint=True)
-    min_cutout_sl = minimum_valid_cutout(fp > 0.5)
+    min_cutout_sl = misc_utils.minimum_valid_cutout(fp > 0.5)
     co10_img = co10_img[min_cutout_sl]
     # co10_img = co32_img[min_cutout_sl] #### THIS ONE MAKES 10 A COPY OF 32
     co32_img = co32_img[min_cutout_sl]
@@ -550,7 +526,7 @@ def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefi
         img1_raw = cube1.spectral_slab(*vel_lims).moment0().to(u.K*kms)
         img2_raw = cube2.spectral_slab(*vel_lims).moment0().to(u.K*kms)
         img2, fp = reproject_interp((img2_raw.to_value(), img2_raw.wcs), img1_raw.wcs, shape_out=img1_raw.shape, return_footprint=True)
-        min_cutout_sl = minimum_valid_cutout(fp > 0.5)
+        min_cutout_sl = misc_utils.minimum_valid_cutout(fp > 0.5)
         img1 = img1_raw.to_value()[min_cutout_sl]
         img2 = img2[min_cutout_sl]
 

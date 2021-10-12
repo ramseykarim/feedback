@@ -121,3 +121,30 @@ def get_pixel_scale(wcs_obj):
 
 def is_number(x):
     return isinstance(x, Number)
+
+
+def minimum_valid_cutout(img):
+    """
+    Isolate a sub-array from an array which has a padding of unnecessary or
+    invalid values. This function is general-purpose and can be thought of
+    as 1) the opposite of the np.pad function or 2) similar to the Cutout2D
+    function in astropy.
+    You pass in a boolean array where there are True values surrounded by
+    False values. The True vales should be confined to a small space, though
+    they don't necessarily have to cover a perfect rectangle or be uniform.
+    This function will return the array slices necessary to capture all the True
+    values and discard as many False edge values as possible.
+    The worst case scenario for this function is an isolated True value far
+    from the main cluster of True values; try to avoid that.
+    :param img: a boolean array where False values are unnecessary.
+        Ideally, the True values are limited to a single small rectangular
+        (aligned with array axes) region in which there are few, if any, False
+        values.
+    :returns: tuple(slice, slice) which can be applied to the original image
+        to obtain the valid subregion. Similar to the "slices" attribute
+        from astropy's Cutout2D.
+
+    2021-10-11: Moved from m16_investigation.py to misc_utils.py
+    """
+    return tuple(slice(np.min(x), np.max(x)+1) for x in np.where(img))
+
