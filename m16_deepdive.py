@@ -455,5 +455,35 @@ def prepare_pdrt_tables_2():
     print("done")
 
 
+def fit_co10_components_with_gaussians():
+    """
+    Created October 22, 2021
+    Try my hand at fitting with Gaussians again
+    This time it's the CO (1-0) data (maybe....13...?)
+    Try to find distinct components and see if they can be responsible for the CII profile without
+    major velocity shifts
+    """
+    cube_co = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits").convert_to_K().data.with_spectral_unit(kms)
+    # try with HCO+ too after we debug
+    good_pixel = (446, 304)
+    di, dj = 20, 30
+    i_lo, i_hi = (good_pixel[0] + sign*di for sign in (-1, 1))
+    j_lo, j_hi = (good_pixel[1] + sign*dj for sign in (-1, 1))
+    vel_lims = (23, 24)
+    # vel_lims = (23, 24)
+    mom0 = cube_co.spectral_slab(*(v*kms for v in vel_lims)).moment0()
+    ax_img = plt.subplot(121)
+    ax_img.imshow(mom0.to_value(), origin='lower')
+    spectrum = cube_co[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
+    ax_spec = plt.subplot(122)
+    ax_spec.plot(cube_co.spectral_axis, spectrum, color='k')
+    # mark some things on each plot
+    [ax_spec.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
+    ax_img.plot([j_lo, j_hi, j_hi, j_lo, j_lo], [i_lo, i_lo, i_hi, i_hi, i_lo], color='k')
+    # TODO: plot the spectrum and use modeling to fit gaussian
+    plt.show()
+    return
+
+
 if __name__ == "__main__":
-    easy_pv()
+    fit_co10_components_with_gaussians()

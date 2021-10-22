@@ -526,7 +526,7 @@ def single_parallel_pillar_pvs():
 
 
     plt.tight_layout(h_pad=0, w_pad=0, pad=5)
-    plt.savefig("/home/rkarim/Pictures/2021-09-23-work/pv_along.png")
+    plt.savefig("/home/rkarim/Pictures/2021-10-19-work/pv_along.png")
     # plt.show()
 
 """

@@ -130,5 +130,52 @@ def cut_across_m16_pillars_again():
     # fig.savefig("/home/ramsey/Pictures/2021-03-01-work/across_all_xcut_5_redo.png")
 
 
+def cut_thru_pillar1_head_pdr():
+    """
+    Created October 22, 2021
+    Following Xander & Marc's suggestion to make PDR crosscuts thru the pillar1 head
+    I should also compare to the Young Owl et al 2000 cross cuts
+    """
+    colors, path_list, path_name, vlims, grid_shape, region_name = crosscut.setup_paths(3)
+    fig = plt.figure(figsize=(17, 12))
+    cco = crosscut.CrossCut(path_list[0], vlims=vlims, log=False)
+    cco.setup_figure(fig=fig, xcut_axis=plt.subplot2grid(grid_shape, (0, 1)))
+    fx = lambda x: x - x[0]
+    layers = [
+        crosscut.DataLayer("[CII]", cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").convert_to_K(), cube=True, alpha=0.9, color='r', linestyle='-.', linewidth=1.2),
+        crosscut.DataLayer("$^{12}$CO (1$-$0)", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7, color='b', linewidth=1.2, norm=100),
+        crosscut.DataLayer("8 $\mu$m", "spitzer/SPITZER_I4_mosaic.fits", linestyle='--', norm=90, offset=fx, alpha=0.4, linewidth=1),
+        crosscut.DataLayer("F657N", "hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits", alpha=0.3, linestyle='--', norm=90, offset=fx, linewidth=1),
+        crosscut.DataLayer("HCO+", cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='-', linewidth=1.2, norm=120),
+        crosscut.DataLayer("HCN", cube_utils.CubeData("carma/M16.ALL.hcn.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='-', linewidth=1.2, norm=120),
+    ]
+    cco.add_data_layer(*layers)
+    cco.update_plot(norm=True)
+    cco.switch_axes('xcut')
+    plt.ylabel("Normalized intensity")
+    plt.title(f"Cross cut $-$ {path_name[0]}")
+    cco.plot_image("F657N", stretch='linear', line_color=colors[0], subplot_number=121, vlims=(0.1, 0.7), cmap='Greys_r', cutout=False)
+    # cco.plot_image("8 $\mu$m", stretch='arcsinh', line_color=colors[0], subplot_number=121, vlims=(80, 400), cmap='Greys', cutout=False)
+    for i, p in enumerate(path_list):
+        cco2 = crosscut.CrossCut(p, vlims=vlims, log=False)
+        cco2.setup_figure(fig=fig, xcut_axis=plt.subplot2grid(grid_shape, (i, 1)))
+        cco2.add_data_layer(*layers)
+        cco2.update_plot(norm=False, legend=True)
+        cco2.switch_axes('xcut')
+        plt.title(f"Cross cut $-$ {path_name[i]}")
+        cco2.plot_image(cco, line_color=colors[i])
+    cco2.switch_axes('xcut')
+    plt.xlabel("Distance along cross-cut (arcseconds)")
+    cco.switch_axes('img')
+    plt.xlabel(" ")
+    plt.ylabel(" ")
+    for axis_name in ('x', 'y'):
+        plt.gca().tick_params(axis=axis_name, labelbottom=False, labelleft=False)
+    plt.legend(handles=[mpatches.Patch(color=colors[i], label=path_name[i]) for i in range(len(path_name))])
+    plt.tight_layout()
+    plt.savefig("/home/rkarim/Pictures/2021-10-22-work/crosscut.png")
+    # plt.show()
+
+
 if __name__ == "__main__":
-    cut_across_m16_pillars_again()
+    cut_thru_pillar1_head_pdr()

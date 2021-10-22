@@ -625,6 +625,7 @@ def argmax(arr):
 
 def find_peak(img, guess_center=None, guess_radius=None):
     """
+    Find the array index of the peak value in a (2D) array
     :param img: 2D array from which to find peak location
         Not written for or tested with 3+ D array
     :param guess_center: int (i, j) tuple center for search box
@@ -654,6 +655,17 @@ def find_peak(img, guess_center=None, guess_radius=None):
         raise ValueError(f"Peak value is not unique; this should be a very rare occurance! There are {len(img_peak_loc[0])} pixels with the maximum value within the search box.") from e
 
 
+def translate_array_index(idx, source_wcs, target_wcs):
+    """
+    Translate an array index from one image to another using both of their WCS
+    Basically, do source_array_index -> world -> target_array_index
+    :param idx: int (i, j) tuple array index from the source image
+    :param source_wcs: WCS object for the image to which idx refers
+    :param target_wcs: WCS object for the image to which we desire the translated index
+    """
+    return target_wcs.world_to_array_index(source_wcs.array_index_to_world(*idx))
+
+
 def emission_peak_spectra(check_peak=True):
     """
     Created: October 5, 2021 (moms bday is tomorrow)
@@ -679,6 +691,9 @@ def emission_peak_spectra(check_peak=True):
 
         ax_cii = plt.subplot(121, projection=mom0s[1].wcs)
         ax_co10 = plt.subplot(122, projection=mom0s[0].wcs)
+        other_peak = []
+
+        point_regions_to_save = []
    
         for j, img, mom0, ax in zip(range(2), full_power_val_list, mom0s, [ax_co10, ax_cii]):
             # plot the moment 0 img
@@ -693,29 +708,19 @@ def emission_peak_spectra(check_peak=True):
                 coord.set_ticklabel_visible(False)
                 coord.set_axislabel('')
             # find the actual peaks
-            """
-            ## ORIGINAL PROCESS
-            guess_region = reg_list[j]
-            guess_region.radius = 20*u.arcsec
-            guess_region = guess_region.to_pixel(mom0.wcs)
-            guess_peak = guess_region.center
-            guess_peak = (int(round(guess_peak.y)), int(round(guess_peak.x)))
-            box_width = int(round(guess_region.radius)) # half width actually
-            guess_box = [[guess_peak[1] - box_width, guess_peak[1] + box_width], [guess_peak[0] - box_width, guess_peak[0] + box_width]]
-            ax.plot([guess_box[0][0], guess_box[0][1], guess_box[0][1], guess_box[0][0], guess_box[0][0]],
-                [guess_box[1][0], guess_box[1][0], guess_box[1][1], guess_box[1][1], guess_box[1][0]], color='k')
-            peak_pixel = argmax(img[guess_box[1][0]:guess_box[1][1], guess_box[0][0]:guess_box[0][1]])
-            peak_pixel = [peak_pixel[0]+guess_box[1][0], peak_pixel[1]+guess_box[0][0]]
-            """
             guess_center, guess_radius = center_and_radius_from_reg(reg_list[j], mom0.wcs, override_radius=20*u.arcsec)
-            peak_pixel = find_peak(img, guess_center, guess_radius)
+            peak_pixel = find_peak(img, guess_center, guess_radius) # returned in (i, j) order
             ax.plot(peak_pixel[1], peak_pixel[0], 'x', color=marcs_colors[2])
-
-
-        cii_max_loc = argmax(full_power_val_list[1])
-        co10_max_loc= argmax(full_power_val_list[0])
-        print(cii_max_loc, co10_max_loc) # I LEFT OFF HERE
-        plt.savefig("/home/rkarim/Pictures/2021-10-18-work/emissionpeaks_DEBUG.png")
+            other_peak.append(translate_array_index(peak_pixel, mom0.wcs, mom0s[1-j].wcs))
+            peak_skycoord = mom0.wcs.array_index_to_world(*peak_pixel)
+            point_regions_to_save.append(regions.PointSkyRegion(center=peak_skycoord))
+        for j, ax in enumerate([ax_co10, ax_cii]):
+            ax.plot(other_peak[1-j][1], other_peak[1-j][0], '+', color=marcs_colors[3])
+        ax_cii.plot([0], [0], 'x', color='r')
+        ax_co10.plot([1], [1], 'x', color='r')
+        plt.show()
+        # plt.savefig("/home/rkarim/Pictures/2021-10-19-work/emissionpeaks_DEBUG.png")
+        regions.Regions(point_regions_to_save).write(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.reg").replace('.reg', '.moreprecise.reg'))
         return
 
     # this only runs if check_peak is False (I just don't want the entire function indented that far)
@@ -723,60 +728,114 @@ def emission_peak_spectra(check_peak=True):
     co10_cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_14x14.fits", length_scale_mult=4)
     cii_cube = cps2.cutout_subcube(length_scale_mult=4)
     cube_list = [co10_cube, cii_cube]
+    full_power_val_list = [cube.max(axis=0) for cube in cube_list]
     names = ["$^{12}$CO (1$-$0)", "[CII]"]
     # setup figure
-    fig = plt.figure(figsize=(12, 8))
-    ax_spec = plt.subplot2grid((2, 2), (1, 0), colspan=2)
-    ax_spec.set_title("Spectra within selected regions")
-    ax_spec.set_xlabel("Velocity (km/s)"); ax_spec.set_ylabel("Intensity (K)")
+    fig = plt.figure(figsize=(16, 10))
+    ax_spec_co10 = plt.subplot2grid((2, 3), (1, 1), colspan=2)
+    ax_spec_co10.set_title(f"Spectra at {names[0]} peak location (further South)")
+    ax_spec_cii = plt.subplot2grid((2, 3), (0, 1), colspan=2)
+    ax_spec_cii.set_title(f"Spectra at {names[1]} peak location (further North)")
+    axes = [ax_spec_co10, ax_spec_cii]
     # ok now grab the spectra and plot them
-    spectra = []
+    # this now involves locating the peak temperature using the original region as a guess location
+    # Iterate first to find both peaks and translate to both pixel grids
+    peak_list = []
+    other_peak_list = []
     for i, reg in enumerate(reg_list):
-        spectrum = cube_list[i].subcube_from_regions([reg]).mean(axis=(1, 2))
-        spectra.append(spectrum)
-        ax_spec.plot(cube_list[i].spectral_axis.to(kms).to_value(), spectrum / np.max(spectrum), color=marcs_colors[i], label=names[i])
+        # Find the location of the peak value for this cube
+        peak_pixel = find_peak(full_power_val_list[i].to_value(), *center_and_radius_from_reg(reg, full_power_val_list[i].wcs, override_radius=20*u.arcsec))
+        peak_list.append(peak_pixel)
+        # Translate this to the other cube's WCS (so this is this cube's peak on the other cube's grid)
+        other_peak_pixel = translate_array_index(peak_pixel, full_power_val_list[i].wcs, full_power_val_list[1-i].wcs)
+        other_peak_list.append(other_peak_pixel)
+    # Iterate again now that we have all the indices we need
+    peak_spectra = []
+    other_peak_spectra = []
+    spectral_axes_values = []
+    for i in range(len(reg_list)):
+        # Get the spectrum of this cube at this cube's peak
+        peak_pixel = peak_list[i]
+        peak_spectrum = cube_list[i][:, peak_pixel[0], peak_pixel[1]]
+        peak_spectra.append(peak_spectrum)
+        # Get the spectrum of this cube at the OTHER cube's peak location
+        # Other list is reversed
+        other_peak_pixel = other_peak_list[1-i]
+        other_peak_spectrum = cube_list[i][:, other_peak_pixel[0], other_peak_pixel[1]]
+        other_peak_spectra.append(other_peak_spectrum)
 
-        spec2 = cube_list[i].subcube_from_regions([reg_list[1-i]]).mean(axis=(1, 2))
-        ax_spec.plot(cube_list[i].spectral_axis.to(kms).to_value(), spec2 / np.max(spec2), color=marcs_colors[1-i], label=names[i]+" ALT", linestyle=':')
-    ax_spec.set_xlim([15, 35])
+
+        spectral_axis = cube_list[i].spectral_axis.to(kms).to_value()
+        spectral_axes_values.append(spectral_axis)
+        # if it's CII (i==1) use ":" linestyle because we still need to do background subtraction
+        # also add a label to the unsubtracted CII
+        no_bgsub_txt = (" (unsubtracted)" if i else "")
+        # Plot this cube's peak spectrum on this Axes
+        axes[i].plot(spectral_axis, peak_spectrum / np.max(peak_spectrum), color=marcs_colors[i], label=names[i]+no_bgsub_txt, linestyle=(':' if i else '-'))
+        # Plot this cube's spectrum at the other cube's peak location ON THE OTHER AXES
+        axes[1-i].plot(spectral_axis, other_peak_spectrum / np.max(other_peak_spectrum), color=marcs_colors[i], label=names[i]+no_bgsub_txt, linestyle=(':' if i else '-'))
+        # Some axes stuff
+        axes[i].set_xlim([10, 40])
+        for v in [23, 24, 25, 26]:
+            axes[i].axvline(v, color='grey', alpha=0.15)
+        for v in [23.5, 24.5, 25.5]:
+            axes[i].axvline(v, color='grey', alpha=0.15, linestyle='--')
+        # Only do X label for CO10. If CII, that's the top plot so don't label the X axis
+        if i == 0:
+            axes[i].set_xlabel("Velocity (km/s)")
+        axes[i].set_ylabel("Intensity (normalized)")
+
     # Plot the moment0s for reference; use 23-28 km/s
     vel_limits = (23*kms, 28*kms)
     # make moment0s
     co10_mom0 = co10_cube.spectral_slab(*vel_limits).moment0().to(u.K*kms)
     cii_mom0 = cii_cube.spectral_slab(*vel_limits).moment0().to(u.K*kms)
     # make axes
-    ax_cii = plt.subplot2grid((2, 2), (0, 0), projection=cii_mom0.wcs)
-    ax_co10 = plt.subplot2grid((2, 2), (0, 1), projection=co10_mom0.wcs)
+    ax_cii = plt.subplot2grid((2, 3), (0, 0), projection=cii_mom0.wcs)
+    ax_co10 = plt.subplot2grid((2, 3), (1, 0), projection=co10_mom0.wcs)
     # title axes
     ax_cii.set_title(names[1] + " " + make_vel_stub(vel_limits))
     ax_co10.set_title(names[0] + " " + make_vel_stub(vel_limits))
-    for mom0, ax in zip([cii_mom0, co10_mom0], [ax_cii, ax_co10]):
+    img_axes = [ax_co10, ax_cii]
+    markers = ['o', 'x']
+    for i_reversed, mom0, ax in zip(range(2), [cii_mom0, co10_mom0], img_axes[::-1]):
+        i = 1 - i_reversed
         # plot the moment 0 img
         ax.imshow(mom0.to_value(), origin='lower', cmap='Greys_r')
-        # overlay BOTH emission peak regions
-        for i, reg in enumerate(reg_list):
-            pixreg = reg.to_pixel(mom0.wcs)
-            pixreg.plot(ax=ax, color=marcs_colors[i])
+        # plot this cube's peak location
+        peak_pixel = peak_list[i]
+        ax.plot(peak_pixel[1], peak_pixel[0], markers[i], color='r', label=names[i]+' peak location (this row)')
+        # plot this cube's peak location on the OTHER AXES (this is better for consistent legend order)
+        other_peak_pixel = other_peak_list[i]
+        img_axes[1-i].plot(other_peak_pixel[1], other_peak_pixel[0], markers[i], color='r', label=names[i]+' peak location')
         # hide the coordinates
         for coord in ax.coords:
             coord.set_ticks_visible(False)
             coord.set_ticklabel_visible(False)
             coord.set_axislabel('')
 
-
     bg_reg_all = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg"))
     selected_bg = bg_reg_all[0]
     cii_bg_spectrum = cii_cube.subcube_from_regions([selected_bg]).mean(axis=(1, 2))
-    cii_spectrum_bgsub = spectra[1] - cii_bg_spectrum
-    ax_spec.plot(cii_cube.spectral_axis.to(kms).to_value(), cii_spectrum_bgsub/np.max(cii_spectrum_bgsub), color=marcs_colors[1], linestyle='--', label='[CII] BGSUB')
+    cii_peak_spectrum_bgsub = peak_spectra[1] - cii_bg_spectrum
+    cii_other_peak_spectrum_bgsub = other_peak_spectra[1] - cii_bg_spectrum
+
+    ax_spec_cii.plot(spectral_axes_values[1], cii_peak_spectrum_bgsub/np.max(cii_peak_spectrum_bgsub), color=marcs_colors[1], linestyle='-', label=names[1]+' with subtraction')
+    ax_spec_co10.plot(spectral_axes_values[1], cii_other_peak_spectrum_bgsub/np.max(cii_other_peak_spectrum_bgsub), color=marcs_colors[1], linestyle='-', label=names[1]+' with subtraction')
+    ax_spec_cii.plot(spectral_axes_values[1], 0.2*cii_bg_spectrum/np.max(cii_bg_spectrum), color='grey', alpha=0.7, linestyle=':', label=names[1]+' Background')
 
     pixreg = selected_bg.to_pixel(cii_mom0.wcs)
     pixreg.plot(ax=ax_cii, color='w', linestyle='--')
     pix_center = pixreg.center.xy
     ax_cii.text(*pix_center, "Background", color='w', fontsize=8, ha='center', va='center')
-
-    ax_spec.legend()
-    fig.savefig("/home/rkarim/Pictures/2021-10-05-work/emissionpeaks.png")
+    # Final touches on the img axes
+    for ax in img_axes:
+        ax.legend(loc='lower center')
+    # Final touches on the spectrum axes
+    for ax in axes:
+        ax.legend()
+    plt.subplots_adjust(left=0.05, right=0.95, bottom=0.06, top=0.96)
+    fig.savefig("/home/rkarim/Pictures/2021-10-19-work/emissionpeaks.png")
 
 
 

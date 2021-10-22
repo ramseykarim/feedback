@@ -439,7 +439,7 @@ class CrossCut:
             if (not self.log) and (norm if layer.norm is None else layer.norm):
                 cut_array = normalize_crosscut(cut_array) * layer.norm_coeff
             plt.plot(angle_array, cut_array, label=layer.label(self),
-                marker=None, alpha=layer.alpha, lw=layer.linewidth, color=layer.color, linestyle=layer.linestyle)
+                marker='o', markersize=2, alpha=layer.alpha, lw=layer.linewidth, color=layer.color, linestyle=layer.linestyle)
             # Record that we already did this
             self.already_plotted.add(layer.name)
         if legend:
@@ -761,10 +761,12 @@ def setup_paths(n, select=0):
         0: across_each_pillar
         1: p3_shelves
         2: across all pillars (Jan 29 2021 image)
+        3: pillar1_head_pdr, down into the pillar 1 head (Oct 22 2021)
     select: depends on the region, means different things
         n=0: the pillar number (0-indexed)
         n=1: ??
         n=2: which across-all path (0 and 2 are good candidates)
+        n=3: no effect
     """
     if n == 0:
         # Colors
@@ -822,6 +824,16 @@ def setup_paths(n, select=0):
         path_name = [region_name]
         vlims = (20, 28)
         grid_shape = (1, 2) # subplot2grid
+    elif n == 3:
+        # Colors
+        colors = ['k', 'r', 'b', 'cyan']
+        # Load coord pairs
+        reg_filename = catalog.utils.search_for_file("catalogs/pillar1_head_pdr.reg")
+        path_list = coords_from_region(reg_filename, index=None)
+        region_name = "Pillar 1 head PDR"
+        path_name = [str(x) for x in range(1, len(path_list)+1)]
+        vlims = (20, 28)
+        grid_shape = (len(path_list), 2)
     else:
         raise NotImplementedError("I haven't set that reg file up yet")
     return colors, path_list, path_name, vlims, grid_shape, region_name
