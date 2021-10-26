@@ -226,7 +226,7 @@ class DataLayer:
     """
 
     def __init__(self, name, filepath, cube=False, extension=0, f_to_apply=None,
-        alpha=0.9, offset=False, vlims=None, color=None, linestyle='-', norm=None, linewidth=0.7):
+        alpha=0.9, offset=False, vlims=None, color=None, linestyle='-', norm=None, linewidth=0.7, markerstyle='o', markersize=2):
         self.name = name
         if isinstance(filepath, str):
             # Direct load from filepath method
@@ -246,10 +246,14 @@ class DataLayer:
         self.color = color # For plotting
         self.linestyle = linestyle
         self.linewidth = linewidth
+        self.markerstyle = markerstyle
+        self.markersize = markersize
         self.norm_coeff = 1
         if misc_utils.is_number(norm):
-            self.norm = True
-            self.norm_coeff = norm
+            # If norm is a negative number, use the coefficient but don't run the normalize function
+            self.norm = (norm > 0)
+            # Assume the coefficient should always be applied as a positive number. Negative is just a signal
+            self.norm_coeff = (norm if norm > 0 else -norm)
         else:
             self.norm = norm
         if offset:
@@ -437,9 +441,12 @@ class CrossCut:
             # Normalize/offset the array
             cut_array = layer.offset(cut_array)
             if (not self.log) and (norm if layer.norm is None else layer.norm):
-                cut_array = normalize_crosscut(cut_array) * layer.norm_coeff
+                # Run the normalize function
+                cut_array = normalize_crosscut(cut_array)
+            # Apply the coeff (sometimes we want coeff without norm function)
+            cut_array *= layer.norm_coeff # default is 1, so unchanged
             plt.plot(angle_array, cut_array, label=layer.label(self),
-                marker='o', markersize=2, alpha=layer.alpha, lw=layer.linewidth, color=layer.color, linestyle=layer.linestyle)
+                marker=layer.markerstyle, markersize=layer.markersize, alpha=layer.alpha, lw=layer.linewidth, color=layer.color, linestyle=layer.linestyle)
             # Record that we already did this
             self.already_plotted.add(layer.name)
         if legend:

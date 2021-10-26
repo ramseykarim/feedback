@@ -465,11 +465,45 @@ def fit_co10_components_with_gaussians():
     """
     cube_co = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits").convert_to_K().data.with_spectral_unit(kms)
     # try with HCO+ too after we debug
-    good_pixel = (446, 304)
-    di, dj = 20, 30
+    # good_pixel = (446, 304)
+    # di, dj = 20, 30
+
+    # good_pixel = (466, 275) # good for bluest component
+    # di, dj = 2, 3
+    g1 = cps2.models.Gaussian1D(amplitude=50, mean=23.8, stddev=1.06,
+        bounds={'amplitude': (0, 200)})
+    g1.mean.fixed = g1.stddev.fixed = True
+
+
+    # good_pixel = (405, 287) # blue (W) thread
+    # di, dj = 2, 3
+    g2 = cps2.models.Gaussian1D(amplitude=50, mean=25.1, stddev=0.95,
+        bounds={'amplitude': (0, 200)})
+    g2.mean.fixed = g2.stddev.fixed = True
+
+    # good_pixel = (408, 243) # red main part
+    # di, dj = 5, 5
+    g3 = cps2.models.Gaussian1D(amplitude=50, mean=25.8, stddev=0.83,
+        bounds={'amplitude': (0, 200)})
+    g3.mean.fixed = g3.stddev.fixed = True
+
+    g_all = g1 + g2 + g3
+
+
+    # test regions
+    # good_pixel = (443, 270)
+    # good_pixel = (440, 288)
+    # good_pixel = (440, 305)
+    # good_pixel = (430, 315)
+    # good_pixel = (425, 340)
+    good_pixel = (393, 275)
+    # good_pixel = (417, 241)
+    di, dj = 5, 5
+
+
     i_lo, i_hi = (good_pixel[0] + sign*di for sign in (-1, 1))
     j_lo, j_hi = (good_pixel[1] + sign*dj for sign in (-1, 1))
-    vel_lims = (23, 24)
+    vel_lims = (24.5, 25.5)
     # vel_lims = (23, 24)
     mom0 = cube_co.spectral_slab(*(v*kms for v in vel_lims)).moment0()
     ax_img = plt.subplot(121)
@@ -481,6 +515,15 @@ def fit_co10_components_with_gaussians():
     [ax_spec.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
     ax_img.plot([j_lo, j_hi, j_hi, j_lo, j_lo], [i_lo, i_lo, i_hi, i_hi, i_lo], color='k')
     # TODO: plot the spectrum and use modeling to fit gaussian
+    fitter = cps2.fitting.SLSQPLSQFitter()
+    mask = spectrum.to_value() > 45
+    x_axis = cube_co.spectral_axis.to_value()
+    g_fit = fitter(g_all, x_axis[mask], spectrum.to_value()[mask],
+        verblevel=1)
+    fitted_spectrum = g_fit(x_axis)
+    ax_spec.plot(cube_co.spectral_axis, fitted_spectrum, color='r', linestyle='--')
+    print(g_fit)
+    ax_spec.plot(cube_co.spectral_axis, spectrum.to_value()-fitted_spectrum, color='k', alpha=0.6, linestyle=':')
     plt.show()
     return
 

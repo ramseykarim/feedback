@@ -137,17 +137,32 @@ def cut_thru_pillar1_head_pdr():
     I should also compare to the Young Owl et al 2000 cross cuts
     """
     colors, path_list, path_name, vlims, grid_shape, region_name = crosscut.setup_paths(3)
+    cmap = mpl_cm.get_cmap('cool')
+    sequential_colors = [mpl_colors.to_hex(cmap(x)) for x in (0, 0.33, 0.66, 0.99)]
     fig = plt.figure(figsize=(17, 12))
     cco = crosscut.CrossCut(path_list[0], vlims=vlims, log=False)
     cco.setup_figure(fig=fig, xcut_axis=plt.subplot2grid(grid_shape, (0, 1)))
     fx = lambda x: x - x[0]
     layers = [
-        crosscut.DataLayer("[CII]", cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").convert_to_K(), cube=True, alpha=0.9, color='r', linestyle='-.', linewidth=1.2),
-        crosscut.DataLayer("$^{12}$CO (1$-$0)", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7, color='b', linewidth=1.2, norm=100),
+        crosscut.DataLayer("[CII] 0", cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").convert_to_K(), cube=True, alpha=0.9, color=sequential_colors[0], linestyle=':', linewidth=1.2, vlims=(22,23), norm=-2),
+        crosscut.DataLayer("[CII] 1", cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").convert_to_K(), cube=True, alpha=0.9, color=sequential_colors[1], linestyle=':', linewidth=1.2, vlims=(23,24), norm=-2),
+        crosscut.DataLayer("[CII] 2", cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").convert_to_K(), cube=True, alpha=0.9, color=sequential_colors[2], linestyle=':', linewidth=1.2, vlims=(24,25), norm=-2),
+        crosscut.DataLayer("[CII] 3", cube_utils.CubeData("sofia/M16_CII_U_APEXbeam.fits").convert_to_K(), cube=True, alpha=0.9, color=sequential_colors[3], linestyle=':', linewidth=1.2, vlims=(25,26), norm=-2),
+
+        crosscut.DataLayer("$^{12}$CO (1$-$0) 0", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7, color=sequential_colors[0], linewidth=1.2, vlims=(22,23), norm=-1),
+        crosscut.DataLayer("$^{12}$CO (1$-$0) 1", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7, color=sequential_colors[1], linewidth=1.2, vlims=(23,24), norm=-1),
+        crosscut.DataLayer("$^{12}$CO (1$-$0) 2", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7, color=sequential_colors[2], linewidth=1.2, vlims=(24,25), norm=-1),
+        crosscut.DataLayer("$^{12}$CO (1$-$0) 3", cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits"), cube=True, alpha=0.7, color=sequential_colors[3], linewidth=1.2, vlims=(25,26), norm=-1),
+
         crosscut.DataLayer("8 $\mu$m", "spitzer/SPITZER_I4_mosaic.fits", linestyle='--', norm=90, offset=fx, alpha=0.4, linewidth=1),
         crosscut.DataLayer("F657N", "hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits", alpha=0.3, linestyle='--', norm=90, offset=fx, linewidth=1),
-        crosscut.DataLayer("HCO+", cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='-', linewidth=1.2, norm=120),
-        crosscut.DataLayer("HCN", cube_utils.CubeData("carma/M16.ALL.hcn.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='-', linewidth=1.2, norm=120),
+
+        crosscut.DataLayer("HCO+ 0", cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='--', markerstyle='|', markersize=4, linewidth=1.2, vlims=(22,23), norm=-10, color=sequential_colors[0]),
+        crosscut.DataLayer("HCO+ 1", cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='--', markerstyle='|', markersize=4, linewidth=1.2, vlims=(23,24), norm=-10, color=sequential_colors[1]),
+        crosscut.DataLayer("HCO+ 2", cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='--', markerstyle='|', markersize=4, linewidth=1.2, vlims=(24,25), norm=-10, color=sequential_colors[2]),
+        crosscut.DataLayer("HCO+ 3", cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='--', markerstyle='|', markersize=4, linewidth=1.2, vlims=(25,26), norm=-10, color=sequential_colors[3]),
+
+        # crosscut.DataLayer("HCN", cube_utils.CubeData("carma/M16.ALL.hcn.sdi.cm.subpv.fits").convert_to_K(), cube=True, alpha=0.9, linestyle='-', linewidth=1.2, norm=120),
     ]
     cco.add_data_layer(*layers)
     cco.update_plot(norm=True)
@@ -160,8 +175,9 @@ def cut_thru_pillar1_head_pdr():
         cco2 = crosscut.CrossCut(p, vlims=vlims, log=False)
         cco2.setup_figure(fig=fig, xcut_axis=plt.subplot2grid(grid_shape, (i, 1)))
         cco2.add_data_layer(*layers)
-        cco2.update_plot(norm=False, legend=True)
+        cco2.update_plot(norm=False, legend=i==0)
         cco2.switch_axes('xcut')
+        plt.ylim([0, 150])
         plt.title(f"Cross cut $-$ {path_name[i]}")
         cco2.plot_image(cco, line_color=colors[i])
     cco2.switch_axes('xcut')
@@ -173,7 +189,7 @@ def cut_thru_pillar1_head_pdr():
         plt.gca().tick_params(axis=axis_name, labelbottom=False, labelleft=False)
     plt.legend(handles=[mpatches.Patch(color=colors[i], label=path_name[i]) for i in range(len(path_name))])
     plt.tight_layout()
-    plt.savefig("/home/rkarim/Pictures/2021-10-22-work/crosscut.png")
+    plt.savefig("/home/rkarim/Pictures/2021-10-25-work/crosscut_1.png")
     # plt.show()
 
 
