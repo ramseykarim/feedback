@@ -455,7 +455,7 @@ def prepare_pdrt_tables_2():
     print("done")
 
 
-def fit_co10_components_with_gaussians():
+def fit_molecular_components_with_gaussians():
     """
     Created October 22, 2021
     Try my hand at fitting with Gaussians again
@@ -463,11 +463,14 @@ def fit_co10_components_with_gaussians():
     Try to find distinct components and see if they can be responsible for the CII profile without
     major velocity shifts
     """
-    cube_co = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits").convert_to_K().data.with_spectral_unit(kms)
-    # try with HCO+ too after we debug
+    # cube_co = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits").convert_to_K().data.with_spectral_unit(kms)
+    cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K().data.with_spectral_unit(kms)
+    # try with HCO+ smoothed first, then see if it holds up for unsmoothed
     # good_pixel = (446, 304)
     # di, dj = 20, 30
 
+    """
+    ### This was my work for 12CO(1-0). These worked alright but not great for every area
     # good_pixel = (466, 275) # good for bluest component
     # di, dj = 2, 3
     g1 = cps2.models.Gaussian1D(amplitude=50, mean=23.8, stddev=1.06,
@@ -489,44 +492,336 @@ def fit_co10_components_with_gaussians():
 
     g_all = g1 + g2 + g3
 
-
     # test regions
     # good_pixel = (443, 270)
     # good_pixel = (440, 288)
     # good_pixel = (440, 305)
     # good_pixel = (430, 315)
     # good_pixel = (425, 340)
-    good_pixel = (393, 275)
+    # good_pixel = (393, 275)
     # good_pixel = (417, 241)
-    di, dj = 5, 5
+    # di, dj = 5, 5
+    """
 
+
+    # This is the Western horn component
+    # good_pixel = (447, 375)
+    # di, dj = 2, 2
+    # g = cps2.models.Gaussian1D(amplitude=10.291692169984568, mean=24.440935924615744, stddev=0.4614265241399322,
+    #     bounds={"amplitude": (0, 100), "mean": (23, 27), "stddev": (0.1, 2)})
+
+    # This is the bluest N-E corner component
+    # good_pixel = (602, 415)
+    # di, dj = 1, 1
+    # g = cps2.models.Gaussian1D(amplitude=5.2758702607467525, mean=23.46286597585026, stddev=0.46, # fitted stddev = 0.4526447822523458
+    #     bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
+    # g.stddev.fixed = True
+    # Now even further out in the blue component
+    # good_pixel = (610, 420)
+    # di, dj = 1, 1
+    # g = cps2.models.Gaussian1D(amplitude=2.68, mean=23.516, stddev=0.46, # fitted stddev = 0.45380048744753915
+    #     bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
+    # g.stddev.fixed = True
+
+    # Western thread, from a pixel a little above it that shows a clean spectrum
+    # good_pixel = (544, 448)
+    # di, dj = 1, 1
+    # g = cps2.models.Gaussian1D(amplitude=5.305657851279191, mean=24.917103298134492, stddev=0.46, # fitted stddev = 0.44549289151047716
+    #     bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
+    # g.stddev.fixed = True
+
+    # Check out HCO+ peak spectrum to see how its width stacks up with 0.46
+    good_pixel = (570, 451)
+    di, dj = 1, 1
+    g = cps2.models.Gaussian1D(amplitude=20, mean=25, stddev=0.46, # fitted stddev = 0.44549289151047716
+        bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
+    # g.stddev.fixed = True
+
+    img_idx = 4
+
+    # Identify noise level
+    noise_pixel = (644, 318)
+    # noise_pixel = (284, 573) # all these are consistent, noise for 2x2 pixels is ~0.5 K
+    # noise_pixel = (200, 510)
+    # good_pixel = noise_pixel
+    # di, dj = 1, 1
+
+
+    vel_lims = (23, 26)
 
     i_lo, i_hi = (good_pixel[0] + sign*di for sign in (-1, 1))
     j_lo, j_hi = (good_pixel[1] + sign*dj for sign in (-1, 1))
-    vel_lims = (24.5, 25.5)
+
+    noise_i = slice(*(noise_pixel[0] + sign*di for sign in (-1, 1)))
+    noise_j = slice(*(noise_pixel[1] + sign*dj for sign in (-1, 1)))
+    print(noise_i, noise_j)
+
     # vel_lims = (23, 24)
-    mom0 = cube_co.spectral_slab(*(v*kms for v in vel_lims)).moment0()
+    mom0 = cube.spectral_slab(*(v*kms for v in vel_lims)).moment0()
+    fig = plt.figure(figsize=(15, 7))
+
+
     ax_img = plt.subplot(121)
-    ax_img.imshow(mom0.to_value(), origin='lower')
-    spectrum = cube_co[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
+    show_box_i_lo, show_box_i_hi = 370, 665 # 0, mom0.shape[0]
+    show_box_j_lo, show_box_j_hi = 277, 592 # 0, mom0.shape[1]
+    show_box = (slice(show_box_i_lo, show_box_i_hi), slice(show_box_j_lo, show_box_j_hi))
+    ax_img.imshow(mom0.to_value()[show_box], origin='lower')
+
+    x_axis = cube.spectral_axis.to_value()
+    spectrum = cube[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
     ax_spec = plt.subplot(122)
-    ax_spec.plot(cube_co.spectral_axis, spectrum, color='k')
+    ax_spec.plot(x_axis, spectrum, color='k')
+    noise = np.std(cube[:, noise_i, noise_j].mean(axis=(1, 2)).to_value())
+    ax_spec.set_ylabel(f"Noise: {noise:.3f}")
     # mark some things on each plot
     [ax_spec.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
-    ax_img.plot([j_lo, j_hi, j_hi, j_lo, j_lo], [i_lo, i_lo, i_hi, i_hi, i_lo], color='k')
+    [ax_spec.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
+    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - show_box_j_lo
+    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - show_box_i_lo
+    ax_img.plot(box_x, box_y, color='grey')
+    ax_img.plot([noise_pixel[1] - show_box_j_lo], [noise_pixel[0] - show_box_i_lo], 'x', color='grey')
     # TODO: plot the spectrum and use modeling to fit gaussian
+    mask = spectrum.to_value() > -100
+
     fitter = cps2.fitting.SLSQPLSQFitter()
-    mask = spectrum.to_value() > 45
-    x_axis = cube_co.spectral_axis.to_value()
-    g_fit = fitter(g_all, x_axis[mask], spectrum.to_value()[mask],
+    g_fit = fitter(g, x_axis[mask], spectrum.to_value()[mask],
         verblevel=1)
     fitted_spectrum = g_fit(x_axis)
-    ax_spec.plot(cube_co.spectral_axis, fitted_spectrum, color='r', linestyle='--')
+    ax_spec.plot(cube.spectral_axis, fitted_spectrum, color='r', linestyle='--')
+    ax_spec.axvline(g_fit.mean, color='r', linestyle='--', alpha=0.3)
     print(g_fit)
-    ax_spec.plot(cube_co.spectral_axis, spectrum.to_value()-fitted_spectrum, color='k', alpha=0.6, linestyle=':')
-    plt.show()
+    ax_spec.plot(cube.spectral_axis, spectrum.to_value()-fitted_spectrum, color='k', alpha=0.6, linestyle=':')
+
+    text_x, text_y, dy = 0.05, 0.95, 0.05
+    ax_spec.text(text_x, text_y, f"A = {g_fit.amplitude.value:5.2f}", transform=ax_spec.transAxes)
+    ax_spec.text(text_x, text_y - dy, f"$\mu$ = {g_fit.mean.value:5.2f}", transform=ax_spec.transAxes)
+    ax_spec.text(text_x, text_y - dy*2, f"$\sigma$ = {g_fit.stddev.value:5.2f}", transform=ax_spec.transAxes)
+    ax_spec.set_title("HCO+ spectrum from within box (see left), with fit")
+    ax_img.set_title(f"HCO+ moment 0 between {vel_lims[0]}, {vel_lims[1]} km/s")
+    plt.savefig(f'/home/rkarim/Pictures/2021-10-26-work/fit_molecular_components_{img_idx}.png')
+    # plt.show()
     return
+
+def test_fitting_2_gaussians_with_1(j, x, label):
+    """
+    Created October 26, 2021
+    I want to see the pattern in the residuals made by fitting 2 gaussians with 1
+    """
+    # Set up the model
+    A, mean, stddev = 10, 25, 1
+    dv = 1
+    c_A = 1
+    c_std = x
+    g1 = cps2.models.Gaussian1D(amplitude=A*c_A, mean=mean - (dv/2), stddev=stddev)
+    g2 = cps2.models.Gaussian1D(amplitude=A, mean=mean + (dv/2), stddev=stddev*c_std)
+    g_all = g1 + g2
+    # Set up "observations"
+    x_axis = np.arange(18, 33, 0.25)
+    y_obs = g_all(x_axis)
+    high_res_x = np.linspace(18, 33, 100) # for plotting the model
+    # Set up a guess
+    g_guess = cps2.models.Gaussian1D(amplitude=A, mean=mean, stddev=stddev,
+        bounds={"amplitude": (0, 200), "mean": (20, 30), "stddev": (0.2, 5)})
+    fitter = cps2.fitting.SLSQPLSQFitter()
+    # Fit
+    g_fit = fitter(g_guess, x_axis, y_obs, verblevel=1)
+    print(g_fit)
+    plt.figure(figsize=(20, 10))
+    plt.subplot(121)
+    plt.title("2 Gaussians fit with 1 Gaussian")
+    plt.plot(high_res_x, g_all(high_res_x), color='r', label='underlying truth')
+    for i, g in enumerate(g_all):
+        plt.plot(high_res_x, g(high_res_x), color='r', linestyle='--', label=f'underlying component {i}')
+    for sign in (-1, 1):
+        plt.axvline(mean + sign*dv/2, color='r', linestyle='--', alpha=0.3)
+    plt.plot(x_axis, y_obs, '|', color='k', label='observations')
+    plt.plot(high_res_x, g_fit(high_res_x), color='b', linestyle=':', label='Single component fit')
+    plt.axvline(g_fit.mean, color='b', linestyle=':', alpha=0.3)
+    residuals = y_obs - g_fit(x_axis)
+    plt.plot(x_axis, residuals, color='grey', linestyle=':', label='Residuals')
+    plt.legend()
+
+    plt.subplot(122)
+    plt.title("Residuals")
+    plt.plot(x_axis, residuals, color='grey', linestyle=':', label='Residuals')
+    # Plot the models and fit normalized to the residuals
+    plt.plot(high_res_x, g_all(high_res_x)*np.max(residuals)/np.max(g_all(high_res_x)), color='r', alpha=0.5)
+    for sign in (-1, 1):
+        plt.axvline(mean + sign*dv/2, color='r', linestyle='--', alpha=0.3)
+    plt.plot(high_res_x, g_fit(high_res_x)*np.max(residuals)/np.max(g_fit(high_res_x)), color='b', linestyle=':', alpha=0.5)
+    plt.axvline(g_fit.mean, color='b', linestyle=':', alpha=0.3)
+
+    plt.legend()
+    # plt.xlabel(f"Component 0's A is {x} x Component 1's")
+    # plt.xlabel(f"Components shifted {x} km/s apart")
+    plt.xlabel(f"Component 1's $\sigma$ is {x} x Component 0's")
+    plt.savefig(f'/home/rkarim/Pictures/2021-10-26-work/doubleGaussian_{label}_{j:02}.png')
+    plt.clf()
+    # plt.show()
+
+
+def fit_molecular_and_cii_with_gaussians():
+    """
+    Created October 27 2021, 25 minutes before my meeting
+    Let's do this
+    Fit the HCO+ peak with 2 Gaussians, check it on the 13CO(1-0) peak (optional)
+    and then check it on the CII peak
+    """
+    cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K().data.with_spectral_unit(kms)
+    cube_cii = cps2.cutout_subcube(length_scale_mult=5)
+
+    # HCO+ peak
+    # good_pixel = (570, 451)
+    # di, dj = 1, 1
+
+    # more of HCO+ peak
+    good_pixel = (575, 447)
+    di, dj = 20, 25 #1
+    di, dj = 25, 30 #2
+    di, dj = 35, 40 #3
+
+    g1 = cps2.models.Gaussian1D(amplitude=20, mean=24, stddev=0.46, # fitted stddev = 0.44549289151047716
+        bounds={"amplitude": (0, 100), "mean": (21, 27), "stddev": (0.1, 2)})
+    g2 = cps2.models.Gaussian1D(amplitude=20, mean=26, stddev=0.46, # fitted stddev = 0.44549289151047716
+        bounds={"amplitude": (0, 100), "mean": (21, 27), "stddev": (0.1, 2)})
+
+    # g3 = cps2.models.Gaussian1D(amplitude=20, mean=25, stddev=0.46, # fitted stddev = 0.44549289151047716
+    #     bounds={"amplitude": (0, 100), "mean": (21, 27), "stddev": (0.1, 2)})
+
+    g_all = g1 + g2 #+ g3
+    g_all.stddev_1.tied = lambda m: m.stddev_0
+    # g_all.stddev_0.fixed = g_all.stddev_1.fixed = g_all.stddev_2.fixed = True
+    # g1.stddev.fixed = True
+        # Identify noise level
+    noise_pixel = (644, 318)
+    # noise_pixel = (284, 573) # all these are consistent, noise for 2x2 pixels is ~0.5 K
+    # noise_pixel = (200, 510)
+    # good_pixel = noise_pixel
+    # di, dj = 1, 1
+
+
+    vel_lims = (23, 26)
+
+    i_lo, i_hi = (good_pixel[0] + sign*di for sign in (-1, 1))
+    j_lo, j_hi = (good_pixel[1] + sign*dj for sign in (-1, 1))
+
+    noise_i = slice(*(noise_pixel[0] + sign*di for sign in (-1, 1)))
+    noise_j = slice(*(noise_pixel[1] + sign*dj for sign in (-1, 1)))
+
+    # vel_lims = (23, 24)
+    mom0 = cube.spectral_slab(*(v*kms for v in vel_lims)).moment0()
+    fig = plt.figure(figsize=(15, 7))
+
+
+    ax_img = plt.subplot(221)
+    show_box_i_lo, show_box_i_hi = 370, 665 # 0, mom0.shape[0]
+    show_box_j_lo, show_box_j_hi = 277, 592 # 0, mom0.shape[1]
+    show_box = (slice(show_box_i_lo, show_box_i_hi), slice(show_box_j_lo, show_box_j_hi))
+    ax_img.imshow(mom0.to_value()[show_box], origin='lower')
+
+    x_axis = cube.spectral_axis.to_value()
+    spectrum = cube[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
+    ax_spec = plt.subplot(222)
+    ax_spec.plot(x_axis, spectrum, color='k')
+    noise = np.std(cube[:, noise_i, noise_j].mean(axis=(1, 2)).to_value())
+    ax_spec.set_ylabel(f"Noise: {noise:.3f}")
+    # mark some things on each plot
+    [ax_spec.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
+    [ax_spec.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
+    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - show_box_j_lo
+    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - show_box_i_lo
+    ax_img.plot(box_x, box_y, color='grey')
+    ax_img.plot([noise_pixel[1] - show_box_j_lo], [noise_pixel[0] - show_box_i_lo], 'x', color='grey')
+    # TODO: plot the spectrum and use modeling to fit gaussian
+    mask = spectrum.to_value() > -100
+
+    fitter = cps2.fitting.SLSQPLSQFitter()
+
+    g_fit = fitter(g_all, x_axis[mask], spectrum.to_value()[mask],
+        verblevel=1)
+
+    fitted_spectrum = g_fit(x_axis)
+    ax_spec.plot(x_axis, fitted_spectrum, color='r', linestyle='--')
+    for g in g_fit:
+        ax_spec.axvline(g.mean, color='r', linestyle='--', alpha=0.3)
+        ax_spec.plot(x_axis, g(x_axis), color='r', linestyle=':', alpha=0.3)
+    print(g_fit)
+    ax_spec.plot(cube.spectral_axis, spectrum.to_value()-fitted_spectrum, color='k', alpha=0.6, linestyle=':')
+
+    text_x, text_y, dy = 0.05, 0.95, 0.05
+    for i, g in enumerate(g_fit):
+        ax_spec.text(text_x, text_y - 4*i*dy, f"$A_{i}$ = {g.amplitude.value:5.2f}", transform=ax_spec.transAxes)
+        ax_spec.text(text_x, text_y - dy - 4*i*dy, f"$\mu_{i}$ = {g.mean.value:5.2f}", transform=ax_spec.transAxes)
+        ax_spec.text(text_x, text_y - dy*2 - 4*i*dy, f"$\sigma_{i}$ = {g.stddev.value:5.2f}", transform=ax_spec.transAxes)
+    ax_spec.set_title("HCO+ spectrum from within box (see left), with fit")
+    ax_img.set_title(f"HCO+ moment 0 between {vel_lims[0]}, {vel_lims[1]} km/s")
+
+
+    ax_img_cii = plt.subplot(223)
+    ax_spec_cii = plt.subplot(224)
+
+    mom0_cii = cube_cii.spectral_slab(*(v*kms for v in vel_lims)).moment0()
+    ax_img_cii.imshow(mom0_cii.to_value(), origin='lower')
+    x_axis = cube_cii.spectral_axis.to_value()
+
+    good_pixel_cii = (37, 42)
+    di, dj = 2, 2
+
+    i_lo, i_hi = (good_pixel_cii[0] + sign*di for sign in (-1, 1))
+    j_lo, j_hi = (good_pixel_cii[1] + sign*dj for sign in (-1, 1))
+
+    spectrum = cube_cii[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
+    cii_bg_spectrum, artists = cps2.get_cii_background(cube_cii, return_artist=True, ec='w', linestyle='--', alpha=0.3, fill=False)
+
+    ax_spec_cii.plot(x_axis, spectrum, color='k', alpha=0.3)
+    ax_spec_cii.plot(x_axis, cii_bg_spectrum, color='k', linestyle='--', alpha=0.3)
+    spectrum = spectrum - cii_bg_spectrum
+    ax_spec_cii.plot(x_axis, spectrum, color='k')
+
+    cii_noise = np.std(spectrum[cube_cii.spectral_axis < 17*kms].to_value())
+    [ax_spec_cii.axhline(sign*cii_noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
+
+    [ax_spec_cii.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
+    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - 0
+    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - 0
+    ax_img_cii.plot(box_x, box_y, color='grey')
+
+    g_cii_guess = g_fit.copy()
+    g_cii_guess.stddev_0.fixed = g_cii_guess.stddev_1.fixed = True#g_cii_guess.stddev_2.fixed = False
+    g_cii_guess.mean_0.fixed = g_cii_guess.mean_1.fixed = True # g_cii_guess.mean_2.fixed = True
+
+    g_cii_guess.stddev_1.tied = lambda m : m.stddev_0
+    # g_cii_guess.stddev_2.tied = lambda m : m.stddev_0
+
+    g_fit_cii = fitter(g_cii_guess, x_axis, spectrum.to_value(), verblevel=1)
+    fitted_cii_spectrum = g_fit_cii(x_axis)
+    ax_spec_cii.plot(x_axis, fitted_cii_spectrum, color='r', linestyle='-')
+    ax_spec_cii.plot(x_axis, spectrum.to_value() - fitted_cii_spectrum, color='g', linestyle=':')
+    for g in g_fit_cii:
+        ax_spec_cii.axvline(g.mean, color='r', linestyle='--', alpha=0.3)
+        ax_spec_cii.plot(x_axis, g(x_axis), color='r', linestyle=':', alpha=0.3)
+    for i, g in enumerate(g_fit_cii):
+        ax_spec_cii.text(text_x, text_y - 4*i*dy, f"$A_{i}$ = {g.amplitude.value:5.2f}", transform=ax_spec_cii.transAxes)
+        ax_spec_cii.text(text_x, text_y - dy - 4*i*dy, f"$\mu_{i}$ = {g.mean.value:5.2f}", transform=ax_spec_cii.transAxes)
+        ax_spec_cii.text(text_x, text_y - dy*2 - 4*i*dy, f"$\sigma_{i}$ = {g.stddev.value:5.2f}", transform=ax_spec_cii.transAxes)
+
+    ax_spec.set_xlim([16, 35])
+    ax_spec_cii.set_xlim([16, 35])
+    for bg_artist in artists:
+        ax_img_cii.add_artist(bg_artist)
+
+    plt.savefig(f'/home/rkarim/Pictures/2021-11-03-work/fit_molecular_components_and_CII_2g_fixedwidth_3.png')
+    # plt.show()
+
+
+
 
 
 if __name__ == "__main__":
-    fit_co10_components_with_gaussians()
+    # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
+    # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
+    # Sigmas = [1, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05]
+    # for j, x in enumerate(Sigmas):
+    #     test_fitting_2_gaussians_with_1(j, x, "changingSigma")
+
+    fit_molecular_and_cii_with_gaussians()

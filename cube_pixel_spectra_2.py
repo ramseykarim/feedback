@@ -1174,6 +1174,29 @@ def smooth_spatial(img_to_convolve, img_wcs, cube, target_beam):
     return convolution.convolve(img_to_convolve, conv_beam.as_kernel(misc_utils.get_pixel_scale(img_wcs)), boundary='extend')
 
 
+def get_cii_background(cii_cube=None, return_artist=False, **kwargs):
+    """
+    Load up the standard CII background spectrum
+    Unfortunately totally messes up your noise estimates (I don't want to make that calculation)
+    :param cii_cube: SpectralCube, a CII cube from which to take the background spectrum.
+        If left None, loads up the standard CII cube and takes the spectrum.
+    :param return_artist: return a matplotlib artist for the background patch
+    :param kwargs: sent to PixelRegion.as_artist()
+    :returns: Quantity array spectrum (, list(Artist) for background patch)
+    """
+    if cii_cube is None:
+        cii_cube = cutout_subcube(length_scale_mult=None)
+    bg_reg = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg"))
+    cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg).mean(axis=(1, 2))
+    if return_artist:
+        artists = []
+        for reg in bg_reg:
+            artists.append(reg.to_pixel(cii_cube[0, :, :].wcs).as_artist(**kwargs))
+        return cii_bg_spectrum, artists
+    else:
+        return cii_bg_spectrum
+
+
 if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
     subcube = cutout_subcube(length_scale_mult=4, data_filename="bima/M16_12CO1-0_7x4.fits")
