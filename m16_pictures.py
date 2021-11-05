@@ -391,7 +391,8 @@ def single_parallel_pillar_pvs():
 
     subcube_kwargs = dict(reg_index=1, length_scale_mult=2, reg_filename=reg_filename)
     # CII, native resolution
-    subcube_cii = cps2.cutout_subcube(**subcube_kwargs).with_spectral_unit(u.km/u.s)
+    # subcube_cii = cps2.cutout_subcube(**subcube_kwargs).with_spectral_unit(u.km/u.s) # original
+    subcube_cii = cps2.cutout_subcube(data_filename="sofia/M16_CII_pillar1_BGsubtracted.fits", **subcube_kwargs).with_spectral_unit(u.km/u.s) # bgsub
     # CO 1-0 BIMA, 14x14
 
     def process_co(fn):
@@ -445,7 +446,10 @@ def single_parallel_pillar_pvs():
             levels = np.arange(10, 71, 10)
         contour_kwargs = dict(linewidths=1.2, colors=colors[1], alpha=1, levels=levels)
         c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=10)
-        ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
+        try:
+            ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
+        except:
+            pass
         if idx == 0:
             handles = []
             handles.append(mpatches.Patch(color=colors[1], label="CO (1$-$0)"))
@@ -462,7 +466,10 @@ def single_parallel_pillar_pvs():
         contour_kwargs['colors'] = colors[0]
         contour_kwargs['alpha'] = 1
         c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=9)
-        ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
+        try:
+            ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
+        except:
+            pass
         if idx == 0:
             handles.append(mpatches.Patch(color=colors[0], label="[CII]"))
             ax_sl.legend(handles=handles, loc='lower right')
@@ -526,7 +533,7 @@ def single_parallel_pillar_pvs():
 
 
     plt.tight_layout(h_pad=0, w_pad=0, pad=5)
-    plt.savefig("/home/rkarim/Pictures/2021-10-19-work/pv_along.png")
+    plt.savefig("/home/rkarim/Pictures/2021-11-04-work/pv_along.png")
     # plt.show()
 
 """

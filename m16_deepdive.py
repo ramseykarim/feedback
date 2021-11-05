@@ -455,6 +455,165 @@ def prepare_pdrt_tables_2():
     print("done")
 
 
+def select_pixels_and_models(mol, i, var_mean=False, var_std=False):
+    """
+    November 5, 2021
+    Easy selection of pixels and models
+    :param mol: molecular/atomic line name (cii, 12co10, hcop)
+    :param i: name of position (totally arbitrary, I decide the name)
+    :param test_model: whether to let the mean float in the model
+    :param var_std: whether to let the stddev float in the model
+    """
+    if mol == "cii":
+        # Only one position for cii right now
+        good_pixel = (37, 42)
+        di, dj = 2, 2
+        g = None
+    elif mol == '12co10':
+        ### This was my work for 12CO(1-0). These worked alright but not great for every area
+        if i == 'bluest component':
+            good_pixel = (466, 275) # good for bluest component
+            di, dj = 2, 3
+            g = cps2.models.Gaussian1D(amplitude=50, mean=23.8, stddev=1.06,
+                bounds={'amplitude': (0, 200)})
+        elif i == 'blue thread':
+            good_pixel = (405, 287) # blue (W) thread
+            di, dj = 2, 3
+            g = cps2.models.Gaussian1D(amplitude=50, mean=25.1, stddev=0.95,
+                bounds={'amplitude': (0, 200)})
+        elif i == 'red main part':
+            good_pixel = (408, 243) # red main part
+            di, dj = 5, 5
+            g = cps2.models.Gaussian1D(amplitude=50, mean=25.8, stddev=0.83,
+                bounds={'amplitude': (0, 200)})
+    elif mol == 'hcop':
+        if i == 'western horn':
+            # This is the Western horn component
+            good_pixel = (447, 375)
+            di, dj = 2, 2
+            g = cps2.models.Gaussian1D(amplitude=10.291692169984568, mean=24.440935924615744, stddev=0.4614265241399322,
+                bounds={"amplitude": (0, 100), "mean": (23, 27), "stddev": (0.1, 2)})
+        elif i == 'bluest component':
+            # This is the bluest N-E corner component
+            good_pixel = (602, 415)
+            di, dj = 1, 1
+            g = cps2.models.Gaussian1D(amplitude=5.2758702607467525, mean=23.46286597585026, stddev=0.46, # fitted stddev = 0.4526447822523458
+                bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
+        elif i == 'bluest component 2':
+            # Now even further out in the blue component
+            good_pixel = (610, 420)
+            di, dj = 1, 1
+            g = cps2.models.Gaussian1D(amplitude=2.68, mean=23.516, stddev=0.46, # fitted stddev = 0.45380048744753915
+                bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
+        elif i == 'western thread N':
+            # Western thread, from a pixel a little above it that shows a clean spectrum
+            good_pixel = (544, 448)
+            di, dj = 1, 1
+            g = cps2.models.Gaussian1D(amplitude=5.305657851279191, mean=24.917103298134492, stddev=0.46, # fitted stddev = 0.44549289151047716
+                bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
+        elif i == 'just off peak':
+            # Check out HCO+ (near) peak spectrum to see how its width stacks up with 0.46
+            good_pixel = (570, 451)
+            di, dj = 1, 1
+            g = cps2.models.Gaussian1D(amplitude=20, mean=25, stddev=0.46, # fitted stddev = 0.44549289151047716
+                bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
+    if var_mean:
+        g.mean.fixed = False
+    if var_std:
+        g.stddev.fixed = False
+    return good_pixel, (di, dj), g
+
+
+def iter_models(model):
+    """
+    November 5, 2021
+    Convenience function for iterating over models even if it's just one model (usually breaks)
+    :param model: an astropy.modeling.models model, compound OR single
+    :returns: iterator that will return a single model per iteration
+    """
+    try:
+        return iter(model)
+    except:
+        return iter((model,))
+
+
+def tie_std_models(model):
+    """
+    November 5, 2021
+    Convenience function for tying all the stddevs together
+    If they're already fixed, it shouldn't have any effect
+    If single (not compound) model, no effect
+    :param model: an astropy.modeling.models model
+    """
+    try:
+        for i, m in enumerate(model):
+            if i == 0:
+                pass
+            else:
+                m.stddev.tied = lambda x: x.stddev_0
+    except:
+        pass
+
+
+def make_show_box(show_box_i_lims, show_box_j_lims):
+    """
+    November 5, 2021
+    """
+    show_box_i_lo, show_box_i_hi = show_box_i_lims
+    show_box_j_lo, show_box_j_hi = show_box_j_lims
+    return (slice(show_box_i_lo, show_box_i_hi), slice(show_box_j_lo, show_box_j_hi))
+
+
+
+def plot_noise_and_vlims(ax, noise, vel_lims):
+    """
+    November 5, 2021
+    """
+    [ax.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
+    [ax.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
+
+
+def plot_box(ax, i_lims, j_lims, show_box_lo_lims):
+    """
+    November 5, 2021
+    """
+    i_lo, i_hi = i_lims
+    j_lo, j_hi = j_lims
+    show_box_i_lo, show_box_j_lo = show_box_lo_lims
+    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - show_box_j_lo
+    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - show_box_i_lo
+    ax.plot(box_x, box_y, color='grey')
+
+
+def plot_noise_img(ax, noise_loc, show_box_lo_lims):
+    """
+    November 5, 2021
+    """
+    show_box_i_lo, show_box_j_lo = show_box_lo_lims
+    ax.plot([noise_loc[1] - show_box_j_lo], [noise_loc[0] - show_box_i_lo], 'x', color='grey')
+
+
+def plot_everything_about_models(ax, xaxis, spectrum, model):
+    """
+    November 5, 2021
+    Convenience function for plotting all these models
+    :param model: an astropy.modeling.models model
+    """
+    ax.plot(xaxis, spectrum, color='k', linestyle='-', marker='|')
+    if model is None:
+        return
+    fitted_spectrum = model(xaxis)
+    ax.plot(xaxis, fitted_spectrum, color='r', linestyle='-')
+    ax.plot(xaxis, spectrum-fitted_spectrum, color='g', alpha=0.6, linestyle='--')
+    text_x, text_y, dy = 0.05, 0.95, 0.05
+    for i, m in enumerate(iter_models(model)):
+        ax.plot(xaxis, m(xaxis), color='r', linestyle='--', alpha=0.7)
+        ax.axvline(m.mean, color='r', linestyle='--', alpha=0.3)
+        ax.text(text_x, text_y - dy*(0 + 3*i), f"A = {m.amplitude.value:5.2f}", transform=ax.transAxes)
+        ax.text(text_x, text_y - dy*(1 + 3*i), f"$\mu$ = {m.mean.value:5.2f}", transform=ax.transAxes)
+        ax.text(text_x, text_y - dy*(2 + 3*i), f"$\sigma$ = {m.stddev.value:5.2f}", transform=ax.transAxes)
+
+
 def fit_molecular_components_with_gaussians():
     """
     Created October 22, 2021
@@ -469,73 +628,15 @@ def fit_molecular_components_with_gaussians():
     # good_pixel = (446, 304)
     # di, dj = 20, 30
 
-    """
-    ### This was my work for 12CO(1-0). These worked alright but not great for every area
-    # good_pixel = (466, 275) # good for bluest component
-    # di, dj = 2, 3
-    g1 = cps2.models.Gaussian1D(amplitude=50, mean=23.8, stddev=1.06,
-        bounds={'amplitude': (0, 200)})
-    g1.mean.fixed = g1.stddev.fixed = True
-
-
-    # good_pixel = (405, 287) # blue (W) thread
-    # di, dj = 2, 3
-    g2 = cps2.models.Gaussian1D(amplitude=50, mean=25.1, stddev=0.95,
-        bounds={'amplitude': (0, 200)})
-    g2.mean.fixed = g2.stddev.fixed = True
-
-    # good_pixel = (408, 243) # red main part
-    # di, dj = 5, 5
-    g3 = cps2.models.Gaussian1D(amplitude=50, mean=25.8, stddev=0.83,
-        bounds={'amplitude': (0, 200)})
-    g3.mean.fixed = g3.stddev.fixed = True
-
-    g_all = g1 + g2 + g3
-
-    # test regions
-    # good_pixel = (443, 270)
+    # test regions ## not sure what these are for anymore
+    good_pixel = (443, 270)
     # good_pixel = (440, 288)
     # good_pixel = (440, 305)
     # good_pixel = (430, 315)
     # good_pixel = (425, 340)
     # good_pixel = (393, 275)
     # good_pixel = (417, 241)
-    # di, dj = 5, 5
-    """
-
-
-    # This is the Western horn component
-    # good_pixel = (447, 375)
-    # di, dj = 2, 2
-    # g = cps2.models.Gaussian1D(amplitude=10.291692169984568, mean=24.440935924615744, stddev=0.4614265241399322,
-    #     bounds={"amplitude": (0, 100), "mean": (23, 27), "stddev": (0.1, 2)})
-
-    # This is the bluest N-E corner component
-    # good_pixel = (602, 415)
-    # di, dj = 1, 1
-    # g = cps2.models.Gaussian1D(amplitude=5.2758702607467525, mean=23.46286597585026, stddev=0.46, # fitted stddev = 0.4526447822523458
-    #     bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
-    # g.stddev.fixed = True
-    # Now even further out in the blue component
-    # good_pixel = (610, 420)
-    # di, dj = 1, 1
-    # g = cps2.models.Gaussian1D(amplitude=2.68, mean=23.516, stddev=0.46, # fitted stddev = 0.45380048744753915
-    #     bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
-    # g.stddev.fixed = True
-
-    # Western thread, from a pixel a little above it that shows a clean spectrum
-    # good_pixel = (544, 448)
-    # di, dj = 1, 1
-    # g = cps2.models.Gaussian1D(amplitude=5.305657851279191, mean=24.917103298134492, stddev=0.46, # fitted stddev = 0.44549289151047716
-    #     bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
-    # g.stddev.fixed = True
-
-    # Check out HCO+ peak spectrum to see how its width stacks up with 0.46
-    good_pixel = (570, 451)
-    di, dj = 1, 1
-    g = cps2.models.Gaussian1D(amplitude=20, mean=25, stddev=0.46, # fitted stddev = 0.44549289151047716
-        bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
-    # g.stddev.fixed = True
+    di, dj = 5, 5
 
     img_idx = 4
 
@@ -549,8 +650,8 @@ def fit_molecular_components_with_gaussians():
 
     vel_lims = (23, 26)
 
-    i_lo, i_hi = (good_pixel[0] + sign*di for sign in (-1, 1))
-    j_lo, j_hi = (good_pixel[1] + sign*dj for sign in (-1, 1))
+    i_lims = i_lo, i_hi = tuple(good_pixel[0] + sign*di for sign in (-1, 1))
+    j_lims = j_lo, j_hi = tuple(good_pixel[1] + sign*dj for sign in (-1, 1))
 
     noise_i = slice(*(noise_pixel[0] + sign*di for sign in (-1, 1)))
     noise_j = slice(*(noise_pixel[1] + sign*dj for sign in (-1, 1)))
@@ -562,44 +663,35 @@ def fit_molecular_components_with_gaussians():
 
 
     ax_img = plt.subplot(121)
-    show_box_i_lo, show_box_i_hi = 370, 665 # 0, mom0.shape[0]
-    show_box_j_lo, show_box_j_hi = 277, 592 # 0, mom0.shape[1]
-    show_box = (slice(show_box_i_lo, show_box_i_hi), slice(show_box_j_lo, show_box_j_hi))
+    show_box_i_lims = show_box_i_lo, show_box_i_hi = 370, 665 # 0, mom0.shape[0]
+    show_box_j_lims = show_box_j_lo, show_box_j_hi = 277, 592 # 0, mom0.shape[1]
+    show_box_lo_lims = (show_box_i_lo, show_box_j_lo)
+    show_box = make_show_box(show_box_i_lims, show_box_j_lims)
     ax_img.imshow(mom0.to_value()[show_box], origin='lower')
 
     x_axis = cube.spectral_axis.to_value()
     spectrum = cube[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
+
     ax_spec = plt.subplot(122)
-    ax_spec.plot(x_axis, spectrum, color='k')
     noise = np.std(cube[:, noise_i, noise_j].mean(axis=(1, 2)).to_value())
     ax_spec.set_ylabel(f"Noise: {noise:.3f}")
+
     # mark some things on each plot
-    [ax_spec.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
-    [ax_spec.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
-    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - show_box_j_lo
-    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - show_box_i_lo
-    ax_img.plot(box_x, box_y, color='grey')
-    ax_img.plot([noise_pixel[1] - show_box_j_lo], [noise_pixel[0] - show_box_i_lo], 'x', color='grey')
-    # TODO: plot the spectrum and use modeling to fit gaussian
+    plot_noise_and_vlims(ax_spec, noise, vel_lims)
+    plot_box(ax_img, i_lims, j_lims, show_box_lo_lims)
+    plot_noise_img(ax_img, noise_pixel, show_box_lo_lims)
+
     mask = spectrum.to_value() > -100
 
     fitter = cps2.fitting.SLSQPLSQFitter()
-    g_fit = fitter(g, x_axis[mask], spectrum.to_value()[mask],
-        verblevel=1)
-    fitted_spectrum = g_fit(x_axis)
-    ax_spec.plot(cube.spectral_axis, fitted_spectrum, color='r', linestyle='--')
-    ax_spec.axvline(g_fit.mean, color='r', linestyle='--', alpha=0.3)
-    print(g_fit)
-    ax_spec.plot(cube.spectral_axis, spectrum.to_value()-fitted_spectrum, color='k', alpha=0.6, linestyle=':')
+    # g_fit = fitter(g, x_axis[mask], spectrum.to_value()[mask],
+    #     verblevel=1)
+    plot_everything_about_models(ax_spec, x_axis, spectrum.to_value(), None)
 
-    text_x, text_y, dy = 0.05, 0.95, 0.05
-    ax_spec.text(text_x, text_y, f"A = {g_fit.amplitude.value:5.2f}", transform=ax_spec.transAxes)
-    ax_spec.text(text_x, text_y - dy, f"$\mu$ = {g_fit.mean.value:5.2f}", transform=ax_spec.transAxes)
-    ax_spec.text(text_x, text_y - dy*2, f"$\sigma$ = {g_fit.stddev.value:5.2f}", transform=ax_spec.transAxes)
     ax_spec.set_title("HCO+ spectrum from within box (see left), with fit")
     ax_img.set_title(f"HCO+ moment 0 between {vel_lims[0]}, {vel_lims[1]} km/s")
-    plt.savefig(f'/home/rkarim/Pictures/2021-10-26-work/fit_molecular_components_{img_idx}.png')
-    # plt.show()
+    # plt.savefig(f'/home/rkarim/Pictures/2021-10-26-work/fit_molecular_components_{img_idx}.png')
+    plt.show()
     return
 
 def test_fitting_2_gaussians_with_1(j, x, label):
@@ -814,6 +906,17 @@ def fit_molecular_and_cii_with_gaussians():
     # plt.show()
 
 
+def save_bgsub_cii():
+    """
+    November 4, 2021
+    Save a background-subtracted version of the CII cube (small cutout)
+    Use all 4 regions from catalogs/pillar_background_sample_multiple_4.reg
+    """
+    cii_bg_spectrum = cps2.get_cii_background()
+    cii_cube = cps2.cutout_subcube(length_scale_mult=4)
+    cii_cube = cii_cube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+    # cii_cube.write(catalog.utils.m16_data_path + "sofia/M16_CII_pillar1_BGsubtracted.fits")
+    ### Already ran this on Nov 4, 2021
 
 
 
@@ -824,4 +927,5 @@ if __name__ == "__main__":
     # for j, x in enumerate(Sigmas):
     #     test_fitting_2_gaussians_with_1(j, x, "changingSigma")
 
-    fit_molecular_and_cii_with_gaussians()
+    # fit_molecular_and_cii_with_gaussians()
+    fit_molecular_components_with_gaussians()
