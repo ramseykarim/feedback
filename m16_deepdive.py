@@ -501,236 +501,7 @@ def prepare_pdrt_tables_2():
     print("done")
 
 
-def select_pixels_and_models(mol, i, var_mean=False, var_std=False):
-    """
-    November 5, 2021
-    Easy selection of pixels and models
-    :param mol: molecular/atomic line name (cii, 12co10, hcop)
-    :param i: name of position (totally arbitrary, I decide the name)
-    :param test_model: whether to let the mean float in the model
-    :param var_std: whether to let the stddev float in the model
-    """
-    if mol == "cii":
-        # Only one position for cii right now
-        good_pixel = (37, 42)
-        di, dj = 2, 2
-        g = None
-
-
-    elif mol == '12co10':
-        ### This was my work for 12CO(1-0). These worked alright but not great for every area
-
-        if i == 'bluest component':
-            good_pixel = (466, 275) # good for bluest component
-            di, dj = 2, 3
-            g = cps2.models.Gaussian1D(amplitude=50, mean=23.8, stddev=1.06,
-                bounds={'amplitude': (0, 200)})
-
-        elif i == 'blue thread':
-            good_pixel = (405, 287) # blue (W) thread
-            di, dj = 2, 3
-            g = cps2.models.Gaussian1D(amplitude=50, mean=25.1, stddev=0.95,
-                bounds={'amplitude': (0, 200)})
-
-        elif i == 'red main part':
-            good_pixel = (408, 243) # red main part
-            di, dj = 5, 5
-            g = cps2.models.Gaussian1D(amplitude=50, mean=25.8, stddev=0.83,
-                bounds={'amplitude': (0, 200)})
-
-
-    elif mol == 'hcop':
-
-        if i == 'western horn':
-            # This is the Western horn component
-            good_pixel = (447, 375)
-            di, dj = 2, 2
-            g = cps2.models.Gaussian1D(amplitude=10.291692169984568, mean=24.440935924615744, stddev=0.4614265241399322,
-                bounds={"amplitude": (0, 100), "mean": (23, 27), "stddev": (0.1, 2)})
-
-        elif i == 'bluest component':
-            # This is the bluest N-E corner component
-            good_pixel = (602, 415)
-            di, dj = 1, 1
-            g = cps2.models.Gaussian1D(amplitude=5.2758702607467525, mean=23.46286597585026, stddev=0.46, # fitted stddev = 0.4526447822523458
-                bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
-
-        elif i == 'bluest component 2':
-            # Now even further out in the blue component
-            good_pixel = (610, 420)
-            di, dj = 1, 1
-            g = cps2.models.Gaussian1D(amplitude=2.68, mean=23.516, stddev=0.46, # fitted stddev = 0.45380048744753915
-                bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
-
-        elif i == 'western thread N':
-            # Western thread, from a pixel a little above it that shows a clean spectrum
-            good_pixel = (544, 448)
-            di, dj = 1, 1
-            g = cps2.models.Gaussian1D(amplitude=5.305657851279191, mean=24.917103298134492, stddev=0.46, # fitted stddev = 0.44549289151047716
-                bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
-
-        elif i == 'just off peak':
-            # Check out HCO+ (near) peak spectrum to see how its width stacks up with 0.46
-            good_pixel = (570, 451)
-            di, dj = 1, 1
-            g = cps2.models.Gaussian1D(amplitude=20, mean=25, stddev=0.46, # fitted stddev = 0.44549289151047716
-                bounds={"amplitude": (0, 30), "mean": (21, 27), "stddev": (0.1, 2)})
-
-        elif i == 'eastern thread N':
-            # Eastern thread N sample (trying to avoid the other thing that's there to the west)
-            good_pixel = (556, 393)
-            di, dj = 4, 4
-            g = cps2.models.Gaussian1D(amplitude=4.27, mean=25.85, stddev=0.46, # fitted stddev = 0.72
-                bounds={"amplitude": (1, 30), "mean": (25, 26.5), "stddev": (0.1, 2)})
-        
-        elif i == 'eastern thread S':
-            # Eastern thread S sample
-            good_pixel = (541, 373)
-            di, dj = 6, 6
-            g = cps2.models.Gaussian1D(amplitude=3.74, mean=25.76, stddev=0.46, # fitted stddev = 0.64
-                bounds={"amplitude": (1, 30), "mean": (25, 26.5), "stddev": (0.1, 2)})
-
-        elif i == 'main red':
-            # just north of the Eastern thread, and probably the main red component in the peak
-            good_pixel = (564, 425)
-            di, dj = 2, 2
-            g = cps2.models.Gaussian1D(amplitude=12.4, mean=25.35, stddev=0.46, # fitted stddev = 0.61
-                bounds={"amplitude": (1, 30), "mean": (25, 26.5), "stddev": (0.1, 2)})
-
-        elif i == 'main red plus blue':
-            # this is a compound model!
-            good_pixel = (583, 431)
-            di, dj = 3, 3
-            g_red = select_pixels_and_models('hcop', 'main red', var_mean=var_mean, var_std=var_std)[2]
-            g_blue = select_pixels_and_models('hcop', 'bluest component', var_mean=var_mean, var_std=var_std)[2]
-            g = g_red + g_blue
-            tie_std_models(g)
-
-    if not var_mean:
-        fix_mean(g)
-    if not var_std:
-        fix_std(g)
-    return good_pixel, (di, dj), g
-
-
-def iter_models(model):
-    """
-    November 5, 2021
-    Convenience function for iterating over models even if it's just one model (usually breaks)
-    :param model: an astropy.modeling.models model, compound OR single
-    :returns: iterator that will return a single model per iteration
-    """
-    try:
-        return iter(model)
-    except:
-        return iter((model,))
-
-
-def tie_std_models(model):
-    """
-    November 5, 2021
-    Convenience function for tying all the stddevs together
-    If they're already fixed, it shouldn't have any effect
-    If single (not compound) model, no effect
-    :param model: an astropy.modeling.models model
-    """
-    try:
-        for i, m in enumerate(model):
-            if i == 0:
-                pass
-            else:
-                m.stddev.tied = lambda x: x.stddev_0
-    except:
-        pass
-
-
-def fix_mean(model, set_to=True):
-    """
-    November 9, 2021
-    Convenience function for fixing mean parameter for an unknown number
-    of composite or single models
-    If already fixed, no effect
-    :param model: an astropy.modeling.models model
-    :param set_to: whether to fix or unfix. Default is fix (mean cannot change)
-    """
-    for m in iter_models(model):
-        m.mean.fixed = set_to
-
-
-def fix_std(model, set_to=True):
-    """
-    November 9, 2021
-    Convenience function for fixing stddev parameter for an unknown number
-    of composite or single models
-    If already fixed, no effect
-    :param model: an astropy.modeling.models model
-    :param set_to: whether to fix or unfix. Default is fix (stddev cannot change)
-    """
-    for m in iter_models(model):
-        m.stddev.fixed = set_to
-
-
-def make_show_box(show_box_i_lims, show_box_j_lims):
-    """
-    November 5, 2021
-    """
-    show_box_i_lo, show_box_i_hi = show_box_i_lims
-    show_box_j_lo, show_box_j_hi = show_box_j_lims
-    return (slice(show_box_i_lo, show_box_i_hi), slice(show_box_j_lo, show_box_j_hi))
-
-
-
-def plot_noise_and_vlims(ax, noise, vel_lims):
-    """
-    November 5, 2021
-    """
-    [ax.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
-    [ax.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
-
-
-def plot_box(ax, i_lims, j_lims, show_box_lo_lims):
-    """
-    November 5, 2021
-    """
-    i_lo, i_hi = i_lims
-    j_lo, j_hi = j_lims
-    show_box_i_lo, show_box_j_lo = show_box_lo_lims
-    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - show_box_j_lo
-    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - show_box_i_lo
-    ax.plot(box_x, box_y, color='grey')
-
-
-def plot_noise_img(ax, noise_loc, show_box_lo_lims):
-    """
-    November 5, 2021
-    """
-    show_box_i_lo, show_box_j_lo = show_box_lo_lims
-    ax.plot([noise_loc[1] - show_box_j_lo], [noise_loc[0] - show_box_i_lo], 'x', color='grey')
-
-
-def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x=0.05, text_y=0.95, dy=-0.05):
-    """
-    November 5, 2021
-    Convenience function for plotting all these models
-    :param model: an astropy.modeling.models model
-    """
-    if spectrum is not None:
-        ax.plot(xaxis, spectrum, color='k', linestyle='-', marker='|')
-    if model is None:
-        return
-    fitted_spectrum = model(xaxis)
-    ax.plot(xaxis, fitted_spectrum, color=m_color, linestyle='-')
-    if spectrum is not None:
-        ax.plot(xaxis, spectrum-fitted_spectrum, color='g', alpha=0.6, linestyle='--')
-    for i, m in enumerate(iter_models(model)):
-        ax.plot(xaxis, m(xaxis), color=m_color, linestyle='--', alpha=0.7)
-        ax.axvline(m.mean, color=m_color, linestyle='--', alpha=0.3)
-        ax.text(text_x, text_y + dy*(0 + 4*i), f"$A_{i}$ = {m.amplitude.value:5.2f}", transform=ax.transAxes, color=m_color)
-        ax.text(text_x, text_y + dy*(1 + 4*i), f"$\mu_{i}$ = {m.mean.value:5.2f}", transform=ax.transAxes, color=m_color)
-        ax.text(text_x, text_y + dy*(2 + 4*i), f"$\sigma_{i}$ = {m.stddev.value:5.2f}", transform=ax.transAxes, color=m_color)
-
-
-def fit_molecular_components_with_gaussians():
+def fit_molecular_components_with_gaussians(region_name):
     """
     Created October 22, 2021
     Try my hand at fitting with Gaussians again
@@ -749,11 +520,11 @@ def fit_molecular_components_with_gaussians():
     hcop_regions = ('western horn', 'bluest component', 'bluest component 2', # 0, 1, 2
         'western thread N', 'just off peak', # 3, 4
         'eastern thread N', 'eastern thread S', 'main red', # 5, 6, 7
-        'main red plus blue', # 8
+        'east of peak', # 8
         )
-    region_name = hcop_regions[8]
+    # region_name = 'peak W'
     print(region_name)
-    good_pixel, (di, dj), g = select_pixels_and_models('hcop', region_name, var_mean=1, var_std=1)
+    good_pixel, (di, dj), g = cps2.select_pixels_and_models('hcop', region_name, var_mean=1, var_std=0)
     # # mean = 24.91
     # ## this is the western thread, it seems to always be around 25 km/s
     # good_pixel = (540, 430) # mean = 24.87
@@ -761,8 +532,6 @@ def fit_molecular_components_with_gaussians():
     # good_pixel = (512, 401) # 25.07
     # good_pixel = (487, 373) # 25.21
     # ## good example of probable multiple components
-
-    # di, dj = 3, 3
 
 
 
@@ -798,9 +567,9 @@ def fit_molecular_components_with_gaussians():
     ax_spec.set_ylabel(f"Noise: {noise:.3f}")
 
     # mark some things on each plot
-    plot_noise_and_vlims(ax_spec, noise, vel_lims)
-    plot_box(ax_img, i_lims, j_lims, show_box_lo_lims)
-    plot_noise_img(ax_img, noise_pixel, show_box_lo_lims)
+    cps2.plot_noise_and_vlims(ax_spec, noise, vel_lims)
+    cps2.plot_box(ax_img, i_lims, j_lims, show_box_lo_lims)
+    cps2.plot_noise_img(ax_img, noise_pixel, show_box_lo_lims)
 
     mask = spectrum.to_value() > -100
 
@@ -808,14 +577,15 @@ def fit_molecular_components_with_gaussians():
     g_fit = fitter(g, x_axis[mask], spectrum.to_value()[mask],
         verblevel=1)
     print(g_fit)
-    plot_everything_about_models(ax_spec, x_axis, spectrum.to_value(), g_fit)
+    cps2.plot_everything_about_models(ax_spec, x_axis, spectrum.to_value(), g_fit)
 
     ax_spec.set_title("HCO+ spectrum from within box (see left), with fit")
     ax_img.set_title(f"HCO+ moment 0 between {vel_lims[0]}, {vel_lims[1]} km/s")
     reg_stub = region_name.replace(' ', '-')
-    plt.savefig(f'/home/rkarim/Pictures/2021-10-26-work/fit_molecular_components_{reg_stub}.png')
-    # plt.show()
+    # plt.savefig(f'/home/ramsey/Pictures/2021-11-11-work/fit_molecular_components_3G_fixedstd_{reg_stub}.png')
+    plt.show()
     return
+
 
 def test_fitting_2_gaussians_with_1(j, x, label):
     """
@@ -877,7 +647,7 @@ def test_fitting_2_gaussians_with_1(j, x, label):
 
 from numpy.random import default_rng
 
-def test_fitting_2_gaussians_with_2(dv=1, c_A=1, c_std=1, snr=20, numbers_only=False):
+def test_fitting_2_gaussians_with_2(dv=1, c_A=1, c_std=1, snr=20, numbers_only=False, seed=None):
     """
     Created Nov 10, 2021
     On Lee's advice, I want to see how well I can fit 2 gaussians with noise
@@ -891,7 +661,11 @@ def test_fitting_2_gaussians_with_2(dv=1, c_A=1, c_std=1, snr=20, numbers_only=F
     y_obs = g_all(x_axis)
     # ADD NOISE
     noise_rms = A/snr
-    y_obs += default_rng(12345).normal(scale=noise_rms, size=y_obs.shape)
+    if seed is None:
+        rng = default_rng()
+    else:
+        rng = default_rng(seed)
+    y_obs += rng.normal(scale=noise_rms, size=y_obs.shape)
     high_res_x = np.linspace(18, 33, 100) # for plotting the model
     # Set up a guess
     g_guess_1 = cps2.models.Gaussian1D(amplitude=A, mean=mean, stddev=stddev,
@@ -906,9 +680,9 @@ def test_fitting_2_gaussians_with_2(dv=1, c_A=1, c_std=1, snr=20, numbers_only=F
         return g_fit.parameters
     print(g_fit)
     plt.figure(figsize=(20, 10))
-    ax = plt.subplot(121)
+    ax = plt.subplot(111)
     plt.title("2 Gaussians fit with 2 Gaussian")
-    plot_everything_about_models(ax, x_axis, y_obs, g_all, m_color='k', text_x=0.8, text_y=0.3, dy=0.05)
+    cps2.plot_everything_about_models(ax, x_axis, y_obs, g_all, m_color='k', text_x=0.8, text_y=0.3, dy=0.05)
     # # TRUTH
     # plt.plot(high_res_x, g_all(high_res_x), color='k', label='underlying truth')
     # # TRUTH COMPONENTS
@@ -921,14 +695,15 @@ def test_fitting_2_gaussians_with_2(dv=1, c_A=1, c_std=1, snr=20, numbers_only=F
     plt.plot(x_axis, y_obs, 'x', color='k', label='observations')
 
     # fit
-    plot_everything_about_models(ax, high_res_x, None, g_fit)
+    cps2.plot_everything_about_models(ax, high_res_x, None, g_fit)
 
     # plt.plot(high_res_x, g_fit(high_res_x), color='b', linestyle=':', label='Single component fit')
     # plt.axvline(g_fit.mean, color='b', linestyle=':', alpha=0.3)
     residuals = y_obs - g_fit(x_axis)
     # plt.plot(x_axis, residuals, color='grey', linestyle=':', label='Residuals')
     plt.legend()
-    plt.show()
+    # plt.show()
+    plt.savefig("/home/ramsey/Pictures/2021-11-11-work/fitting_2G_with_2G_2.png")
 
 
 def test_fitting_2G_with_2G_wrapper():
@@ -936,7 +711,15 @@ def test_fitting_2G_with_2G_wrapper():
     November 10, 2021
     Loop over the previous function and see how things change as parameters and noise changes
     """
-    ...
+    txt_file = "/home/ramsey/Desktop/gauss_test_dv_snr25.txt"
+    n_trials = 10
+    trials = np.zeros((n_trials, 2+6)) # SNR, dV, 6 parameters
+    trials[:, 0] = 25
+    trials[:, 1] = np.linspace(0.2, 2, n_trials)
+    for i in range(n_trials):
+        fitted_params = test_fitting_2_gaussians_with_2(dv=trials[i, 1], snr=trials[i, 0], numbers_only=True)
+        trials[i, 2:] = fitted_params
+    np.savetxt(txt_file, trials)
 
 
 def fit_molecular_and_cii_with_gaussians():
@@ -1114,5 +897,11 @@ if __name__ == "__main__":
     # for j, x in enumerate(Sigmas):
     #     test_fitting_2_gaussians_with_1(j, x, "changingSigma")
 
-    # fit_molecular_components_with_gaussians()
-    test_fitting_2_gaussians_with_2()
+    for s in (None, 'W', 'E', 'N', 'S'):
+        if s is None:
+            s = ''
+        else:
+            s = ' ' + s
+        fit_molecular_components_with_gaussians('peak'+s)
+    # test_fitting_2_gaussians_with_2(snr=50)
+    # test_fitting_2G_with_2G_wrapper()
