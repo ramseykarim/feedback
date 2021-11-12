@@ -628,6 +628,7 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
         # this is referring to a pixel in the cube
         noise_spectrum = cube[:, noise[0], noise[1]].to_value()
         noise = np.std(noise_spectrum)
+        print(f"USING NOISE = {noise:.3f} K")
 
     plt.ion()
     fig = plt.figure(figsize=(6, 3.5))
@@ -666,6 +667,7 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
             plot_info_dict['x1'], = ax_img.plot([j], [i], 'x', color='red')
             plot_info_dict['x2'], = ax_img2.plot([j], [i], 'x', color='red')
             plot_info_dict['xij'] = (i, j)
+            print(f"Fitting (i, j): ({i}, {j})")
 
             if template_model is None:
                 g_init = initialize_gaussian(init_conds, None, (i, j))
@@ -849,18 +851,43 @@ def subtract_hybrid_gaussian(cube):
     """
     pass
 
-def fit_image_to_file(cube, double=False):
+def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=None):
     """
-    Do the big fit but only on stuff above half power
+    Do the big fit
+    :param cube: the cube to fit
+    :param double: single or doubel Gaussian
+        only used if template_model is None
+    :param template_model: an astropy.modeling.models model to use as the
+        initial guess for fitting. Overrides "double".
+        Presumed to be a single or composite model composed only of
+        Gaussian1D components, so 3 parameters per component
+    :param mask: fit only stuff above half power
+        else, fit the entire spectrum for every pixel
+    :param noise: arg to pass thru to fit_gaussian; see that description
+        If this is a 2-element tuple, will calculate noise from that pixel location
+        in the unmasked cube
+        (this is the exact same procedure as fit_live_interactive)
     """
-    masked_cube = mask_with_best_setting(cube)
+    if mask:
+        masked_cube = mask_with_best_setting(cube)
+    else:
+        masked_cube = cube
     init_conds = prepare_initial_conditions(cube, masked_cube)
     spectral_axis = init_conds['spectral_axis']
     fitter = fitting.SLSQPLSQFitter()
-    g_init = models.Gaussian1D(25, 26, 1, bounds={'amplitude': (0, 50), 'mean': (22, 28), 'stddev': (1, 3.5)})
-    n_params = len(g_init.param_names)
-    if double:
-        n_params *= 2
+    if template_model is None:
+        g_init = models.Gaussian1D(25, 26, 1, bounds={'amplitude': (0, 50), 'mean': (22, 28), 'stddev': (1, 3.5)})
+        n_params = len(g_init.param_names)
+        if double:
+            n_params *= 2
+    else:
+        g_init = template_model
+        n_params = len(g_init.param_names)
+
+    if isinstance(noise, (tuple, list)) and len(noise) == 2:
+        # this is referring to a pixel in the cube
+        noise_spectrum = cube[:, noise[0], noise[1]].to_value()
+        noise = np.std(noise_spectrum)
 
     results = np.zeros((n_params, *masked_cube.shape[1:]))
     residuals_array = np.zeros(masked_cube.shape)
@@ -876,17 +903,26 @@ def fit_image_to_file(cube, double=False):
         # Convert the flat index to the 2D image index
         i, j = np.unravel_index(flat_idx, masked_cube.shape[1:])
 
-        g_init = initialize_gaussian(init_conds, g_init, (i, j))
-        g_fit, fitted_spectrum, _ = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter, verblevel=0, double=double)
+        if template_model is None:
+            g_init = initialize_gaussian(init_conds, g_init, (i, j))
+        g_fit, fitted_spectrum, _ = fit_gaussian(init_conds, masked_cube, g_init, (i, j), fitter,
+            verblevel=0, double=double, template=(template_model is not None),
+            cube_is_masked=mask, noise=noise)
 
         if g_fit is not None:
-            if double:
-                # Put the thinner Gaussian first
-                individual_models = sorted(g_fit, key=lambda m: m.stddev)
-                results[:n_params//2, i, j] = individual_models[0].param_sets[:, 0]
-                results[n_params//2:, i, j] = individual_models[1].param_sets[:, 0]
+            if template_model is None:
+                if double:
+                    # Put the thinner Gaussian first
+                    individual_models = sorted(g_fit, key=lambda m: m.stddev)
+                    results[:n_params//2, i, j] = individual_models[0].param_sets[:, 0]
+                    results[n_params//2:, i, j] = individual_models[1].param_sets[:, 0]
+                else:
+                    results[:, i, j] = g_fit.param_sets[:, 0]
             else:
-                results[:, i, j] = g_fit.param_sets[:, 0]
+                # template model; just put the components in the original order
+                for m_idx, m in enumerate(iter_models(g_fit)):
+                    nparams_1 = len(m.param_names) # single model number of params
+                    results[(nparams_1*m_idx):(nparams_1*(m_idx+1)), i, j] = m.param_sets[:, 0]
         else:
             results[:, i, j] = np.nan
         residuals_array[:, i, j] = cube[:, i, j].to_value() - fitted_spectrum
@@ -902,24 +938,20 @@ def fit_image_to_file(cube, double=False):
     print(f"Finished at {datetime.datetime.now(datetime.timezone.utc).astimezone().ctime()}")
     print(f"Time elapsed: {str(datetime.timedelta(seconds=(timing_t1-timing_t0)))}")
 
-    filename_stub = "models/gauss_fit_above_2G_v1_smooth"
-    param_units = ['K', 'km / s', 'km / s'] * (int(double) + 1)
+    filename_stub = "models/gauss_fit_hcop_3G_v1"
+    param_units = ['K', 'km / s', 'km / s'] * ((int(double) + 1) if template_model is None else g_init.n_submodels)
     wcs_flat = cube.moment(order=0).wcs
     to_header = lambda : wcs_flat.to_header()
     phdu = fits.PrimaryHDU(header=to_header())
     phdu.header['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
     phdu.header['CREATOR'] = f"Ramsey, {__file__}"
     phdu.header['COMMENT'] = f"Fit with best masking settings right now."
-    phdu.header['COMMENT'] = "Using a confusing weight scheme.."
-    phdu.header['COMMENT'] = "Cutout with length_scale_mult 4"
+    # phdu.header['COMMENT'] = "Using a confusing weight scheme.."
+    phdu.header['COMMENT'] = "Cutout with length_scale_mult 0.5"
     hdu_list = [phdu]
     for i in range(n_params):
-        if double:
-            fitted_suffix = f"_{i // len(g_init.param_names)}"
-        else:
-            fitted_suffix = ""
         hdu = fits.ImageHDU(data=results[i], header=to_header())
-        hdu.header['EXTNAME'] = g_init.param_names[i % len(g_init.param_names)] + fitted_suffix
+        hdu.header['EXTNAME'] = g_init.param_names[i]
         hdu.header['BUNIT'] = param_units[i]
         hdu_list.append(hdu)
 
@@ -1508,8 +1540,11 @@ def get_cii_background(cii_cube=None, return_artist=False, **kwargs):
 
 if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
-    subcube = cutout_subcube(length_scale_mult=1, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
+    subcube = cutout_subcube(length_scale_mult=0.5, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
         reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+    ###### length_scale_mult = 0.0125 is good for testing HCOP; gives 4 pixels
+    ###### length_scale_mult = 1 is good for running pillar head fits
+
     # subcube = cutout_subcube(length_scale_mult=4)
 
     # subcube = smooth(subcube)
@@ -1519,10 +1554,11 @@ if __name__ == "__main__":
 
     # check_if_wings_trace_peak_emission(subcube)
 
-    # fit_image_to_file(subcube, double=True)
-
     g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=0)[2]
-    fit_live_interactive(subcube, mask=False, template_model=g_init, noise=None)
+
+    fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.546)
+
+    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=0.546) # noise from: (125, 32) at length_scale_mult=1
 
     # investigate_fit(subcube, double=False)
 
