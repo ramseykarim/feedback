@@ -649,7 +649,7 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
     ax_spectr.plot(spectral_axis, masked_cube.mean(axis=(1, 2)).to(u.K).to_value(), linewidth=0.7)
     ax_spectr.set_xlim((spectral_axis[0], spectral_axis[-1]))
 
-    fitter = fitting.SLSQPLSQFitter()
+    fitter = fitting.SLSQPLSQFitter() # change this to LevMarq so we can init it with calc_uncertainties=True
     plot_info_dict = {'x1': None, 'x2': None, 'currently_selecting': False}
 
     def onclick(event):
