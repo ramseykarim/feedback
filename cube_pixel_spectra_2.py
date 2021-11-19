@@ -1614,6 +1614,27 @@ def get_cii_background(cii_cube=None, return_artist=False, **kwargs):
         return cii_bg_spectrum
 
 
+def test_cii_background():
+    """
+    Nov 19, 2021
+    Unnerving discrepancy between running the background subtraction on my
+    laptop vs desktop, so I need to investigate that...
+    """
+    cii_cube = cutout_subcube(length_scale_mult=6)
+    cii_bg_spectrum, artists = get_cii_background(cii_cube=cii_cube, return_artist=True)
+    ax1 = plt.subplot(121, projection=cii_cube[0, :, :].wcs)
+    plt.imshow(cii_cube.moment0().to_value(), origin='lower')
+    for a in artists:
+        ax1.add_artist(a)
+    ax2 = plt.subplot(122)
+    plt.plot(cii_cube.spectral_axis, cii_bg_spectrum)
+    peak_loc = cii_cube.spectral_axis[np.argmax(cii_bg_spectrum)]
+    plt.axvline(peak_loc.to_value(), color='r')
+    plt.title(f"Peak: {peak_loc.to(u.km/u.s).to_value():.2f} km/s")
+    plt.show()
+
+
+
 if __name__ == "__main__":
 
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
@@ -1622,11 +1643,10 @@ if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=1, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
     #     reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
     #### CII
-    subcube = cutout_subcube(length_scale_mult=6, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
-    cii_bg_spectrum = get_cii_background(subcube)
-    subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
-    plt.plot(subcube.spectral_axis, cii_bg_spectrum)
-    plt.show()
+    # subcube = cutout_subcube(length_scale_mult=6, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+    # cii_bg_spectrum = get_cii_background(subcube)
+    # subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+    test_cii_background()
 
     ###### length_scale_mult = 0.0125 is good for testing HCOP; gives 4 pixels
     ###### length_scale_mult = 1 is good for running pillar head fits
@@ -1643,9 +1663,9 @@ if __name__ == "__main__":
     #############
     ##### TEMPLATE MODEL SETUP
     #############
-    g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=1)[2]
+    # g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=1)[2]
     # g_init = g_init + g_init[2].copy()
-    print(g_init)
+    # print(g_init)
     #### for CII:
     # for g in g_init:
     #     g.amplitude.bounds = (0.05, 100)
