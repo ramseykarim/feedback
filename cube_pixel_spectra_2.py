@@ -1269,8 +1269,8 @@ def investigate_template_model_fit(n_submodels=3):
     """
     filename_stub = f"carma/models/gauss_fit_hcop_{n_submodels}G_v2"
     param_fn = catalog.utils.search_for_file(filename_stub+".param.fits")
-    resid_fn = catalog.utils.search_for_file(filename_stub+".resid.fits")
-    model_fn = catalog.utils.search_for_file(filename_stub+".model.fits")
+    # resid_fn = catalog.utils.search_for_file(filename_stub+".resid.fits")
+    # model_fn = catalog.utils.search_for_file(filename_stub+".model.fits")
     hdul = fits.open(param_fn)
     print(list(hdu.header['EXTNAME'] for hdu in hdul if 'EXTNAME' in hdu.header))
     # resid_cube = cube_utils.SpectralCube.read(resid_fn)
@@ -1297,6 +1297,11 @@ def investigate_template_model_fit(n_submodels=3):
     amplitudes = np.array(amplitudes)
     i_array = np.array(i_array)
     j_array = np.array(j_array)
+    amp_mask = amplitudes > 2.5
+    means = means[amp_mask]
+    amplitudes = amplitudes[amp_mask]
+    i_array = i_array[amp_mask]
+    j_array = j_array[amp_mask]
     if False:
         fig = plt.figure()
         ax = plt.subplot(111)
@@ -1308,7 +1313,7 @@ def investigate_template_model_fit(n_submodels=3):
         mlab.axes(ranges=[0, shape[1], 0, shape[0], 20, 30],
             xlabel='j (ra)', ylabel='i (dec)', zlabel='velocity (km/s)', nb_labels=10,
             line_width=19)
-        kwargs = dict(mode='cube', colormap='jet',
+        kwargs = dict(mode='cube', colormap='Spectral',
             scale_mode='none', scale_factor=0.7, opacity=0.2)
         mlab.points3d(j_array, i_array, means*30, amplitudes, **kwargs)
         mlab.show()
@@ -1614,12 +1619,14 @@ if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
 
     #### HCOP
-    subcube = cutout_subcube(length_scale_mult=1, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
-        reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+    # subcube = cutout_subcube(length_scale_mult=1, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
+    #     reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
     #### CII
-    # subcube = cutout_subcube(length_scale_mult=4)
-    # cii_bg_spectrum = get_cii_background()
-    # subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+    subcube = cutout_subcube(length_scale_mult=6, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+    cii_bg_spectrum = get_cii_background(subcube)
+    subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+    plt.plot(subcube.spectral_axis, cii_bg_spectrum)
+    plt.show()
 
     ###### length_scale_mult = 0.0125 is good for testing HCOP; gives 4 pixels
     ###### length_scale_mult = 1 is good for running pillar head fits
@@ -1636,8 +1643,8 @@ if __name__ == "__main__":
     #############
     ##### TEMPLATE MODEL SETUP
     #############
-    g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=0)[2]
-    g_init = g_init + g_init[2].copy()
+    g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=1)[2]
+    # g_init = g_init + g_init[2].copy()
     print(g_init)
     #### for CII:
     # for g in g_init:
@@ -1645,13 +1652,14 @@ if __name__ == "__main__":
     # g_init.stddev_0 = 1.
     #############
 
-    fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.546)
+    # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.546)
 
-    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=0.546,
-    #     ylim_max=23) # noise from: (125, 32) at length_scale_mult=1
+    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=1,
+    #     ylim_max=40) # noise from: (125, 32) at length_scale_mult=1
+        # HCOP noise: 0.546, CII noise: ~1
 
     # investigate_fit(subcube, double=False, template_model=None)
-    # investigate_template_model_fit(3)
+    # investigate_template_model_fit(4)
 
     # stack_pillar_spectra(subcube)
     # fit_multicube_live_interactive(*subcubes)
