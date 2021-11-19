@@ -1645,10 +1645,10 @@ if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=1, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
     #     reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
     #### CII
-    # subcube = cutout_subcube(length_scale_mult=6, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
-    # cii_bg_spectrum = get_cii_background(subcube)
-    # subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
-    test_cii_background()
+    subcube = cutout_subcube(length_scale_mult=2, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+    cii_bg_spectrum = get_cii_background()
+    subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+    # test_cii_background()
 
     ###### length_scale_mult = 0.0125 is good for testing HCOP; gives 4 pixels
     ###### length_scale_mult = 1 is good for running pillar head fits
@@ -1665,7 +1665,7 @@ if __name__ == "__main__":
     #############
     ##### TEMPLATE MODEL SETUP
     #############
-    # g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=1)[2]
+    g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=1)[2]
     # g_init = g_init + g_init[2].copy()
     # print(g_init)
     #### for CII:
@@ -1676,8 +1676,8 @@ if __name__ == "__main__":
 
     # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.546)
 
-    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=1,
-    #     ylim_max=40) # noise from: (125, 32) at length_scale_mult=1
+    fit_live_interactive(subcube, mask=False, template_model=g_init, noise=1,
+        ylim_max=40) # noise from: (125, 32) at length_scale_mult=1
         # HCOP noise: 0.546, CII noise: ~1
 
     # investigate_fit(subcube, double=False, template_model=None)
