@@ -1605,6 +1605,8 @@ def get_cii_background(cii_cube=None, return_artist=False, **kwargs):
         cii_cube = cutout_subcube(length_scale_mult=None)
     bg_reg = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg"))
     cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg).mean(axis=(1, 2))
+    kwargs.setdefault('fill', False)
+    kwargs.setdefault('color', 'k')
     if return_artist:
         artists = []
         for reg in bg_reg:
