@@ -851,14 +851,6 @@ def identify_longest_run(spec_mask, spectral_axis=None):
     return return_mask
 
 
-
-def subtract_hybrid_gaussian(cube):
-    """
-    Use the "hybrid" gaussian to subtract the main peak
-    Hybrid takes the mean from spectral_cube and the fwhm from manual method
-    """
-    pass
-
 def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=None):
     """
     Do the big fit
@@ -946,7 +938,7 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
     print(f"Finished at {datetime.datetime.now(datetime.timezone.utc).astimezone().ctime()}")
     print(f"Time elapsed: {str(datetime.timedelta(seconds=(timing_t1-timing_t0)))}")
 
-    filename_stub = "models/gauss_fit_hcop_4G_v2"
+    filename_stub = "models/gauss_fit_hcop_4G_v1"
     param_units = ['K', 'km / s', 'km / s'] * ((int(double) + 1) if template_model is None else g_init.n_submodels)
     wcs_flat = cube.moment(order=0).wcs
     to_header = lambda : wcs_flat.to_header()
@@ -955,7 +947,7 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
     phdu.header['CREATOR'] = f"Ramsey, {__file__}"
     phdu.header['COMMENT'] = f"Fit with best masking settings right now."
     # phdu.header['COMMENT'] = "Using a confusing weight scheme.."
-    phdu.header['COMMENT'] = "Cutout with length_scale_mult 1"
+    phdu.header['COMMENT'] = "Cutout with length_scale_mult 1.5"
     hdu_list = [phdu]
     for i in range(n_params):
         hdu = fits.ImageHDU(data=results[i], header=to_header())
@@ -983,7 +975,8 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
     print("Done!")
 
 
-def investigate_fit(cube, double=False, template_model=None):
+def investigate_fit(cube, double=False, template_model=None, filename_stub=None,
+        ylim_max=25):
     """
     Investiate the fit made in the previous function
 
@@ -994,12 +987,13 @@ def investigate_fit(cube, double=False, template_model=None):
     contour_args = (pillar_1_highlight.to_value(),)
     contour_kwargs = dict(levels=[20, 30, 40, 50, 60], linewidths=1, colors='k', alpha=0.9)
 
-    if double and template_model is None:
-        filename_stub = "models/gauss_fit_hcop_2G_v2"
-    elif template_model is not None:
-        filename_stub = "models/gauss_fit_hcop_3G_v2"
-    else:
-        filename_stub = "models/gauss_fit_hcop_1G_v2"
+    if filename_stub is None:
+        if double and template_model is None:
+            filename_stub = "models/gauss_fit_hcop_2G_v2"
+        elif template_model is not None:
+            filename_stub = "models/gauss_fit_hcop_3G_v2"
+        else:
+            filename_stub = "models/gauss_fit_hcop_1G_v2"
     param_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".param.fits")
     resid_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".resid.fits")
     model_fn = cube_utils.os.path.join(cube_info['dir'], filename_stub+".model.fits")
@@ -1058,7 +1052,7 @@ def investigate_fit(cube, double=False, template_model=None):
             ax_spectr.plot(spectral_axis, model_spectr, color='Indigo', label='model', linewidth=0.7, alpha=0.6)
             ax_spectr.plot(spectral_axis, resid_spectr, color='orange', label='resid', linewidth=0.7, alpha=0.7)
             ax_spectr.legend()
-            ax_spectr.set_ylim((-3, 23)) # 35 for CII
+            ax_spectr.set_ylim((-5, ylim_max)) # 35 for CII
             ax_spectr.set_xlim((15, 35))
             ax_spectr.set_xlabel("v (km/s)")
             ax_spectr.set_ylabel("T (K)")
@@ -1262,12 +1256,15 @@ def check_if_wings_trace_peak_emission(cube):
     # plt.show()
 
 
-def investigate_template_model_fit(n_submodels=3):
+def investigate_template_model_fit(n_submodels=3, line='hcop'):
     """
     November 17, 2021
     Check out distribution of line centers and stuff
     """
-    filename_stub = f"carma/models/gauss_fit_hcop_{n_submodels}G_v2"
+    if line == 'hcop':
+        filename_stub = f"carma/models/gauss_fit_hcop_{n_submodels}G_v2"
+    else:
+        filename_stub = f"sofia/models/gauss_fit_hcop_{n_submodels}G_v1"
     param_fn = catalog.utils.search_for_file(filename_stub+".param.fits")
     # resid_fn = catalog.utils.search_for_file(filename_stub+".resid.fits")
     # model_fn = catalog.utils.search_for_file(filename_stub+".model.fits")
@@ -1297,7 +1294,7 @@ def investigate_template_model_fit(n_submodels=3):
     amplitudes = np.array(amplitudes)
     i_array = np.array(i_array)
     j_array = np.array(j_array)
-    amp_mask = amplitudes > 2.5
+    amp_mask = amplitudes > (2.5 if line == 'hcop' else 5) # about 5sigma
     means = means[amp_mask]
     amplitudes = amplitudes[amp_mask]
     i_array = i_array[amp_mask]
@@ -1313,9 +1310,9 @@ def investigate_template_model_fit(n_submodels=3):
         mlab.axes(ranges=[0, shape[1], 0, shape[0], 20, 30],
             xlabel='j (ra)', ylabel='i (dec)', zlabel='velocity (km/s)', nb_labels=10,
             line_width=19)
-        kwargs = dict(mode='cube', colormap='Spectral',
+        kwargs = dict(mode='cube', colormap='jet',
             scale_mode='none', scale_factor=0.7, opacity=0.2)
-        mlab.points3d(j_array, i_array, means*30, amplitudes, **kwargs)
+        mlab.points3d(j_array, i_array, means*(30 if line=='hcop' else 4), amplitudes, **kwargs)
         mlab.show()
 
 
@@ -1645,9 +1642,9 @@ if __name__ == "__main__":
     # subcube = cutout_subcube(length_scale_mult=1, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
     #     reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
     #### CII
-    subcube = cutout_subcube(length_scale_mult=2, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
-    cii_bg_spectrum = get_cii_background()
-    subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+    # subcube = cutout_subcube(length_scale_mult=1.5, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+    # cii_bg_spectrum = get_cii_background()
+    # subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
     # test_cii_background()
 
     ###### length_scale_mult = 0.0125 is good for testing HCOP; gives 4 pixels
@@ -1665,23 +1662,25 @@ if __name__ == "__main__":
     #############
     ##### TEMPLATE MODEL SETUP
     #############
-    g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=1)[2]
+    # g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=0)[2]
     # g_init = g_init + g_init[2].copy()
     # print(g_init)
     #### for CII:
     # for g in g_init:
     #     g.amplitude.bounds = (0.05, 100)
-    # g_init.stddev_0 = 1.
+    # g_init.stddev_0 = 1.1
     #############
 
-    # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.546)
+    # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=1)
 
-    fit_live_interactive(subcube, mask=False, template_model=g_init, noise=1,
-        ylim_max=40) # noise from: (125, 32) at length_scale_mult=1
+    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=1,
+    #     ylim_max=40) # noise from: (125, 32) at length_scale_mult=1
         # HCOP noise: 0.546, CII noise: ~1
 
-    # investigate_fit(subcube, double=False, template_model=None)
-    # investigate_template_model_fit(4)
+    # investigate_fit(subcube, double=False, template_model=g_init,
+    #     filename_stub="models/gauss_fit_hcop_4G_v1",
+    #     ylim_max=40)
+    investigate_template_model_fit(4, line='cii')
 
     # stack_pillar_spectra(subcube)
     # fit_multicube_live_interactive(*subcubes)
