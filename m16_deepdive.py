@@ -889,6 +889,62 @@ def save_bgsub_cii():
     ### Already ran this on Nov 4, 2021
 
 
+def moment2_cii_and_hcop():
+    """
+    November 29, 2021 (Cyber monday)
+    Based on Marc's suggestion from the last meeting, compare the moment 2
+    images of CII (bg subtracted) and HCO+
+    I don't recall exactly what we will gain from this, since the CII are almost
+    definitely wider profiles than the HCO+
+    """
+    # Load cubes
+    cii_cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
+    hcop_cube = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits", length_scale_mult=4)
+    # Make subcubes
+    vel_lims = (19*kms, 27*kms)
+    cii_cube = cii_cube.spectral_slab(*vel_lims)
+    hcop_cube = hcop_cube.spectral_slab(*vel_lims)
+    # Noise cutoffs
+    cii_noise = 1.*u.K
+    hcop_noise = 0.5*u.K
+    # Setup axes
+    fig = plt.figure(figsize=(18, 8))
+    ax_cii = plt.subplot(121, projection=cii_cube[0, :, :].wcs)
+    ax_hcop = plt.subplot(122, projection=hcop_cube[0, :, :].wcs)
+    # Make moment 0 images
+    cii_mom0 = cii_cube.with_mask(cii_cube > cii_noise).moment0().to_value()
+    hcop_mom0 = hcop_cube.with_mask(hcop_cube > hcop_noise).moment0().to_value()
+    # Make moment 2 images
+    cii_mom2 = cii_cube.with_mask(cii_cube > 2*cii_noise).moment(order=2)
+    mom2_unit = cii_mom2.unit
+    cii_mom2 = cii_mom2.to_value()
+    hcop_mom2 = hcop_cube.with_mask(hcop_cube > 2*hcop_noise).moment(order=2).to_value()
+    # Plot those images
+    vlims = {'vmin': 0, 'vmax': 3}
+    # vlims = {'vmin': 23, 'vmax': 26}
+    cii_mom2[cii_mom0 < 30] = np.nan
+    hcop_mom2[hcop_mom0 < 2.5] = np.nan
+    im_cii = ax_cii.imshow(cii_mom2, origin='lower', **vlims)
+    im_hcop = ax_hcop.imshow(hcop_mom2, origin='lower', **vlims)
+    # Colorbars
+    fig.colorbar(im_cii, ax=ax_cii, label=str(mom2_unit))
+    fig.colorbar(im_hcop, ax=ax_hcop, label=str(mom2_unit))
+    for ax in (ax_cii, ax_hcop):
+        for coord in ax.coords:
+            # coord.set_ticks_visible(False)
+            coord.set_ticklabel_visible(False)
+            coord.set_axislabel('')
+    # Contours of moment 0
+    ax_cii.contour(cii_mom0, colors='k', levels=np.arange(30, 211, 10))
+    ax_hcop.contour(hcop_mom0, colors='k', levels=np.arange(2.5, 46, 5))
+    # Labels
+    ax_cii.set_title("CII Moment 2 (Moment 0 in contours) [20, 30] km/s")
+    ax_hcop.set_title("same for HCO+")
+    # Save figure
+    # plt.tight_layout()
+    # plt.show()
+    # fig.savefig("/home/ramsey/Pictures/2021-12-06-work/moment2_cii_and_hcop.png")
+
 
 if __name__ == "__main__":
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
@@ -897,11 +953,14 @@ if __name__ == "__main__":
     # for j, x in enumerate(Sigmas):
     #     test_fitting_2_gaussians_with_1(j, x, "changingSigma")
 
-    for s in (None, 'W', 'E', 'N', 'S'):
-        if s is None:
-            s = ''
-        else:
-            s = ' ' + s
-        fit_molecular_components_with_gaussians('peak'+s)
+    # for s in (None, 'W', 'E', 'N', 'S'):
+    #     if s is None:
+    #         s = ''
+    #     else:
+    #         s = ' ' + s
+    #     fit_molecular_components_with_gaussians('peak'+s)
+
+    moment2_cii_and_hcop()
+
     # test_fitting_2_gaussians_with_2(snr=50)
     # test_fitting_2G_with_2G_wrapper()

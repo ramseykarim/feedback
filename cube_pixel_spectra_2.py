@@ -1618,6 +1618,7 @@ def test_cii_background():
     Nov 19, 2021
     Unnerving discrepancy between running the background subtraction on my
     laptop vs desktop, so I need to investigate that...
+    The solution was an astropy/regions update. Weird!
     """
     cii_cube = cutout_subcube(length_scale_mult=6)
     cii_bg_spectrum, artists = get_cii_background(cii_cube=cii_cube, return_artist=True)
@@ -1632,6 +1633,61 @@ def test_cii_background():
     plt.title(f"Peak: {peak_loc.to(u.km/u.s).to_value():.2f} km/s")
     plt.show()
 
+
+def bin_edges_helper(center, width):
+    """
+    Return left and right edges
+    """
+    return center - width/2, center + width/2
+
+
+def rebin_channels(centers_old, centers_new, values_old):
+    """
+    Rebin a spectrum to another set of bins. The new bins should be wider.
+    """
+    n_bins_new = centers_new.size
+    width_old = centers_old[1] - centers_old[0]
+    width_new = centers_new[1] - centers_new[0]
+    left_edges_old, right_edges_old = bin_edges_helper(centers_old, width_old)
+    left_edges_new, right_edges_new = bin_edges_helper(centers_new, width_new)
+    values_new = np.full(n_bins_new, np.nan)
+    for bin_idx_new, bin_center_new in enumerate(centers_new):
+        if (left_edges_new[bin_idx_new] < left_edges_old[0]):
+            continue
+        if (right_edges_new[bin_idx_new] > right_edges_old[-1]):
+            break
+        fully_included_bins = (left_edges_new[bin_idx_new] < left_edges_old) & (right_edges_new[bin_idx_new] > right_edges_old)
+        sum_value = np.sum(values_old[fully_included_bins])
+        averaged_bins = np.sum(fully_included_bins)
+        # partial bins
+        leftmost_bin_idx, rightmost_bin_idx = np.where(fully_included_bins)[0][[0, -1]]
+        # left partial bin
+        left_partial_bin_idx = leftmost_bin_idx - 1
+        fraction_contained = 1 - (left_edges_new[bin_idx_new] - left_edges_old[left_partial_bin_idx])/width_old
+        sum_value += fraction_contained * values_old[left_partial_bin_idx]
+        averaged_bins += fraction_contained
+        # right partial bin
+        right_partial_bin_idx = rightmost_bin_idx + 1
+        fraction_contained = (right_edges_new[bin_idx_new] - left_edges_old[right_partial_bin_idx])/width_old
+        sum_value += fraction_contained * values_old[right_partial_bin_idx]
+        averaged_bins += fraction_contained
+        # finalize
+        values_new[bin_idx_new] = sum_value / averaged_bins
+    return values_new
+
+
+def test_rebin():
+    m = models.Gaussian1D()
+    x = np.arange(-3, 3, 0.1)
+    y = m(x)
+    plt.plot(x, y, 'o', fillstyle='none', label='high resolution')
+    x2 = np.arange(-4, 4, 0.5)
+    y2 = m(x2)
+    plt.plot(x2, y2, 'x', label='low resolution truth')
+    y_rebin = rebin_channels(x, x2, y)
+    plt.plot(x2, y_rebin, '+', label='low resolution rebin')
+    plt.legend()
+    plt.show()
 
 
 if __name__ == "__main__":
@@ -1680,7 +1736,9 @@ if __name__ == "__main__":
     # investigate_fit(subcube, double=False, template_model=g_init,
     #     filename_stub="models/gauss_fit_hcop_4G_v1",
     #     ylim_max=40)
-    investigate_template_model_fit(4, line='cii')
+    # investigate_template_model_fit(3, line='cii')
+
+    test_rebin()
 
     # stack_pillar_spectra(subcube)
     # fit_multicube_live_interactive(*subcubes)
