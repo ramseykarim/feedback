@@ -673,7 +673,8 @@ def emission_peak_spectra(check_peak=True):
     """
 
     if check_peak:
-        co10_cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_14x14.fits", length_scale_mult=4)
+        # co10_cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_14x14.fits", length_scale_mult=4)
+        co10_cube = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits", length_scale_mult=4)
         cii_cube = cps2.cutout_subcube(length_scale_mult=4)
 
         full_power_loc_list = []
@@ -694,7 +695,7 @@ def emission_peak_spectra(check_peak=True):
         other_peak = []
 
         point_regions_to_save = []
-   
+
         for j, img, mom0, ax in zip(range(2), full_power_val_list, mom0s, [ax_co10, ax_cii]):
             # plot the moment 0 img
             ax.imshow(img, origin='lower', cmap='viridis')
@@ -708,7 +709,7 @@ def emission_peak_spectra(check_peak=True):
                 coord.set_ticklabel_visible(False)
                 coord.set_axislabel('')
             # find the actual peaks
-            guess_center, guess_radius = center_and_radius_from_reg(reg_list[j], mom0.wcs, override_radius=20*u.arcsec)
+            guess_center, guess_radius = center_and_radius_from_reg(reg_list[j], mom0.wcs, override_radius=30*u.arcsec)
             peak_pixel = find_peak(img, guess_center, guess_radius) # returned in (i, j) order
             ax.plot(peak_pixel[1], peak_pixel[0], 'x', color=marcs_colors[2])
             other_peak.append(translate_array_index(peak_pixel, mom0.wcs, mom0s[1-j].wcs))
@@ -720,16 +721,18 @@ def emission_peak_spectra(check_peak=True):
         ax_co10.plot([1], [1], 'x', color='r')
         plt.show()
         # plt.savefig("/home/rkarim/Pictures/2021-10-19-work/emissionpeaks_DEBUG.png")
-        regions.Regions(point_regions_to_save).write(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.reg").replace('.reg', '.moreprecise.reg'))
+        regions.Regions(point_regions_to_save).write(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.reg").replace('.reg', '.hcopregrid.moreprecise.reg'))
         return
 
     # this only runs if check_peak is False (I just don't want the entire function indented that far)
     reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.reg"))
-    co10_cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_14x14.fits", length_scale_mult=4)
+    # co10_cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_14x14.fits", length_scale_mult=4)
+    co10_cube = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits", length_scale_mult=4)
     cii_cube = cps2.cutout_subcube(length_scale_mult=4)
     cube_list = [co10_cube, cii_cube]
     full_power_val_list = [cube.max(axis=0) for cube in cube_list]
-    names = ["$^{12}$CO (1$-$0)", "[CII]"]
+    # names = ["$^{12}$CO (1$-$0)", "[CII]"]
+    names = ["HCO+", "[CII]"]
     # setup figure
     fig = plt.figure(figsize=(16, 10))
     ax_spec_co10 = plt.subplot2grid((2, 3), (1, 1), colspan=2)
@@ -835,7 +838,8 @@ def emission_peak_spectra(check_peak=True):
     for ax in axes:
         ax.legend()
     plt.subplots_adjust(left=0.05, right=0.95, bottom=0.06, top=0.96)
-    fig.savefig("/home/rkarim/Pictures/2021-10-19-work/emissionpeaks.png")
+    ## Previous work was October 19, 2021
+    fig.savefig("/home/ramsey/Pictures/2021-12-09-work/emissionpeaks_cii-hcopregrid.png")
 
 
 
@@ -1294,4 +1298,4 @@ if __name__ == "__main__":
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
     # channel_maps_again('c18o10', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
 
-    emission_peak_spectra()
+    emission_peak_spectra(check_peak=True)

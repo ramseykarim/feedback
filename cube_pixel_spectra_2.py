@@ -349,10 +349,8 @@ def select_pixels_and_models(mol, i, var_mean=False, var_std=False):
     :param var_std: whether to let the stddev float in the model
     """
     if mol == "cii":
-        # Only one position for cii right now
-        good_pixel = (37, 42)
-        di, dj = 2, 2
-        g = None
+        return select_pixels_and_models('hcop-cii', i, var_mean=var_mean, var_std=var_std)
+
 
 
     elif mol == '12co10':
@@ -377,21 +375,29 @@ def select_pixels_and_models(mol, i, var_mean=False, var_std=False):
                 bounds={'amplitude': (0, 200)})
 
 
-    elif mol == 'hcop':
+    elif mol[:4] == 'hcop':
 
         if i == 'western horn':
             # This is the Western horn component
-            good_pixel = (447, 375)
-            di, dj = 2, 2
-            g = models.Gaussian1D(amplitude=10.291692169984568, mean=24.440935924615744, stddev=0.4614265241399322,
+            if mol[-4:] == '-cii':
+                good_pixel = (12, 24)
+                di, dj = 0, 0
+            else:
+                good_pixel = (447, 375)
+                di, dj = 2, 2
+            g = models.Gaussian1D(amplitude=10.291692169984568, mean=24.440935924615744, stddev=0.46, #0.4614265241399322
                 bounds={"amplitude": (0, 100), "mean": (23, 27), "stddev": (0.1, 2)})
 
         elif i == 'bluest component':
             # This is the bluest N-E corner component
-            good_pixel = (602, 415)
-            di, dj = 1, 1
+            if mol[-4:] == '-cii':
+                good_pixel = (35, 30)
+                di, dj = 0, 0
+            else:
+                good_pixel = (602, 415)
+                di, dj = 1, 1
             g = models.Gaussian1D(amplitude=5.2758702607467525, mean=23.46286597585026, stddev=0.46, # fitted stddev = 0.4526447822523458
-                bounds={"amplitude": (0, 30), "mean": (21, 26), "stddev": (0.1, 2)})
+                bounds={"amplitude": (0.6, 30), "mean": (22.5, 25), "stddev": (0.1, 2)})
 
         elif i == 'bluest component 2':
             # Now even further out in the blue component
@@ -430,15 +436,23 @@ def select_pixels_and_models(mol, i, var_mean=False, var_std=False):
 
         elif i == 'main red':
             # just north of the Eastern thread, and probably the main red component in the peak
-            good_pixel = (564, 425)
-            di, dj = 2, 2
+            if mol[-4:] == '-cii':
+                good_pixel = (27, 30)
+                di, dj = 0, 0
+            else:
+                good_pixel = (564, 425)
+                di, dj = 2, 2
             g = models.Gaussian1D(amplitude=12.4, mean=25.35, stddev=0.46, # fitted stddev = 0.61
                 bounds={"amplitude": (1, 30), "mean": (25, 26.5), "stddev": (0.1, 2)})
 
         elif i == 'east of peak':
             # this is a compound model!
-            good_pixel = (583, 431)
-            di, dj = 3, 3
+            if mol[-4:] == '-cii':
+                good_pixel = (33, 32)
+                di, dj = 0, 0
+            else:
+                good_pixel = (583, 431)
+                di, dj = 3, 3
             g_red = select_pixels_and_models('hcop', 'main red', var_mean=var_mean, var_std=var_std)[2]
             g_blue = select_pixels_and_models('hcop', 'bluest component', var_mean=var_mean, var_std=var_std)[2]
             g = g_red + g_blue
@@ -448,16 +462,22 @@ def select_pixels_and_models(mol, i, var_mean=False, var_std=False):
             # there are four options for the pixel here
             if i == 'peak':
                 # main peak
-                good_pixel = (572, 450)
+                if mol[-4:] == '-cii':
+                    good_pixel = (30, 35)
+                else:
+                    good_pixel = (572, 450)
             elif i[-1] == 'N':
                 good_pixel = (588, 466)
             elif i[-1] == 'E':
-                good_pixel = select_pixels_and_models('hcop', 'east of peak', var_mean=var_mean, var_std=var_std)[0]
+                good_pixel = select_pixels_and_models(mol, 'east of peak', var_mean=var_mean, var_std=var_std)[0]
             elif i[-1] == 'W':
                 good_pixel = (569, 465)
             elif i[-1] == 'S':
                 good_pixel = (561, 446)
-            di, dj = 3, 3
+            if mol[-4:] == '-cii':
+                di, dj = 0, 0
+            else:
+                di, dj = 3, 3
             g0 = models.Gaussian1D(amplitude=7, mean=23.58, stddev=0.46,
                 bounds={'amplitude': (0, None), 'mean': (20, 30)}) # 23-24 or so, based on (23.2, 23.9)
             g1 = models.Gaussian1D(amplitude=7, mean=24.57, stddev=0.46,
@@ -1636,6 +1656,7 @@ def test_cii_background():
 
 def bin_edges_helper(center, width):
     """
+    Dec 6, 2021
     Return left and right edges
     """
     return center - width/2, center + width/2
@@ -1643,6 +1664,7 @@ def bin_edges_helper(center, width):
 
 def rebin_channels(centers_old, centers_new, values_old):
     """
+    Dec 6, 2021
     Rebin a spectrum to another set of bins. The new bins should be wider.
     """
     n_bins_new = centers_new.size
@@ -1677,6 +1699,10 @@ def rebin_channels(centers_old, centers_new, values_old):
 
 
 def test_rebin():
+    """
+    Dec 6, 2021
+    debug the above code
+    """
     m = models.Gaussian1D()
     x = np.arange(-3, 3, 0.1)
     y = m(x)
@@ -1688,6 +1714,56 @@ def test_rebin():
     plt.plot(x2, y_rebin, '+', label='low resolution rebin')
     plt.legend()
     plt.show()
+
+
+def regrid_hcop():
+    """
+    Dec 6, 2021
+    Use the .reproject method of SpectralCube to grid HCO+ to the CII grid
+    Use the CII grid at length scale 4
+
+    Finished using this on Dec 7, 2021
+    There are some documentation inconsistencies and weird bugs in spectral_cube
+    that made this process rather arduous.
+    I think some of it might be that I initialized the VRAD SpectralCube using
+    data=hcop_cube.unmasked_data, which provides a "view" not an array. Maybe
+    unmasked_data[:] would be better? But this whole thing takes so long to
+    run that I don't want to test that theory.
+    """
+    if True:
+        cii_cube = cutout_subcube(length_scale_mult=4.)
+        hcop_cube_obj = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits")
+        hcop_cube = hcop_cube_obj.data
+
+        # The reproject function apparently messes with the spectral axis too, so...
+        # get the delta_velocity of HCO+ ; this is how they do it in spectral_cube
+        hcop_dv = np.mean(np.diff(hcop_cube.spectral_axis))
+        cii_dv = np.mean(np.diff(cii_cube.spectral_axis))
+        mean_filter_width = (cii_dv/hcop_dv).decompose().to_value()
+        print(mean_filter_width)
+        mean_filter_width = np.round(mean_filter_width, 4)
+        print(mean_filter_width)
+        from astropy.convolution import Box1DKernel
+        mean_filter = Box1DKernel(mean_filter_width)
+        print(mean_filter.array)
+        hcop_cube = hcop_cube.spectral_smooth(mean_filter)
+        hcop_cube = hcop_cube.spectral_interpolate(cii_cube.spectral_axis.to(hcop_cube.spectral_axis.unit))
+        hcop_cube.write(hcop_cube_obj.full_path.replace('.fits', '.boxsmooth.fits'), format='fits')
+
+        # now finish it
+        hdr = hcop_cube.wcs.to_header()
+        hdr['CTYPE3'] = 'VRAD'
+        w = WCS(hdr)
+        hcop_cube = cube_utils.SpectralCube(data=hcop_cube.unmasked_data[:], wcs=w, meta=hcop_cube.meta)
+        hcop_cube = hcop_cube.reproject(cii_cube.header)
+        hcop_cube = hcop_cube.minimal_subcube()
+        hcop_cube = hcop_cube.spectral_slab(17*u.km/u.s, 30*u.km/u.s)
+        savename = hcop_cube_obj.full_path.replace('.fits', '.fullregrid.fits')
+        hcop_cube.write(savename, format='fits', overwrite=True)
+        # Forgot to trim off the extra channels on either end
+    else:
+        raise RuntimeError("I already ran this on Dec 7, 2021!")
+
 
 
 if __name__ == "__main__":
@@ -1738,7 +1814,7 @@ if __name__ == "__main__":
     #     ylim_max=40)
     # investigate_template_model_fit(3, line='cii')
 
-    test_rebin()
+    regrid_hcop()
 
     # stack_pillar_spectra(subcube)
     # fit_multicube_live_interactive(*subcubes)

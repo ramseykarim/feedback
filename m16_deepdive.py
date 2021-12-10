@@ -501,16 +501,23 @@ def prepare_pdrt_tables_2():
     print("done")
 
 
-def fit_molecular_components_with_gaussians(region_name):
+def fit_molecular_components_with_gaussians(region_name, cii=False, regrid=False):
     """
     Created October 22, 2021
     Try my hand at fitting with Gaussians again
     This time it's the CO (1-0) data (maybe....13...?)
     Try to find distinct components and see if they can be responsible for the CII profile without
     major velocity shifts
+
+    Dec 7, 2021: now using this for the regridded HCO+ to check if the single-
+    component linewidth changed (it should've by a little bit due to rebin)
     """
     # cube_co = cube_utils.CubeData("bima/M16_12CO1-0_7x4.fits").convert_to_K().data.with_spectral_unit(kms)
-    cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K().data.with_spectral_unit(kms)
+    fn = f"carma/M16.ALL.hcop.sdi.cm.subpv{'.SOFIAbeam.regrid' if regrid else ''}.fits"
+    if not cii:
+        cube = cube_utils.CubeData(fn).convert_to_K().data.with_spectral_unit(kms)
+    else:
+        cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
     # try with HCO+ smoothed first, then see if it holds up for unsmoothed
     # good_pixel = (446, 304)
     # di, dj = 20, 30
@@ -524,7 +531,7 @@ def fit_molecular_components_with_gaussians(region_name):
         )
     # region_name = 'peak W'
     print(region_name)
-    good_pixel, (di, dj), g = cps2.select_pixels_and_models('hcop', region_name, var_mean=1, var_std=0)
+    good_pixel, (di, dj), g = cps2.select_pixels_and_models(('hcop' + ('-cii' if regrid else '')) if not cii else 'cii', region_name, var_mean=1, var_std=1)
     # # mean = 24.91
     # ## this is the western thread, it seems to always be around 25 km/s
     # good_pixel = (540, 430) # mean = 24.87
@@ -536,15 +543,20 @@ def fit_molecular_components_with_gaussians(region_name):
 
 
     # Identify noise level
-    noise_pixel = (644, 318) # noise for 2x2 pixels is ~0.5 K
+    if regrid:
+        ## for the CII-grid HCO+
+        noise_pixel = (cube.shape[1]-6, 5) # top left area
+    else:
+        ## for the original HCO+
+        noise_pixel = (644, 318) # noise for 2x2 pixels is ~0.5 K
 
     vel_lims = (23, 26)
 
-    i_lims = i_lo, i_hi = tuple(good_pixel[0] + sign*di for sign in (-1, 1))
-    j_lims = j_lo, j_hi = tuple(good_pixel[1] + sign*dj for sign in (-1, 1))
+    i_lims = i_lo, i_hi = tuple(good_pixel[0] + sign*di + offset for offset, sign in enumerate((-1, 1)))
+    j_lims = j_lo, j_hi = tuple(good_pixel[1] + sign*dj + offset for offset, sign in enumerate((-1, 1)))
 
-    noise_i = slice(*(noise_pixel[0] + sign*di for sign in (-1, 1)))
-    noise_j = slice(*(noise_pixel[1] + sign*dj for sign in (-1, 1)))
+    noise_i = slice(*(noise_pixel[0] + sign*di + offset for offset, sign in enumerate((-1, 1))))
+    noise_j = slice(*(noise_pixel[1] + sign*dj + offset for offset, sign in enumerate((-1, 1))))
     print(noise_i, noise_j)
 
     # vel_lims = (23, 24)
@@ -553,17 +565,27 @@ def fit_molecular_components_with_gaussians(region_name):
 
 
     ax_img = plt.subplot(121)
-    show_box_i_lims = show_box_i_lo, show_box_i_hi = 370, 665 # 0, mom0.shape[0]
-    show_box_j_lims = show_box_j_lo, show_box_j_hi = 277, 592 # 0, mom0.shape[1]
+    if regrid:
+        ## for the CII-grid HCO+ cube
+        show_box_i_lims = show_box_i_lo, show_box_i_hi = 0, mom0.shape[0]
+        show_box_j_lims = show_box_j_lo, show_box_j_hi = 0, mom0.shape[1]
+    else:
+        ## for the original HCO+ cube
+        show_box_i_lims = show_box_i_lo, show_box_i_hi = 370, 665 # 0, mom0.shape[0]
+        show_box_j_lims = show_box_j_lo, show_box_j_hi = 277, 592 # 0, mom0.shape[1]
     show_box_lo_lims = (show_box_i_lo, show_box_j_lo)
-    show_box = make_show_box(show_box_i_lims, show_box_j_lims)
+    show_box = cps2.make_show_box(show_box_i_lims, show_box_j_lims)
     ax_img.imshow(mom0.to_value()[show_box], origin='lower')
+
+    noise = np.std(cube[:, noise_i, noise_j].mean(axis=(1, 2)).to_value())
+    print("NOISE", noise)
+    # if regrid:
+    #     cube = cube.with_mask(cube > -1*noise*u.K)
 
     x_axis = cube.spectral_axis.to_value()
     spectrum = cube[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
 
     ax_spec = plt.subplot(122)
-    noise = np.std(cube[:, noise_i, noise_j].mean(axis=(1, 2)).to_value())
     ax_spec.set_ylabel(f"Noise: {noise:.3f}")
 
     # mark some things on each plot
@@ -573,14 +595,14 @@ def fit_molecular_components_with_gaussians(region_name):
 
     mask = spectrum.to_value() > -100
 
-    fitter = cps2.fitting.SLSQPLSQFitter()
-    g_fit = fitter(g, x_axis[mask], spectrum.to_value()[mask],
-        verblevel=1)
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True) # SLSQPLSQFitter() is old method, LevMarLSQFitter lets us do uncertainties
+    g_fit = fitter(g, x_axis[mask], spectrum.to_value()[mask])
     print(g_fit)
     cps2.plot_everything_about_models(ax_spec, x_axis, spectrum.to_value(), g_fit)
 
-    ax_spec.set_title("HCO+ spectrum from within box (see left), with fit")
-    ax_img.set_title(f"HCO+ moment 0 between {vel_lims[0]}, {vel_lims[1]} km/s")
+    ax_spec.set_title(f"{'HCO+' if not cii else 'CII'} spectrum from within box (see left), with fit")
+    ax_img.set_title(f"{'HCO+' if not cii else 'CII'} moment 0 between {vel_lims[0]}, {vel_lims[1]} km/s")
+    ax_spec.set_xlim(17, 30)
     reg_stub = region_name.replace(' ', '-')
     # plt.savefig(f'/home/ramsey/Pictures/2021-11-11-work/fit_molecular_components_3G_fixedstd_{reg_stub}.png')
     plt.show()
@@ -728,152 +750,67 @@ def fit_molecular_and_cii_with_gaussians():
     Let's do this
     Fit the HCO+ peak with 2 Gaussians, check it on the 13CO(1-0) peak (optional)
     and then check it on the CII peak
+
+    Dec 7, 2021 the night before a meeting
+    I deleted everything and am starting over
+    But the goal is the same
+    I have regridded the HCO+ to the CII grid now so I can do more direct
+    comparisons
+    I will use regions to mark the points so that I can also use this on the
+    high-res HCO+
+    Starting this rewrite while making the rice + tuna dish that gave that
+    person on tik tok mercury poisoning because they ate it every day for 2 months
+    I do not plan to eat it that often
+    Dec 9, 2021 still working :/
+    Use the pillar1_emissionpeaks.hcopregrid.moreprecise.reg and p1_threads_pathsandpoints.reg regions for fitting
     """
-    cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits").convert_to_K().data.with_spectral_unit(kms)
-    cube_cii = cps2.cutout_subcube(length_scale_mult=5)
+    cii_cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
+    regrid = True # Just in case I want to switch back to regular resolution? doesn't hurt
+    fn = f"carma/M16.ALL.hcop.sdi.cm.subpv{'.SOFIAbeam.regrid' if regrid else ''}.fits"
+    hcop_cube = cube_utils.CubeData(fn).convert_to_K().data.with_spectral_unit(kms)
+    hcop_flat_wcs = hcop_cube[0, :, :].wcs
 
-    # HCO+ peak
-    # good_pixel = (570, 451)
-    # di, dj = 1, 1
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg")) # order appears to be [HCO+, CII]
+    pixel_coords = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in sky_regions] # converted to (i, j) tuples
 
-    # more of HCO+ peak
-    good_pixel = (575, 447)
-    di, dj = 20, 25 #1
-    di, dj = 25, 30 #2
-    di, dj = 35, 40 #3
-
-    g1 = cps2.models.Gaussian1D(amplitude=20, mean=24, stddev=0.46, # fitted stddev = 0.44549289151047716
-        bounds={"amplitude": (0, 100), "mean": (21, 27), "stddev": (0.1, 2)})
-    g2 = cps2.models.Gaussian1D(amplitude=20, mean=26, stddev=0.46, # fitted stddev = 0.44549289151047716
-        bounds={"amplitude": (0, 100), "mean": (21, 27), "stddev": (0.1, 2)})
-
-    # g3 = cps2.models.Gaussian1D(amplitude=20, mean=25, stddev=0.46, # fitted stddev = 0.44549289151047716
-    #     bounds={"amplitude": (0, 100), "mean": (21, 27), "stddev": (0.1, 2)})
-
-    g_all = g1 + g2 #+ g3
-    g_all.stddev_1.tied = lambda m: m.stddev_0
-    # g_all.stddev_0.fixed = g_all.stddev_1.fixed = g_all.stddev_2.fixed = True
-    # g1.stddev.fixed = True
-        # Identify noise level
-    noise_pixel = (644, 318)
-    # noise_pixel = (284, 573) # all these are consistent, noise for 2x2 pixels is ~0.5 K
-    # noise_pixel = (200, 510)
-    # good_pixel = noise_pixel
-    # di, dj = 1, 1
-
-
+    # Start with one pixel, just fit that first
+    assert regrid
+    selected_pixel = pixel_coords[0]
+    cii_spectrum = cii_cube[(slice(None), *selected_pixel)]
+    cii_x = cii_cube.spectral_axis.to_value()
+    hcop_spectrum = hcop_cube[(slice(None), *selected_pixel)]
+    hcop_x = hcop_cube.spectral_axis.to_value()
+    # Set up plots
+    ax_cii_img = plt.subplot2grid((2, 3), (0, 0))
+    ax_hcop_img = plt.subplot2grid((2, 3), (1, 0))
+    ax_cii_spec = plt.subplot2grid((2, 3), (0, 1), colspan=2)
+    ax_hcop_spec = plt.subplot2grid((2, 3), (1, 1), colspan=2)
+    # Plot images
     vel_lims = (23, 26)
-
-    i_lo, i_hi = (good_pixel[0] + sign*di for sign in (-1, 1))
-    j_lo, j_hi = (good_pixel[1] + sign*dj for sign in (-1, 1))
-
-    noise_i = slice(*(noise_pixel[0] + sign*di for sign in (-1, 1)))
-    noise_j = slice(*(noise_pixel[1] + sign*dj for sign in (-1, 1)))
-
-    # vel_lims = (23, 24)
-    mom0 = cube.spectral_slab(*(v*kms for v in vel_lims)).moment0()
-    fig = plt.figure(figsize=(15, 7))
-
-
-    ax_img = plt.subplot(221)
-    show_box_i_lo, show_box_i_hi = 370, 665 # 0, mom0.shape[0]
-    show_box_j_lo, show_box_j_hi = 277, 592 # 0, mom0.shape[1]
-    show_box = (slice(show_box_i_lo, show_box_i_hi), slice(show_box_j_lo, show_box_j_hi))
-    ax_img.imshow(mom0.to_value()[show_box], origin='lower')
-
-    x_axis = cube.spectral_axis.to_value()
-    spectrum = cube[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
-    ax_spec = plt.subplot(222)
-    ax_spec.plot(x_axis, spectrum, color='k')
-    noise = np.std(cube[:, noise_i, noise_j].mean(axis=(1, 2)).to_value())
-    ax_spec.set_ylabel(f"Noise: {noise:.3f}")
-    # mark some things on each plot
-    [ax_spec.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
-    [ax_spec.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
-    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - show_box_j_lo
-    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - show_box_i_lo
-    ax_img.plot(box_x, box_y, color='grey')
-    ax_img.plot([noise_pixel[1] - show_box_j_lo], [noise_pixel[0] - show_box_i_lo], 'x', color='grey')
-    # TODO: plot the spectrum and use modeling to fit gaussian
-    mask = spectrum.to_value() > -100
-
-    fitter = cps2.fitting.SLSQPLSQFitter()
-
-    g_fit = fitter(g_all, x_axis[mask], spectrum.to_value()[mask],
-        verblevel=1)
-
-    fitted_spectrum = g_fit(x_axis)
-    ax_spec.plot(x_axis, fitted_spectrum, color='r', linestyle='--')
-    for g in g_fit:
-        ax_spec.axvline(g.mean, color='r', linestyle='--', alpha=0.3)
-        ax_spec.plot(x_axis, g(x_axis), color='r', linestyle=':', alpha=0.3)
-    print(g_fit)
-    ax_spec.plot(cube.spectral_axis, spectrum.to_value()-fitted_spectrum, color='k', alpha=0.6, linestyle=':')
-
-    text_x, text_y, dy = 0.05, 0.95, 0.05
-    for i, g in enumerate(g_fit):
-        ax_spec.text(text_x, text_y - 4*i*dy, f"$A_{i}$ = {g.amplitude.value:5.2f}", transform=ax_spec.transAxes)
-        ax_spec.text(text_x, text_y - dy - 4*i*dy, f"$\mu_{i}$ = {g.mean.value:5.2f}", transform=ax_spec.transAxes)
-        ax_spec.text(text_x, text_y - dy*2 - 4*i*dy, f"$\sigma_{i}$ = {g.stddev.value:5.2f}", transform=ax_spec.transAxes)
-    ax_spec.set_title("HCO+ spectrum from within box (see left), with fit")
-    ax_img.set_title(f"HCO+ moment 0 between {vel_lims[0]}, {vel_lims[1]} km/s")
-
-
-    ax_img_cii = plt.subplot(223)
-    ax_spec_cii = plt.subplot(224)
-
-    mom0_cii = cube_cii.spectral_slab(*(v*kms for v in vel_lims)).moment0()
-    ax_img_cii.imshow(mom0_cii.to_value(), origin='lower')
-    x_axis = cube_cii.spectral_axis.to_value()
-
-    good_pixel_cii = (37, 42)
-    di, dj = 2, 2
-
-    i_lo, i_hi = (good_pixel_cii[0] + sign*di for sign in (-1, 1))
-    j_lo, j_hi = (good_pixel_cii[1] + sign*dj for sign in (-1, 1))
-
-    spectrum = cube_cii[:, i_lo:i_hi, j_lo:j_hi].mean(axis=(1, 2))
-    cii_bg_spectrum, artists = cps2.get_cii_background(cube_cii, return_artist=True, ec='w', linestyle='--', alpha=0.3, fill=False)
-
-    ax_spec_cii.plot(x_axis, spectrum, color='k', alpha=0.3)
-    ax_spec_cii.plot(x_axis, cii_bg_spectrum, color='k', linestyle='--', alpha=0.3)
-    spectrum = spectrum - cii_bg_spectrum
-    ax_spec_cii.plot(x_axis, spectrum, color='k')
-
-    cii_noise = np.std(spectrum[cube_cii.spectral_axis < 17*kms].to_value())
-    [ax_spec_cii.axhline(sign*cii_noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
-
-    [ax_spec_cii.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
-    box_x = np.array([j_lo, j_hi, j_hi, j_lo, j_lo]) - 0
-    box_y = np.array([i_lo, i_lo, i_hi, i_hi, i_lo]) - 0
-    ax_img_cii.plot(box_x, box_y, color='grey')
-
-    g_cii_guess = g_fit.copy()
-    g_cii_guess.stddev_0.fixed = g_cii_guess.stddev_1.fixed = True#g_cii_guess.stddev_2.fixed = False
-    g_cii_guess.mean_0.fixed = g_cii_guess.mean_1.fixed = True # g_cii_guess.mean_2.fixed = True
-
-    g_cii_guess.stddev_1.tied = lambda m : m.stddev_0
-    # g_cii_guess.stddev_2.tied = lambda m : m.stddev_0
-
-    g_fit_cii = fitter(g_cii_guess, x_axis, spectrum.to_value(), verblevel=1)
-    fitted_cii_spectrum = g_fit_cii(x_axis)
-    ax_spec_cii.plot(x_axis, fitted_cii_spectrum, color='r', linestyle='-')
-    ax_spec_cii.plot(x_axis, spectrum.to_value() - fitted_cii_spectrum, color='g', linestyle=':')
-    for g in g_fit_cii:
-        ax_spec_cii.axvline(g.mean, color='r', linestyle='--', alpha=0.3)
-        ax_spec_cii.plot(x_axis, g(x_axis), color='r', linestyle=':', alpha=0.3)
-    for i, g in enumerate(g_fit_cii):
-        ax_spec_cii.text(text_x, text_y - 4*i*dy, f"$A_{i}$ = {g.amplitude.value:5.2f}", transform=ax_spec_cii.transAxes)
-        ax_spec_cii.text(text_x, text_y - dy - 4*i*dy, f"$\mu_{i}$ = {g.mean.value:5.2f}", transform=ax_spec_cii.transAxes)
-        ax_spec_cii.text(text_x, text_y - dy*2 - 4*i*dy, f"$\sigma_{i}$ = {g.stddev.value:5.2f}", transform=ax_spec_cii.transAxes)
-
-    ax_spec.set_xlim([16, 35])
-    ax_spec_cii.set_xlim([16, 35])
-    for bg_artist in artists:
-        ax_img_cii.add_artist(bg_artist)
-
-    plt.savefig(f'/home/rkarim/Pictures/2021-11-03-work/fit_molecular_components_and_CII_2g_fixedwidth_3.png')
-    # plt.show()
+    ax_cii_img.imshow(cii_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower')
+    ax_hcop_img.imshow(hcop_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower')
+    cps2.plot_box(ax_cii_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
+    cps2.plot_box(ax_hcop_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
+    # Do noise stuff
+    noise_cii = 1 # 1 K has been my estimate for a while
+    noise_hcop = 0.12 # estimated from the cube, lower than the original 0.5 due to smoothing to CII beam and rebinning to CII channels
+    cps2.plot_noise_and_vlims(ax_cii_spec, noise_cii, vel_lims)
+    cps2.plot_noise_and_vlims(ax_hcop_spec, noise_hcop, vel_lims)
+    # Set up Gaussian model, start with one component
+    g0 = cps2.models.Gaussian1D(amplitude=10, mean=24.5, stddev=0.5,
+        bounds={'amplitude': (0, None), 'mean': (20, 30)})
+    g = g0
+    # Now do the fitting
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    g_fit_cii = fitter(g, cii_x, cii_spectrum)
+    g_fit_hcop = fitter(g, hcop_x, hcop_spectrum)
+    # Plot the fits
+    cps2.plot_everything_about_models(ax_cii_spec, cii_x, cii_spectrum, g_fit_cii)
+    cps2.plot_everything_about_models(ax_hcop_spec, hcop_x, hcop_spectrum, g_fit_hcop)
+    plt.legend()
+    # plt.savefig(f'/home/rkarim/Pictures/2021-11-03-work/fit_molecular_components_and_CII_2g_fixedwidth_3.png')
+    plt.show()
+    ### work on this today!!!!! 12/9!!
 
 
 def save_bgsub_cii():
@@ -882,11 +819,11 @@ def save_bgsub_cii():
     Save a background-subtracted version of the CII cube (small cutout)
     Use all 4 regions from catalogs/pillar_background_sample_multiple_4.reg
     """
+    raise RuntimeError("Already ran this on Nov 4, 2021")
     cii_bg_spectrum = cps2.get_cii_background()
     cii_cube = cps2.cutout_subcube(length_scale_mult=4)
     cii_cube = cii_cube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
     # cii_cube.write(catalog.utils.m16_data_path + "sofia/M16_CII_pillar1_BGsubtracted.fits")
-    ### Already ran this on Nov 4, 2021
 
 
 def moment2_cii_and_hcop():
@@ -946,6 +883,15 @@ def moment2_cii_and_hcop():
     # fig.savefig("/home/ramsey/Pictures/2021-12-06-work/moment2_cii_and_hcop.png")
 
 
+def make_quick_image():
+    cube = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits", length_scale_mult=4.)
+    mom0 = cube.spectral_slab(20*kms, 27*kms).moment0()
+    plt.imshow(mom0.to_value(), origin='lower', cmap='nipy_spectral')
+    plt.colorbar()
+    plt.title("HCO+, moment 0 between 20-27 km/s")
+    plt.show()
+
+
 if __name__ == "__main__":
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
@@ -960,7 +906,7 @@ if __name__ == "__main__":
     #         s = ' ' + s
     #     fit_molecular_components_with_gaussians('peak'+s)
 
-    moment2_cii_and_hcop()
-
+    # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
+    fit_molecular_and_cii_with_gaussians()
     # test_fitting_2_gaussians_with_2(snr=50)
     # test_fitting_2G_with_2G_wrapper()
