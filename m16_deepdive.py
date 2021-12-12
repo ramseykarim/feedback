@@ -744,75 +744,6 @@ def test_fitting_2G_with_2G_wrapper():
     np.savetxt(txt_file, trials)
 
 
-def fit_molecular_and_cii_with_gaussians():
-    """
-    Created October 27 2021, 25 minutes before my meeting
-    Let's do this
-    Fit the HCO+ peak with 2 Gaussians, check it on the 13CO(1-0) peak (optional)
-    and then check it on the CII peak
-
-    Dec 7, 2021 the night before a meeting
-    I deleted everything and am starting over
-    But the goal is the same
-    I have regridded the HCO+ to the CII grid now so I can do more direct
-    comparisons
-    I will use regions to mark the points so that I can also use this on the
-    high-res HCO+
-    Starting this rewrite while making the rice + tuna dish that gave that
-    person on tik tok mercury poisoning because they ate it every day for 2 months
-    I do not plan to eat it that often
-    Dec 9, 2021 still working :/
-    Use the pillar1_emissionpeaks.hcopregrid.moreprecise.reg and p1_threads_pathsandpoints.reg regions for fitting
-    """
-    cii_cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
-    regrid = True # Just in case I want to switch back to regular resolution? doesn't hurt
-    fn = f"carma/M16.ALL.hcop.sdi.cm.subpv{'.SOFIAbeam.regrid' if regrid else ''}.fits"
-    hcop_cube = cube_utils.CubeData(fn).convert_to_K().data.with_spectral_unit(kms)
-    hcop_flat_wcs = hcop_cube[0, :, :].wcs
-
-    sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg")) # order appears to be [HCO+, CII]
-    pixel_coords = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in sky_regions] # converted to (i, j) tuples
-
-    # Start with one pixel, just fit that first
-    assert regrid
-    selected_pixel = pixel_coords[0]
-    cii_spectrum = cii_cube[(slice(None), *selected_pixel)]
-    cii_x = cii_cube.spectral_axis.to_value()
-    hcop_spectrum = hcop_cube[(slice(None), *selected_pixel)]
-    hcop_x = hcop_cube.spectral_axis.to_value()
-    # Set up plots
-    ax_cii_img = plt.subplot2grid((2, 3), (0, 0))
-    ax_hcop_img = plt.subplot2grid((2, 3), (1, 0))
-    ax_cii_spec = plt.subplot2grid((2, 3), (0, 1), colspan=2)
-    ax_hcop_spec = plt.subplot2grid((2, 3), (1, 1), colspan=2)
-    # Plot images
-    vel_lims = (23, 26)
-    ax_cii_img.imshow(cii_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower')
-    ax_hcop_img.imshow(hcop_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower')
-    cps2.plot_box(ax_cii_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
-    cps2.plot_box(ax_hcop_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
-    # Do noise stuff
-    noise_cii = 1 # 1 K has been my estimate for a while
-    noise_hcop = 0.12 # estimated from the cube, lower than the original 0.5 due to smoothing to CII beam and rebinning to CII channels
-    cps2.plot_noise_and_vlims(ax_cii_spec, noise_cii, vel_lims)
-    cps2.plot_noise_and_vlims(ax_hcop_spec, noise_hcop, vel_lims)
-    # Set up Gaussian model, start with one component
-    g0 = cps2.models.Gaussian1D(amplitude=10, mean=24.5, stddev=0.5,
-        bounds={'amplitude': (0, None), 'mean': (20, 30)})
-    g = g0
-    # Now do the fitting
-    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
-    g_fit_cii = fitter(g, cii_x, cii_spectrum)
-    g_fit_hcop = fitter(g, hcop_x, hcop_spectrum)
-    # Plot the fits
-    cps2.plot_everything_about_models(ax_cii_spec, cii_x, cii_spectrum, g_fit_cii)
-    cps2.plot_everything_about_models(ax_hcop_spec, hcop_x, hcop_spectrum, g_fit_hcop)
-    plt.legend()
-    # plt.savefig(f'/home/rkarim/Pictures/2021-11-03-work/fit_molecular_components_and_CII_2g_fixedwidth_3.png')
-    plt.show()
-    ### work on this today!!!!! 12/9!!
-
-
 def save_bgsub_cii():
     """
     November 4, 2021
@@ -890,6 +821,237 @@ def make_quick_image():
     plt.colorbar()
     plt.title("HCO+, moment 0 between 20-27 km/s")
     plt.show()
+
+
+def fit_molecular_and_cii_with_gaussians():
+    """
+    Created October 27 2021, 25 minutes before my meeting
+    Let's do this
+    Fit the HCO+ peak with 2 Gaussians, check it on the 13CO(1-0) peak (optional)
+    and then check it on the CII peak
+
+    Dec 7, 2021 the night before a meeting
+    I deleted everything and am starting over
+    But the goal is the same
+    I have regridded the HCO+ to the CII grid now so I can do more direct
+    comparisons
+    I will use regions to mark the points so that I can also use this on the
+    high-res HCO+
+    Starting this rewrite while making the rice + tuna dish that gave that
+    person on tik tok mercury poisoning because they ate it every day for 2 months
+    I do not plan to eat it that often
+    Dec 9, 2021 still working :/
+    Use the pillar1_emissionpeaks.hcopregrid.moreprecise.reg and p1_threads_pathsandpoints.reg regions for fitting
+    """
+    cii_cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
+    regrid = True # Just in case I want to switch back to regular resolution? doesn't hurt
+    fn = f"carma/M16.ALL.hcop.sdi.cm.subpv{'.SOFIAbeam.regrid' if regrid else ''}.fits"
+    hcop_cube = cube_utils.CubeData(fn).convert_to_K().data.with_spectral_unit(kms)
+    hcop_flat_wcs = hcop_cube[0, :, :].wcs
+
+    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg")) # order appears to be [HCO+, CII]
+    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/p1_threads_pathsandpoints.reg")) # order appears to be North-E, North-W, South-E, South-W
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_pointsofinterest.reg")) # order is wide profile, blue tail, north of west thread, bluest component
+    pixel_coords = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in sky_regions] # converted to (i, j) tuples
+    selected_pixel = pixel_coords[0]
+    # pixel_name = "bluest-component"
+    pixel_name = "wide-profile"
+
+    # Start with one pixel, just fit that first
+    assert regrid
+    cii_spectrum = cii_cube[(slice(None), *selected_pixel)]
+    cii_x = cii_cube.spectral_axis.to_value()
+    hcop_spectrum = hcop_cube[(slice(None), *selected_pixel)]
+    hcop_x = hcop_cube.spectral_axis.to_value()
+    # Set up plots
+    fig = plt.figure(figsize=(15, 9))
+    ax_cii_img = plt.subplot2grid((2, 3), (0, 0))
+    ax_hcop_img = plt.subplot2grid((2, 3), (1, 0))
+    ax_cii_spec = plt.subplot2grid((2, 3), (0, 1), colspan=2)
+    ax_hcop_spec = plt.subplot2grid((2, 3), (1, 1), colspan=2)
+    # Plot images
+    vel_lims = (23, 26)
+    ax_cii_img.imshow(cii_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower')
+    ax_hcop_img.imshow(hcop_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower')
+    cps2.plot_box(ax_cii_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
+    cps2.plot_box(ax_hcop_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
+    # Do noise stuff
+    noise_cii = 1 # 1 K has been my estimate for a while
+    noise_hcop = 0.12 # estimated from the cube, lower than the original 0.5 due to smoothing to CII beam and rebinning to CII channels
+    cps2.plot_noise_and_vlims(ax_cii_spec, noise_cii, vel_lims)
+    cps2.plot_noise_and_vlims(ax_hcop_spec, noise_hcop, vel_lims)
+    for ax in [ax_cii_spec, ax_hcop_spec]:
+        ax.set_xlim(20, 30)
+    # Set up Gaussian model, start with one component
+    # Decide which things are fixed
+    fixedstd = True
+    tiestd = True
+    untieciistd = False
+    fixedmean = False
+    stddev_hcop = 0.55
+    g0 = cps2.models.Gaussian1D(amplitude=10, mean=24.5, stddev=stddev_hcop,
+        bounds={'amplitude': (0, None), 'mean': (20, 30)})
+    g1 = g0.copy()
+    g1.mean = 25.5
+    # g2 = g0.copy()
+    # g2.mean = 25.5
+    g = g0 + g1
+    # Now do the fitting
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    if tiestd:
+        cps2.tie_std_models(g)
+    if fixedstd:
+        cps2.fix_std(g)
+    g_fit_hcop = fitter(g, hcop_x, hcop_spectrum, weights=np.full(hcop_spectrum.size, 1.0/noise_hcop))
+    if fixedmean:
+        g = g_fit_hcop.copy()
+        cps2.fix_mean(g)
+    if untieciistd:
+        cps2.tie_std_models(g, untie=True)
+    cps2.unfix_std(g)
+    g_fit_cii = fitter(g, cii_x, cii_spectrum, weights=np.full(cii_spectrum.size, 1.0/noise_cii))
+    # Plot the fits
+    cps2.plot_everything_about_models(ax_cii_spec, cii_x, cii_spectrum, g_fit_cii, dy=-0.08)
+    cps2.plot_everything_about_models(ax_hcop_spec, hcop_x, hcop_spectrum, g_fit_hcop, dy=-0.08)
+    plt.legend()
+    fixedstd_stub = f"_fixedstd{stddev_hcop:04.2f}" if fixedstd else ''
+    tiestd_stub = f"_hcopUNtiedstd" if not tiestd else ''
+    untieciistd_stub = f"_ciiUNtiedstd" if untieciistd else ''
+    fixedmean_stub = f"_fixedciimean" if fixedmean else '_fittingciimean'
+    plt.savefig(f'/home/ramsey/Pictures/2021-12-12-work/fit_{g.n_submodels}molecular_components_and_CII{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}_{pixel_name}_withnoise.png')
+    # plt.show()
+
+
+def test_fitting_uncertainties_with_emcee(which_line='hcop'):
+    """
+    December 12, 2021
+    Check the range of valid Gaussian fits to a given HCO+/CII spectrum
+    Use emcee and corner plots
+    :param which_line: cii or hcop
+    """
+    # Only load in CII if we need it
+    if which_line == 'cii':
+        cii_cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
+    regrid = True # Just in case I want to switch back to regular resolution? doesn't hurt
+    fn = f"carma/M16.ALL.hcop.sdi.cm.subpv{'.SOFIAbeam.regrid' if regrid else ''}.fits"
+    hcop_cube = cube_utils.CubeData(fn).convert_to_K().data.with_spectral_unit(kms)
+    hcop_flat_wcs = hcop_cube[0, :, :].wcs
+
+    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg")) # order appears to be [HCO+, CII]
+    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/p1_threads_pathsandpoints.reg")) # order appears to be North-E, North-W, South-E, South-W
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_pointsofinterest.reg")) # order is wide profile, blue tail, north of west thread, bluest component
+    pixel_coords = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in sky_regions] # converted to (i, j) tuples
+    selected_pixel = pixel_coords[0]
+    # pixel_name = "bluest-component"
+    pixel_name = "wide-profile"
+
+    # Start with one pixel, just fit that first
+    assert regrid
+    if which_line == 'cii':
+        cii_spectrum = cii_cube[(slice(None), *selected_pixel)]
+        cii_x = cii_cube.spectral_axis.to_value()
+    hcop_spectrum = hcop_cube[(slice(None), *selected_pixel)]
+    hcop_x = hcop_cube.spectral_axis.to_value()
+
+    noise_cii = 1 # 1 K has been my estimate for a while
+    noise_hcop = 0.12 # estimated from the cube, lower than the original 0.5 due to smoothing to CII beam and rebinning to CII channels
+    # cps2.plot_noise_and_vlims(ax_cii_spec, noise_cii, vel_lims)
+    # cps2.plot_noise_and_vlims(ax_hcop_spec, noise_hcop, vel_lims)
+    # for ax in [ax_cii_spec, ax_hcop_spec]:
+    #     ax.set_xlim(20, 30)
+
+    # Options for the models
+    fixedstd = True
+    tiestd = True
+    untieciistd = False
+    fixedmean = False
+    stddev_hcop = 0.55
+    # Setup models
+    g0 = cps2.models.Gaussian1D(amplitude=10, mean=24.5, stddev=stddev_hcop,
+        bounds={'amplitude': (0, None), 'mean': (20, 30)})
+    g1 = g0.copy()
+    g1.mean = 25.5
+    # g2 = g0.copy()
+    # g2.mean = 25.5
+    g = g0 + g1
+
+    def get_fittable_param_names(model):
+        """
+        Find the fittable parameters for this model. Fittable means not fixed
+        or tied.
+        :param model: template model with all the right things tied and fixed
+        :returns: list of fittable param_names valid for this model
+        """
+        ...
+
+    # This list won't change within a single run of the outer function
+    fittable_param_names = get_fittable_param_names(g)
+
+    def get_fittable_parameters(model):
+        """
+        Similar to get_fittable_param_names, but this time return the current
+        values of those parameters. Length and order of parameters is the exact
+        same as in the result of get_fittable_param_names(model).
+        There must already be a fittable_param_names array generated by get_fittable_param_names
+        :param model: template model that matches the existing fittable_param_names
+        array
+        :returns: list of the current param values
+        """
+        x0 = [] # resulting param array
+        for param_name in fittable_param_names:
+            param = getattr(model, param_name)
+            x0.append(param.value)
+        return x0
+
+
+    def set_fittable_parameters(x, model):
+        """
+        Sets all the fittable parameters of model to the values in the array x
+        :param x: array of whatever fittable parameters are in this model.
+            should be in order of get_fittable_param_names(model)
+        :param model: template model that is OK to edit
+        """
+        for i, param_name in enumerate(fittable_param_names):
+            param = getattr(model, param_name)
+            param.value = x[i]
+
+    def helper_chisq(x, model):
+        """
+        :param x: array of whatever parameters are in this model
+        :param model: a template of the model to which x are the fittable parameters
+        """
+        ...
+
+    # Set up emcee parameters
+    niter, burn = 200, 70
+    nwalkers, ndim = 10, ...
+
+
+    # Now do the fitting
+    # HCO+ in either case (need info for CII if doing CII fit)
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    if tiestd:
+        cps2.tie_std_models(g)
+    if fixedstd:
+        cps2.fix_std(g)
+
+    if which_line == 'cii':
+        # Simple HCO+ fit just for the info
+        g_fit_hcop = fitter(g, hcop_x, hcop_spectrum, weights=np.full(hcop_spectrum.size, 1.0/noise_hcop))
+        # Now do the rest of the CII fitting with emcee using info from HCO+ fit
+        if fixedmean:
+            g = g_fit_hcop.copy()
+            cps2.fix_mean(g)
+        if untieciistd:
+            cps2.tie_std_models(g, untie=True)
+        cps2.unfix_std(g)
+        ########################
+        g_fit_cii = fitter(g, cii_x, cii_spectrum, weights=np.full(cii_spectrum.size, 1.0/noise_cii))
+        ########################
+    elif which_line == 'hcop':
+        ########################
+        ...
+        ########################
 
 
 if __name__ == "__main__":

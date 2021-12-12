@@ -510,22 +510,32 @@ def iter_models(model):
         return iter((model,))
 
 
-def tie_std_models(model):
+def tie_std_models(model, untie=False):
     """
     November 5, 2021
     Convenience function for tying all the stddevs together
     If they're already fixed, it shouldn't have any effect
-    If single (not compound) model, no effect
+    If single (not compound) model, no effect (unless untie==True)
     :param model: an astropy.modeling.models model
+    :param untie: if True, unties the models (even if single)
     """
     try:
         for i, m in enumerate(model):
-            if i == 0:
-                pass
+            if untie:
+                m.stddev.tied = False
             else:
-                m.stddev.tied = lambda x: x.stddev_0
+                if i == 0:
+                    pass
+                else:
+                    m.stddev.tied = lambda x: x.stddev_0
     except:
-        pass
+        if untie:
+            try:
+                model.stddev.tied = False
+            except:
+                pass
+        else:
+            pass
 
 
 def fix_mean(model, set_to=True):
@@ -542,6 +552,16 @@ def fix_mean(model, set_to=True):
         m.mean.fixed = set_to
 
 
+def unfix_mean(model):
+    """
+    December 10, 2021
+    In case I forget that I have a set_to option in fix_mean. More intuitive.
+    Runs fix_mean(model, set_to=FALSE)
+    :param model: an astropy.modeling.models model
+    """
+    fix_mean(model, set_to=False)
+
+
 def fix_std(model, set_to=True):
     """
     November 9, 2021
@@ -554,6 +574,16 @@ def fix_std(model, set_to=True):
     """
     for m in iter_models(model):
         m.stddev.fixed = set_to
+
+
+def unfix_std(model):
+    """
+    December 10, 2021
+    In case I forget that I have a set_to option in fix_std. More intuitive.
+    Runs fix_std(model, set_to=FALSE)
+    :param model: an astropy.modeling.models model
+    """
+    fix_std(model, set_to=False)
 
 
 def make_show_box(show_box_i_lims, show_box_j_lims):
