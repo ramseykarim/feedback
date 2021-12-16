@@ -18,7 +18,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 
 
-wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg))
+wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg), frame='fk5')
 wd2_cluster_center_coord = SkyCoord("10:24:01.7533 -57:45:33.193", unit=(u.hourangle, u.deg)) # ~11 arcsec error
 
 feedback_path = "/home/rkarim/Research/Feedback/"

@@ -59,8 +59,8 @@ def main():
 
     cii_mom0, cii_w = catalog.utils.load_cii(2)
 
-    # calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w)
-    # return
+    calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w, saving=True)
+    return
 
     radius_limit = 3 # arcmin
     print(f"all calculations below limited to {radius_limit} arcmin radius from Wd2")
@@ -340,10 +340,20 @@ def calc_and_plot_and_save_WR_wind_power(catalog_df, wcs_obj, distance_los, plot
 
 
 
-def calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w):
+def calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w, saving=False):
+    """
+    :param saving: whether to save as FITS
+    """
     fuv_med, fuv_error = calc_g0(catalog_df, catr, cii_w, rcw_dist, catalog_mask=catalog_df['is_within_6.0_arcmin'])
     fuv_lo, fuv_hi = fuv_error
     coords = SkyCoord(catalog_df.loc[catalog_df['is_within_6.0_arcmin'], 'SkyCoord'].values)
+    if saving:
+        header = {"BUNIT": "Habing unit", "HISTORY": "calculated from all stars within 6.0 arcminutes", "COMMENT": "Habing field is 1.6e-3 * u.erg / (u.cm*u.cm * u.s)", "CREATOR": "Ramsey Karim, g0_stars.py", "DATE": "December 15, 2021"}
+        header = fits.Header(header)
+        header.update(cii_w.to_header())
+        del header['RESTFRQ']
+        del header['SPECSYS']
+        fits.writeto(f"{data_directory}catalogs/Ramsey/Wd2-g0-2021-12-15.fits", fuv_med.to_value(), header=header, overwrite=True)
 
     plt.figure(figsize=(13, 15))
 
@@ -376,7 +386,8 @@ def calc_and_plot_g0(catalog_df, catr, cii_mom0, cii_w):
     catalog.utils.plot_coordinates(None, coords, setup=False, show=False)
     # plt.show()
     plt.tight_layout()
-    plt.savefig(f"{catalog.utils.figures_path}g0_june19-2020.png")
+    # plt.savefig(f"{catalog.utils.figures_path}g0_june19-2020.png")
+    plt.savefig("/home/ramsey/Pictures/2021-12-15-work/g0_wd2.png")
 
 
 def assign_individual_properties(catalog_df, catr, save=False):

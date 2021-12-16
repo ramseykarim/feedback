@@ -628,7 +628,7 @@ def plot_noise_img(ax, noise_loc, show_box_lo_lims):
     ax.plot([noise_loc[1] - show_box_j_lo], [noise_loc[0] - show_box_i_lo], 'x', color='grey')
 
 
-def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x=0.05, text_y=0.95, dy=-0.05):
+def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x=0.05, text_y=0.95, dy=-0.05, noise=None, dof=None):
     """
     November 5, 2021
     Convenience function for plotting all these models
@@ -652,7 +652,14 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
         ax.text(text_x, text_y + dy*(0 + 4*i), f"$A_{i}$ = {m.amplitude.value:5.2f}{amplitude_unc_txt}", transform=ax.transAxes, color=m_color)
         ax.text(text_x, text_y + dy*(1 + 4*i), f"$\mu_{i}$ = {m.mean.value:5.2f}{mean_unc_txt}", transform=ax.transAxes, color=m_color)
         ax.text(text_x, text_y + dy*(2 + 4*i), f"$\sigma_{i}$ = {m.stddev.value:5.2f}{stddev_unc_txt}", transform=ax.transAxes, color=m_color)
-
+    if noise is not None:
+        chisq = np.sum((spectrum-fitted_spectrum)**2 / noise**2)
+        if dof is not None:
+            chisq_stub = "chisq/dof"
+            chisq = chisq/dof
+        else:
+            chisq_stub = "chisq"
+        ax.text(text_x, text_y + dy*(0 + 4*(i+1)), f"{chisq_stub} = {chisq:.2f}", transform=ax.transAxes, color=m_color)
 
 
 def fit_live_interactive(cube, template_model=None, double=False, mask=True, noise=None,
