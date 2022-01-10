@@ -843,19 +843,28 @@ def fit_molecular_and_cii_with_gaussians():
     Dec 9, 2021 still working :/
     Use the pillar1_emissionpeaks.hcopregrid.moreprecise.reg and p1_threads_pathsandpoints.reg regions for fitting
     """
+    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg")) # order appears to be [HCO+, CII]
+    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/p1_threads_pathsandpoints.reg")) # order appears to be North-E, North-W, South-E, South-W
+    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_pointsofinterest.reg")) # order is wide profile, blue tail, north of west thread, bluest component, top of western thread (where IRAC4 peaks), above western thread (where IRAC4 is dark)
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_peak_degeneracyboundary.reg")) # order is 3 component peak, 2 component peak
+    selected_region = sky_regions[1]
+    pixel_name = selected_region.meta['label'].replace(" ", '-')
+
+
     cii_cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
     regrid = True # Just in case I want to switch back to regular resolution? doesn't hurt
     fn = f"carma/M16.ALL.hcop.sdi.cm.subpv{'.SOFIAbeam.regrid' if regrid else ''}.fits"
     hcop_cube = cube_utils.CubeData(fn).convert_to_K().data.with_spectral_unit(kms)
     hcop_flat_wcs = hcop_cube[0, :, :].wcs
 
-    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg")) # order appears to be [HCO+, CII]
-    # sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/p1_threads_pathsandpoints.reg")) # order appears to be North-E, North-W, South-E, South-W
-    sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar1_pointsofinterest.reg")) # order is wide profile, blue tail, north of west thread, bluest component
-    pixel_coords = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in sky_regions] # converted to (i, j) tuples
-    selected_pixel = pixel_coords[3]
-    pixel_name = "bluest-component"
-    # pixel_name = "wide-profile"
+    selected_pixel = tuple(round(x) for x in selected_region.to_pixel(hcop_flat_wcs).center.xy[::-1])
+
+
+
+    selected_pixel = (31, 28)
+    pixel_name = "_DEBUGPIXEL_01_"
+    # pixel_coords = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in sky_regions] # converted to (i, j) tuples
+    # selected_pixel = pixel_coords[0]
 
     # Start with one pixel, just fit that first
     assert regrid
@@ -885,17 +894,17 @@ def fit_molecular_and_cii_with_gaussians():
     # Set up Gaussian model, start with one component
     # Decide which things are fixed
     fixedstd = False
-    tiestd = True
-    untieciistd = False
+    tiestd = False
+    untieciistd = True
     fixedmean = False
     stddev_hcop = 0.55
-    g0 = cps2.models.Gaussian1D(amplitude=10, mean=24.5, stddev=stddev_hcop,
+    g0 = cps2.models.Gaussian1D(amplitude=10, mean=23.5, stddev=stddev_hcop,
         bounds={'amplitude': (0, None), 'mean': (20, 30)})
     g1 = g0.copy()
-    g1.mean = 25.5
+    g1.mean = 25
     g2 = g0.copy()
     g2.mean = 26
-    g = g0
+    g = g0 + g1
     # Now do the fitting
     fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
     if tiestd:
@@ -923,7 +932,7 @@ def fit_molecular_and_cii_with_gaussians():
     tiestd_stub = f"_hcopUNtiedstd" if not tiestd else ''
     untieciistd_stub = f"_ciiUNtiedstd" if untieciistd else ''
     fixedmean_stub = f"_fixedciimean" if fixedmean else '_fittingciimean'
-    # plt.savefig(f'/home/ramsey/Pictures/2021-12-15-work/fit_{g.n_submodels}molecular_components_and_CII{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}_{pixel_name}_withnoise.png')
+    plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
     # plt.show()
 
 

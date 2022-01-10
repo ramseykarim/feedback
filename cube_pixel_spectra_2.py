@@ -505,7 +505,16 @@ def iter_models(model):
         models will be in increasing order of Gaussian mean parameter value
     """
     try:
-        return sorted(iter(model), key=lambda x: x.mean)
+        sorted_by_means = sorted(iter(model), key=lambda x: x.mean)
+        # Put the zero-amplitude components last
+        nonzero_components = []
+        zero_components = []
+        for m in sorted_by_means:
+            if m.amplitude.value == 0:
+                zero_components.append(m)
+            else:
+                nonzero_components.append(m)
+        return nonzero_components + zero_components
     except:
         return iter((model,))
 
@@ -644,14 +653,17 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
     if spectrum is not None:
         ax.plot(xaxis, spectrum-fitted_spectrum, color='g', alpha=0.6, linestyle='--')
     for i, m in enumerate(iter_models(model)):
-        ax.plot(xaxis, m(xaxis), color=m_color, linestyle='--', alpha=0.7)
-        ax.axvline(m.mean.value, color=m_color, linestyle='--', alpha=0.3)
+        component_is_nonzero = (m.amplitude.value != 0)
+        if component_is_nonzero:
+            ax.plot(xaxis, m(xaxis), color=m_color, linestyle='--', alpha=0.7)
+            ax.axvline(m.mean.value, color=m_color, linestyle='--', alpha=0.3)
         amplitude_unc_txt = f"$\pm${m.amplitude.std:.3f}" if m.amplitude.std is not None else ""
         mean_unc_txt = f"$\pm${m.mean.std:.3f}" if m.mean.std is not None else ""
         stddev_unc_txt = f"$\pm${m.stddev.std:.3f}" if m.stddev.std is not None else ""
-        ax.text(text_x, text_y + dy*(0 + 4*i), f"$A_{i}$ = {m.amplitude.value:5.2f}{amplitude_unc_txt}", transform=ax.transAxes, color=m_color)
-        ax.text(text_x, text_y + dy*(1 + 4*i), f"$\mu_{i}$ = {m.mean.value:5.2f}{mean_unc_txt}", transform=ax.transAxes, color=m_color)
-        ax.text(text_x, text_y + dy*(2 + 4*i), f"$\sigma_{i}$ = {m.stddev.value:5.2f}{stddev_unc_txt}", transform=ax.transAxes, color=m_color)
+        alpha = 1 if component_is_nonzero else 0.15
+        ax.text(text_x, text_y + dy*(0 + 4*i), f"$A_{i}$ = {m.amplitude.value:5.2f}{amplitude_unc_txt}", transform=ax.transAxes, color=m_color, alpha=alpha)
+        ax.text(text_x, text_y + dy*(1 + 4*i), f"$\mu_{i}$ = {m.mean.value:5.2f}{mean_unc_txt}", transform=ax.transAxes, color=m_color, alpha=alpha)
+        ax.text(text_x, text_y + dy*(2 + 4*i), f"$\sigma_{i}$ = {m.stddev.value:5.2f}{stddev_unc_txt}", transform=ax.transAxes, color=m_color, alpha=alpha)
     if noise is not None:
         chisq = np.sum((spectrum-fitted_spectrum)**2 / noise**2)
         if dof is not None:
@@ -663,7 +675,7 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
 
 
 def fit_live_interactive(cube, template_model=None, double=False, mask=True, noise=None,
-        ylim_max=23):
+        ylim_max=23, n_params=None, live_intercept=None):
     """
     INTERACTIVE fitting and plotting
     :param cube: the cube to fit to
@@ -679,6 +691,9 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
     :param noise: arg to pass thru to fit_gaussian; see that description
         If this is a 2-element tuple, will calculate noise from that pixel location
         in the unmasked cube
+    :param n_params: number of fitted params in the template_model. This function
+        won't detect it automatically, so if you want a reduced chi squared
+        calculated, you have to input it yourself
     """
 
     if mask:
@@ -719,6 +734,11 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
     def onclick(event):
         try:
             j, i = int(round(event.xdata)), int(round(event.ydata))
+            if live_intercept['ij'] is not None:
+                print(f"Clicked {i}, {j} but ignoring those to plot the intercepted ", end="")
+                i, j = live_intercept['ij']
+                live_intercept['ij'] = None
+                print(f"{i}, {j}.")
         except Exception as e:
             print(f"something went wrong... {e}")
             return
@@ -763,7 +783,11 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
 
             spectrum = cube[:, i, j].to_value()
             ax_spectr.plot(spectral_axis, spectrum, color='k', linewidth=0.7, label='Data', marker='o', alpha=0.2, markersize=2)
-            plot_everything_about_models(ax_spectr, spectral_axis, spectrum, g_fit)
+            if (n_params is not None) and (noise is not None):
+                chisq_kwargs = dict(noise=noise, dof=(g_fit_array.size - n_params))
+            else:
+                chisq_kwargs = {}
+            plot_everything_about_models(ax_spectr, spectral_axis, spectrum, g_fit, **chisq_kwargs)
 
             # Metric; sum over this for a number that, if large, means the fit isn't good
             metric = -(spectrum - g_fit_array)*np.sign(spectrum)
@@ -995,7 +1019,7 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
     print(f"Finished at {datetime.datetime.now(datetime.timezone.utc).astimezone().ctime()}")
     print(f"Time elapsed: {str(datetime.timedelta(seconds=(timing_t1-timing_t0)))}")
 
-    filename_stub = "models/gauss_fit_hcop_4G_v1"
+    filename_stub = "models/gauss_fit_hcop_regrid_2G_v3"
     param_units = ['K', 'km / s', 'km / s'] * ((int(double) + 1) if template_model is None else g_init.n_submodels)
     wcs_flat = cube.moment(order=0).wcs
     to_header = lambda : wcs_flat.to_header()
@@ -1033,16 +1057,16 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
 
 
 def investigate_fit(cube, double=False, template_model=None, filename_stub=None,
-        ylim_max=25):
+        ylim_min=-3, ylim_max=25, show='resid'):
     """
     Investiate the fit made in the previous function
 
     The "cube" argument is only used to plot contours
     """
     kms = u.km/u.s
-    pillar_1_highlight = cube.spectral_slab(25*kms, 27*kms).moment0()
+    pillar_1_highlight = cube.spectral_slab(20*kms, 27*kms).moment0()
     contour_args = (pillar_1_highlight.to_value(),)
-    contour_kwargs = dict(levels=[20, 30, 40, 50, 60], linewidths=1, colors='k', alpha=0.9)
+    contour_kwargs = dict(linewidths=1, colors='k', alpha=0.9)
 
     if filename_stub is None:
         if double and template_model is None:
@@ -1064,18 +1088,23 @@ def investigate_fit(cube, double=False, template_model=None, filename_stub=None,
     spectral_axis = resid_cube.spectral_axis.to(u.km/u.s).to_value()
 
     vlo, vhi = 25, 30
-    resid_mom0 = resid_cube.spectral_slab(vlo*u.km/u.s, vhi*u.km/u.s).moment(order=0).to(u.K*u.km/u.s).to_value()
+    if show == 'resid':
+        img_mom0 = resid_cube.spectral_slab(vlo*kms, vhi*kms).moment(order=0).to(u.K*kms).to_value()
+    else:
+        img_mom0 = cube.spectral_slab(vlo*kms, vhi*kms).moment(order=0).to(u.K*kms).to_value()
 
     plt.ion()
     fig = plt.figure(figsize=(6, 3.5))
     ax_img = plt.subplot2grid((1, 5), (0, 0), colspan=2, fig=fig, projection=resid_cube.wcs, slices=('x', 'y', 0))
     ax_spectr = plt.subplot2grid((1, 5), (0, 2), colspan=3, fig=fig)
 
-    im = ax_img.imshow(resid_mom0, origin='lower', vmin=0, vmax=35)
+
+    im = ax_img.imshow(img_mom0, origin='lower', vmin=0)
+
     ax_img.contour(*contour_args, **contour_kwargs)
     cbar = fig.colorbar(im, ax=ax_img)
     cax = cbar.ax
-    ax_img.set_title(f"Integrated residuals, [{vlo:4.1f}, {vhi:4.1f}] km/s")
+    ax_img.set_title(f"Integrated {'residuals' if show=='resid' else 'observed intensity'}, [{vlo:4.1f}, {vhi:4.1f}] km/s")
 
     plot_info_dict = {'x1': None, 'xij': None, 'currently_selecting': False}
 
@@ -1109,8 +1138,11 @@ def investigate_fit(cube, double=False, template_model=None, filename_stub=None,
             ax_spectr.plot(spectral_axis, model_spectr, color='Indigo', label='model', linewidth=0.7, alpha=0.6)
             ax_spectr.plot(spectral_axis, resid_spectr, color='orange', label='resid', linewidth=0.7, alpha=0.7)
             ax_spectr.legend()
-            ax_spectr.set_ylim((-5, ylim_max)) # 35 for CII
-            ax_spectr.set_xlim((15, 35))
+            ax_spectr.set_ylim((ylim_min, ylim_max)) # 35 for CII
+            if spectral_axis.min() > 16:
+                ax_spectr.set_xlim((21, 29))
+            else:
+                ax_spectr.set_xlim((15, 35))
             ax_spectr.set_xlabel("v (km/s)")
             ax_spectr.set_ylabel("T (K)")
             plot_info_dict['currently_selecting'] = False
@@ -1134,13 +1166,16 @@ def investigate_fit(cube, double=False, template_model=None, filename_stub=None,
                 ihi *= vspan
                 # Integrate
                 print(f"Integrated between {vlo:.1f} and {vhi:.1f} km/s. Intensity limits: {ilo:.1f}, {ihi:.1f}")
-                resid_mom0 = resid_cube.spectral_slab(vlo*u.km/u.s, vhi*u.km/u.s).moment(order=0).to(u.K*u.km/u.s).to_value()
+                if show == 'resid':
+                    img_mom0 = resid_cube.spectral_slab(vlo*u.km/u.s, vhi*u.km/u.s).moment(order=0).to(u.K*u.km/u.s).to_value()
+                else:
+                    img_mom0 = cube.spectral_slab(vlo*kms, vhi*kms).moment(order=0).to(u.K*kms).to_value()
                 ax_img.clear()
                 cax.clear()
-                im = ax_img.imshow(resid_mom0, origin='lower', vmin=ilo, vmax=ihi)
+                im = ax_img.imshow(img_mom0, origin='lower', vmin=ilo, vmax=ihi)
                 ax_img.contour(*contour_args, **contour_kwargs)
                 fig.colorbar(im, cax=cax)
-                ax_img.set_title(f"Integrated residuals, [{vlo:4.1f}, {vhi:4.1f}] km/s")
+                ax_img.set_title(f"Integrated {'residuals' if show=='resid' else 'observed intensity'}, [{vlo:4.1f}, {vhi:4.1f}] km/s")
                 if plot_info_dict['x1'] is not None:
                     i, j = plot_info_dict['xij']
                     plot_info_dict['x1'], = ax_img.plot([j], [i], 'x', color='red')
@@ -1313,15 +1348,23 @@ def check_if_wings_trace_peak_emission(cube):
     # plt.show()
 
 
-def investigate_template_model_fit(n_submodels=3, line='hcop'):
+def investigate_template_model_fit(n_submodels=3, line='hcop', version='3'):
     """
     November 17, 2021
     Check out distribution of line centers and stuff
     """
-    if line == 'hcop':
-        filename_stub = f"carma/models/gauss_fit_hcop_{n_submodels}G_v2"
+    if line[:4] == 'hcop':
+        directory = "carma"
+        if version is None:
+            if line == 'hcop':
+                version = 2
+            elif line == 'hcop_regrid':
+                version = 3
     else:
-        filename_stub = f"sofia/models/gauss_fit_hcop_{n_submodels}G_v1"
+        directory = 'sofia'
+        if version is None:
+            version = 1
+    filename_stub = f"{directory}/models/gauss_fit_{line}_{n_submodels}G_v{version}"
     param_fn = catalog.utils.search_for_file(filename_stub+".param.fits")
     # resid_fn = catalog.utils.search_for_file(filename_stub+".resid.fits")
     # model_fn = catalog.utils.search_for_file(filename_stub+".model.fits")
@@ -1351,7 +1394,13 @@ def investigate_template_model_fit(n_submodels=3, line='hcop'):
     amplitudes = np.array(amplitudes)
     i_array = np.array(i_array)
     j_array = np.array(j_array)
-    amp_mask = amplitudes > (2.5 if line == 'hcop' else 5) # about 5sigma
+    if line == 'hcop':
+        amp_cutoff = 2.5
+    elif line == 'hcop_regrid':
+        amp_cutoff = 0.6
+    else:
+        amp_cutoff = 5
+    amp_mask = amplitudes > amp_cutoff # about 5sigma
     means = means[amp_mask]
     amplitudes = amplitudes[amp_mask]
     i_array = i_array[amp_mask]
@@ -1369,7 +1418,7 @@ def investigate_template_model_fit(n_submodels=3, line='hcop'):
             line_width=19)
         kwargs = dict(mode='cube', colormap='jet',
             scale_mode='none', scale_factor=0.7, opacity=0.2)
-        mlab.points3d(j_array, i_array, means*(30 if line=='hcop' else 4), amplitudes, **kwargs)
+        mlab.points3d(j_array, i_array, -1*means*(30 if line=='hcop' else 4), amplitudes, **kwargs)
         mlab.show()
 
 
@@ -1807,14 +1856,19 @@ if __name__ == "__main__":
 
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
 
-    #### HCOP
-    # subcube = cutout_subcube(length_scale_mult=1, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
-    #     reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
-    #### CII
-    # subcube = cutout_subcube(length_scale_mult=1.5, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
-    # cii_bg_spectrum = get_cii_background()
-    # subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
-    # test_cii_background()
+    if False:
+        #### HCOP
+        regrid = True
+        if regrid:
+            subcube = cutout_subcube(length_scale_mult=None, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits")
+        else:
+            subcube = cutout_subcube(length_scale_mult=1, data_filename=f"carma/M16.ALL.hcop.sdi.cm.subpv.fits",
+                reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+        #### CII
+        # subcube = cutout_subcube(length_scale_mult=1.5, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+        # cii_bg_spectrum = get_cii_background()
+        # subcube = subcube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+        # test_cii_background()
 
     ###### length_scale_mult = 0.0125 is good for testing HCOP; gives 4 pixels
     ###### length_scale_mult = 1 is good for running pillar head fits
@@ -1828,30 +1882,44 @@ if __name__ == "__main__":
 
     # check_if_wings_trace_peak_emission(subcube)
 
-    #############
-    ##### TEMPLATE MODEL SETUP
-    #############
-    # g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=0)[2]
-    # g_init = g_init + g_init[2].copy()
-    # print(g_init)
-    #### for CII:
-    # for g in g_init:
-    #     g.amplitude.bounds = (0.05, 100)
-    # g_init.stddev_0 = 1.1
-    #############
+    if False:
+        #############
+        ##### TEMPLATE MODEL SETUP
+        #############
+        ### template model from those presets in the function
+        # g_init = select_pixels_and_models('hcop', 'peak', var_mean=1, var_std=0)[2]
+        # g_init = g_init + g_init[2].copy()
 
-    # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=1)
+        ### template model by hand
+        g0 = models.Gaussian1D(amplitude=10, mean=24.5, stddev=(0.55 if regrid else 0.46),
+            bounds={'amplitude': (0, None), 'mean': (20, 30), 'stddev': (0.3, 1.)})
+        g1 = g0.copy()
+        g1.mean = 25.5
+        g_init = g0 + g1
+        fix_std(g_init)
+        tie_std_models(g_init)
+        print(g_init)
 
-    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=1,
-    #     ylim_max=40) # noise from: (125, 32) at length_scale_mult=1
-        # HCOP noise: 0.546, CII noise: ~1
+        #### for CII:
+        # for g in g_init:
+        #     g.amplitude.bounds = (0.05, 100)
+        # g_init.stddev_0 = 1.1
+        #############
+
+    # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.12)
+
+    # live_intercept_dict = {'ij': None}
+    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=(0.12 if regrid else 0.546),
+    #     ylim_max=25, n_params=6, live_intercept=live_intercept_dict) # noise from: (125, 32) at length_scale_mult=1
+        ## HCOP noise: 0.546, CII noise: ~1, HCOP at CII grid noise: 0.12
 
     # investigate_fit(subcube, double=False, template_model=g_init,
-    #     filename_stub="models/gauss_fit_hcop_4G_v1",
-    #     ylim_max=40)
-    # investigate_template_model_fit(3, line='cii')
+    #     filename_stub="models/gauss_fit_hcop_3G_v2",
+    #     ylim_max=25, show='mom0')
 
-    regrid_hcop()
+    investigate_template_model_fit(2, line='cii', version=2)
+
+    # regrid_hcop()
 
     # stack_pillar_spectra(subcube)
     # fit_multicube_live_interactive(*subcubes)
