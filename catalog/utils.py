@@ -9,6 +9,9 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
+import socket
+import pwd
+
 from scipy.interpolate import CloughTocher2DInterpolator
 from scipy.spatial import Delaunay # Hello, old friend
 
@@ -131,6 +134,39 @@ def save_df_html(df, na_rep='--'):
     """
     print(len(df))
     df.to_html("~/Downloads/test.html", na_rep=na_rep)
+
+
+def create_png_metadata(title=None, file=None, func=None, **extra_metadata_kwargs):
+    """
+    January 12, 2022
+    Create metadata for PNGs. Include author (my name), title if provided,
+    and the responsible Python filename for the source and function name if
+    provided
+    :param title: string title for image. Short but descriptive.
+    :param file: you must pass `__file__` to this argument. I could do some
+        stack inspection to back up, but if I ever use a decorator I'm not
+        guaranteed one step up in the stack, so I'll be conservative and do this
+    :param func: string name of current function
+    :param extra_metadata_kwargs: any extra key/val pairs to pass into
+        the PNG metadata. Uses the 'update' dict method, so you could use this
+        to overload with a custom author or source
+    :returns: dict appropriate to pass to the 'metadata' kwarg in matplotlib's
+        savefig method
+    """
+    source = []
+    if file is not None:
+        source.append(os.path.basename(file).replace('.py', ''))
+    if func is not None:
+        source.append(func)
+    source = '.'.join(source)
+    if not source:
+        source = 'feedback_code, unspecified location'
+    source = f'({pwd.getpwuid(os.getuid())[0]}@{socket.gethostname()}) {source}'
+    metadata = {'Author': __author__, 'Source': source}
+    if title is not None:
+        metadata['Title'] = title
+    metadata.update(extra_metadata_kwargs)
+    return metadata
 
 
 """

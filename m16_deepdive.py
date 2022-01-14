@@ -22,6 +22,7 @@ if __name__ == "__main__":
     matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+import matplotlib.ticker as ticker
 import sys
 import os
 import glob
@@ -82,7 +83,7 @@ def easy_pv():
     middle of the head
     """
     # This PV will be in color and perhaps also in contour
-    main_pv_fn = "carma/M16.ALL.hcop.sdi.cm.subpv.fits" # WRONG CUBE!!!!!!!!!!!!!!!!!!!!!!!! HCOP!!!!!!!!!!!!!!!!!!
+    main_pv_fn = "carma/M16.ALL.hcop.sdi.cm.subpv.SMOOTH.fits" # WRONG CUBE!!!!!!!!!!!!!!!!!!!!!!!! HCOP!!!!!!!!!!!!!!!!!!
     cube = cube_utils.CubeData(main_pv_fn).data
     # Is that necessary? Can it just wait for the loop?
     reg_filename = catalog.utils.search_for_file("catalogs/p1_IDgradients_thru_head.reg")
@@ -141,6 +142,7 @@ def easy_pv():
     ax_sl.plot([x0*arcsec, x1*arcsec], [y0*1e3, y1*1e3], '-.', color='orange', transform=ax_sl.get_transform('world'))
     ax_sl.set_title(f"slope = {m*u.arcmin.to(u.arcsec):.2f} km/s / arcmin")
     # plt.savefig(f"/home/rkarim/Pictures/2021-11-10-work/hcop_pillar1_gradient_{selected_path}.png")
+    plt.savefig(f"/home/ramsey/Pictures/2022-01-12-work/hcop_pillar1_gradient_{selected_path}.SMOOTH.png")
     # plt.show()
 
 def oi_image():
@@ -1298,6 +1300,98 @@ def investigate_emcee_result(which_line):
         # plt.savefig(f'/home/ramsey/Pictures/2021-12-15-work/all_cii_emcee_results/emcee-3p-investigation-{pixel_name}_{which_line}_chisqlow_IDX{current_chisq_idx:05d}.png')
 
 
+def plot_selected_hcop_spectra_fits():
+    """
+    January 13, 2022
+    Intended to be the "final form" figure for a lot of the HCO+ spectra fitting
+    done in this file. I selected a handful of points (pillar1_pointsofinterest_v2.reg)
+    and will just throw all of those plots into this figure. It'll be messy
+    but I think it'll ultimately be a nice figure
+    There are 8 points selected so I can maybe do a 3x3 grid with the reference
+    at the center
+    I'm copying a lot from m16_threads.figure_for_hcop_linewidths() since that's
+    nearly the same as what I want to do
+    """
+    # Get cube
+    cube = cps2.cutout_subcube(length_scale_mult=2.5, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits")
+    # Get regions and convert to pixel coords
+    reg_filename_short = "catalogs/pillar1_pointsofinterest_v2.reg"
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    pixel_coords = [tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1]) for reg in sky_regions]
+    assert len(pixel_coords) == 8
+
+    # Set up axes
+    fig = plt.figure(figsize=(12, 12))
+    ax_spec_list = []
+    for i in range(3):
+        for j in range(3):
+            if (i == 0) and (j == 2):
+                # Image Axes
+                ax_img = plt.subplot2grid((3, 3), (i, j), projection=cube[0, :, :].wcs)
+            else:
+                ax_spec_list.append(plt.subplot2grid((3, 3), (i, j)))
+    # Make moment 0 to plot
+    vel_lims = (19*kms, 27*kms)
+    mom0 = cube.spectral_slab(*vel_lims).moment0()
+    ax_img.imshow(mom0.to_value(), origin='lower', vmin=0, cmap='plasma')
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+    # Initialize things for fitting
+    # Make template model for fitting
+    g0 = cps2.models.Gaussian1D(amplitude=10, mean=24, stddev=0.47,
+        bounds={'amplitude': (0, None), 'mean': (22, 30), 'stddev': (0.3, 1.5)})
+    g1 = g0.copy()
+    g1.mean = 25.
+    # g2 = g0.copy()
+    # g2.mean = 25.5
+    g_init = g0 + g1
+    # cps2.fix_std(g_init)
+    dof = 6
+    fit_stub = "2cfreewidth"
+    # Fitter
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    # Spectral axis
+    spectral_axis = cube.spectral_axis.to_value()
+    # Noise
+    noise = 0.546
+    weights = np.full(spectral_axis.size, 1.0/noise)
+    # Loop through the 3 pixels and plot things
+    for idx, (i, j) in enumerate(pixel_coords):
+        # Label the point on the reference image
+        ax_img.plot([j], [i], 'o', markersize=5, color='w')
+        pad = 10
+        dj = pad if (idx+1 not in [1, 3, 6]) else -pad
+        di = pad if (idx+1 not in [4, 7, 5, 8]) else -pad
+        ax_img.text(j+dj, i+di, str(idx+1), color='w', fontsize=12, ha='center', va='center')
+        ax_spec_list[idx].text(0.9, 0.9, str(idx+1), color='k', fontsize=14, ha='center', va='center', transform=ax_spec_list[idx].transAxes)
+        # Extract, fit, and plot spectrum
+        spectrum = cube[:, i, j].to_value()
+        g_fit = fitter(g_init, spectral_axis, spectrum, weights=weights)
+        cps2.plot_noise_and_vlims(ax_spec_list[idx], noise, None)
+        cps2.plot_everything_about_models(ax_spec_list[idx], spectral_axis, spectrum, g_fit, noise=noise, dof=(spectral_axis.size - dof))
+        # ax_spec_list[idx].set_xlabel("Velocity (km/s)")
+        # ax_spec_list[idx].set_ylabel("HCO+ line intensity (K)")
+        ax_spec_list[idx].set_ylim([-2, 22])
+        ax_spec_list[idx].xaxis.set_ticks_position('both')
+        ax_spec_list[idx].yaxis.set_ticks_position('both')
+        ax_spec_list[idx].xaxis.set_tick_params(direction='in', which='both')
+        ax_spec_list[idx].yaxis.set_tick_params(direction='in', which='both')
+        if idx+1 not in [1, 3, 6]:
+            # These are NOT on the left edge, so no y axis labelling
+            ax_spec_list[idx].yaxis.set_ticklabels([])
+        if idx+1 not in [6, 7, 8]:
+            # These are NOT on the bottom, so no x axis labellling
+            ax_spec_list[idx].xaxis.set_ticklabels([])
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0, wspace=0)
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-13-work/hcop_selected_spectra_thru_head_{fit_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"points from {reg_filename_short}",
+            file=__file__, func='plot_selected_hcop_spectra_fits'))
+
+
+
 if __name__ == "__main__":
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
@@ -1313,10 +1407,12 @@ if __name__ == "__main__":
     #     fit_molecular_components_with_gaussians('peak'+s)
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
-    fit_molecular_and_cii_with_gaussians()
+    # fit_molecular_and_cii_with_gaussians()
 
     # test_fitting_uncertainties_with_emcee(which_line='cii')
     # investigate_emcee_result('cii')
 
     # test_fitting_2_gaussians_with_2(snr=50)
     # test_fitting_2G_with_2G_wrapper()
+
+    plot_selected_hcop_spectra_fits()

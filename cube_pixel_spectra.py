@@ -49,6 +49,12 @@ Updated: September 9, 2020
     I also want to try a sort of "spectrum cross cut". Like, same idea as a PV
     diagram, but with more emphasis on the spectra, and averaged over a small
     area
+Updated January 11, 2022
+    I am going to try to use attempt_spectral_cross_cut() to make a figure
+    showing the evolution of the spectra from east to west across the threads
+    in pillar 1
+    I will just edit this file probably, rather than copy+paste the whole
+    function somewhere else
 """
 __author__ = "Ramsey Karim"
 
@@ -200,117 +206,6 @@ def simple_fit_attempt():
     plt.sca(ax2)
     plt.legend()
 
-    plt.show()
-
-
-def attempt_spectral_cross_cut():
-    warnings.filterwarnings("ignore")
-    # prop_cycle = plt.rcParams['axes.prop_cycle']
-    # color_iter = iter(prop_cycle.by_key()['color'])
-    color_iter = iter(['DarkGreen', 'DarkMagenta', 'DarkOrange', 'RoyalBlue'])
-
-    circle_radius = 15. * u.arcsec
-
-    reg_index = 9
-    global_center_coord, length_scale, location_generator = pvdiagrams.linear_series_from_description(
-        *crosscut.coords_from_region(catalog.utils.search_for_file("catalogs/m16_lines_of_interest.reg"), index=reg_index),
-        None, None, pvpath_width=100*u.arcsec, points_not_paths=True
-    )
-
-    sky_region_list = []
-    loc_list = []
-    for loc in location_generator:
-        loc_list.append(loc)
-        circle_reg = regions.CircleSkyRegion(loc, circle_radius, visual=regions.RegionVisual(color='black', width='1'))
-        sky_region_list.append(circle_reg)
-
-    spectral_axes = {}
-    spectra = {}
-    ptps = []
-    colors = {}
-    max_beam = None
-    for i in [3]:
-        fn = filenames[i]
-        cube = cube_utils.CubeData(fn)
-        spectral_axes[cube.name()] = cube.data.spectral_axis.to(u.km/u.s)
-        spectra[cube.name()] = []
-        colors[cube.name()] = next(color_iter)
-        if max_beam is None:
-            max_beam = cube.data.beam
-        else:
-            max_beam = max((cube.data.beam, max_beam), key=lambda x: x.major)
-        for loc in loc_list:
-            spectrum = extract_spectrum_at_point(cube, loc).to_value()
-            # if 'BIMA' in cube.name():
-            #     spectrum /= 2
-            spectra[cube.name()].append(spectrum)
-            ptps.append(spectrum.ptp())
-        if i != 3:
-            del cube, spectrum
-            print("(clearing memory)", end=" ")
-        else:
-            print()
-    print("max beam:", max_beam)
-
-    # Make an image to display
-    # img = cube.data.moment(order=0).to_value()
-    # w = cube.wcs_flat
-    # I could probably use CrossCut for this; I should generalize CrossCut
-    img, w = crosscut.DataLayer('5.6 um', "spitzer/SPITZER_I3_6049792_0000_5_E8698528_maic.fits").load()
-
-    img_cutout = Cutout2D(img, global_center_coord, [length_scale*2]*2, wcs=w, mode='partial', fill_value=np.nan)
-    img_cutout_flat = img_cutout.data.flatten()
-    lo, up = misc_utils.flquantiles(img_cutout_flat[np.isfinite(img_cutout_flat)], 25)
-    del img_cutout_flat
-    fig = plt.figure(figsize=(14, 6))
-    ax1 = plt.subplot(121, projection=img_cutout.wcs)
-    plt.imshow(img_cutout.data, origin='lower', vmin=lo, vmax=up)
-
-    beam_patch = max_beam.ellipse_to_plot(*img_cutout.wcs.world_to_pixel(loc_list[0]), misc_utils.get_pixel_scale(img_cutout.wcs))
-    beam_patch.set_facecolor('None')
-    beam_patch.set_edgecolor('red')
-    ax1.add_artist(beam_patch)
-
-    loc_coords = SkyCoord(loc_list)
-    ax1.plot(loc_coords.ra.deg, loc_coords.dec.deg, '.', color='k', transform=ax1.get_transform('world'))
-    ax1.set_title(f"IRAC 5.6 um image. Spectra averaged in r = {circle_radius.to(u.arcsec):.1f} circles")
-
-    """
-    Now to plot all the spectra
-    I have all the ptps of the spectra, so I can figure out a good
-    separation between them. I am planning doing "top down", and I can run a
-    faint axhline through the zero point of each
-    """
-
-    max_ptp = max(ptps)
-    round_to = 5
-    vertical_allotment = ceil((max_ptp * 1.02)/round_to)*5
-    n_regs = len(sky_region_list)
-    total_height = vertical_allotment * n_regs
-
-    ax2 = plt.subplot(122)
-    cube_plots = {}
-    first = True
-    for i in range(n_regs):
-        current_height = vertical_allotment * (n_regs - i - 1)
-        hline_color = 'k'
-        if first:
-            hline_color = 'r'
-            first = False
-        plt.axhline(y=current_height, color=hline_color, alpha=0.4, lw=0.7, linestyle='-')
-        for cube_stub in spectra:
-            if spectra[cube_stub][i] is None:
-                continue
-            spectral_axis = spectral_axes[cube_stub]
-            spectrum = spectra[cube_stub][i] + current_height
-            p = plt.plot(spectral_axis, spectrum, color=colors[cube_stub], linewidth=0.7)
-            # if 'BIMA' in cube_stub:
-            #     cube_stub += ' x 0.5'
-            cube_plots[cube_stub] = p
-    plt.legend(labels=list(cube_plots.keys()), handles=list(x.pop() for x in cube_plots.values()), loc='upper left')
-    plt.xlim([5, 40])
-    fn = f"/home/ramsey/Pictures/9-17-20-mtg/spectrum_series_reg-{reg_index}.png"
-    # plt.savefig(fn)
     plt.show()
 
 
@@ -1022,7 +917,127 @@ def view_area_mask():
     plt.imshow(img, origin='lower')
     plt.show()
 
+
+def attempt_spectral_cross_cut():
+    """
+    Looks like the last time I used this was Sept 17, 2020 so I assume that
+    the Creation Date of this function is around there.
+    Repurposed: January 11, 2022
+    I plan to cut across the threads in pillar 1 with this function; I want to
+    use one of the vectors in p1_threads_pathsandpoints.reg
+    """
+    warnings.filterwarnings("ignore")
+    # prop_cycle = plt.rcParams['axes.prop_cycle']
+    # color_iter = iter(prop_cycle.by_key()['color'])
+    color_iter = iter(['DarkGreen', 'DarkMagenta', 'DarkOrange', 'RoyalBlue'])
+
+    circle_radius = 1. * u.arcsec
+
+    reg_index = 0
+    global_center_coord, length_scale, location_generator = pvdiagrams.linear_series_from_description(
+        *crosscut.coords_from_region(catalog.utils.search_for_file("catalogs/p1_threads_pathsandpoints.reg"), index=reg_index),
+        None, None, pvpath_width=10*u.arcsec, points_not_paths=True
+    )
+
+    sky_region_list = []
+    loc_list = []
+    for loc in location_generator:
+        loc_list.append(loc)
+        circle_reg = regions.CircleSkyRegion(loc, circle_radius, visual=regions.RegionVisual(color='black', width='1'))
+        sky_region_list.append(circle_reg)
+
+    spectral_axes = {}
+    spectra = {}
+    ptps = []
+    colors = {}
+    max_beam = None
+    for i in [3]:
+        fn = "carma/M16.ALL.hcop.sdi.cm.subpv.SMOOTH.fits"
+        cube = cube_utils.CubeData(fn)
+        spectral_axes[cube.name()] = cube.data.spectral_axis.to(u.km/u.s)
+        spectra[cube.name()] = []
+        colors[cube.name()] = next(color_iter)
+        if max_beam is None:
+            max_beam = cube.data.beam
+        else:
+            max_beam = max((cube.data.beam, max_beam), key=lambda x: x.major)
+        for loc in loc_list:
+            spectrum = extract_spectrum_at_point(cube, loc).to_value()
+            # if 'BIMA' in cube.name():
+            #     spectrum /= 2
+            spectra[cube.name()].append(spectrum)
+            ptps.append(spectrum.ptp())
+        if i != 3:
+            del cube, spectrum
+            print("(clearing memory)", end=" ")
+        else:
+            print()
+    print("max beam:", max_beam)
+
+    # Make an image to display
+    # img = cube.data.moment(order=0).to_value()
+    # w = cube.wcs_flat
+    # I could probably use CrossCut for this; I should generalize CrossCut
+    img, w = crosscut.DataLayer('5.6 um', "spitzer/SPITZER_I3_6049792_0000_5_E8698528_maic.fits").load()
+
+    img_cutout = Cutout2D(img, global_center_coord, [length_scale*2]*2, wcs=w, mode='partial', fill_value=np.nan)
+    img_cutout_flat = img_cutout.data.flatten()
+    lo, up = misc_utils.flquantiles(img_cutout_flat[np.isfinite(img_cutout_flat)], 25)
+    del img_cutout_flat
+    fig = plt.figure(figsize=(14, 6))
+    ax1 = plt.subplot(121, projection=img_cutout.wcs)
+    plt.imshow(img_cutout.data, origin='lower', vmin=lo, vmax=up)
+
+    beam_patch = max_beam.ellipse_to_plot(*img_cutout.wcs.world_to_pixel(loc_list[0]), misc_utils.get_pixel_scale(img_cutout.wcs))
+    beam_patch.set_facecolor('None')
+    beam_patch.set_edgecolor('red')
+    ax1.add_artist(beam_patch)
+
+    loc_coords = SkyCoord(loc_list)
+    ax1.plot(loc_coords.ra.deg, loc_coords.dec.deg, '.', color='k', transform=ax1.get_transform('world'))
+    ax1.set_title(f"IRAC 5.6 um image. Spectra averaged in r = {circle_radius.to(u.arcsec):.1f} circles")
+
+    """
+    Now to plot all the spectra
+    I have all the ptps of the spectra, so I can figure out a good
+    separation between them. I am planning doing "top down", and I can run a
+    faint axhline through the zero point of each
+    """
+
+    max_ptp = max(ptps)
+    round_to = 5
+    vertical_allotment = ceil((max_ptp * 1.02)/round_to)*5
+    n_regs = len(sky_region_list)
+    total_height = vertical_allotment * n_regs
+
+    ax2 = plt.subplot(122)
+    cube_plots = {}
+    first = True
+    for i in range(n_regs):
+        current_height = vertical_allotment * (n_regs - i - 1)
+        hline_color = 'k'
+        if first:
+            hline_color = 'r'
+            first = False
+        plt.axhline(y=current_height, color=hline_color, alpha=0.4, lw=0.7, linestyle='-')
+        for cube_stub in spectra:
+            if spectra[cube_stub][i] is None:
+                continue
+            spectral_axis = spectral_axes[cube_stub]
+            spectrum = spectra[cube_stub][i] + current_height
+            p = plt.plot(spectral_axis, spectrum, color=colors[cube_stub], linewidth=0.7)
+            # if 'BIMA' in cube_stub:
+            #     cube_stub += ' x 0.5'
+            cube_plots[cube_stub] = p
+    plt.legend(labels=list(cube_plots.keys()), handles=list(x.pop() for x in cube_plots.values()), loc='upper left')
+    plt.xlim([5, 40])
+    # fn = f"/home/ramsey/Pictures/9-17-20-mtg/spectrum_series_reg-{reg_index}.png"
+    fn = f"/home/ramsey/Pictures/2022-01-11-work/spectrum_series_reg-{reg_index}.png"
+    # plt.savefig(fn)
+    plt.show()
+
 if __name__ == "__main__":
-    examine_area_solution()
+    attempt_spectral_cross_cut()
+    # examine_area_solution()
     # scatter_area_solution()
     # view_area_mask()

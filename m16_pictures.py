@@ -5,6 +5,8 @@ Created: October 29, 2020
     Preparing for UJC (and pre-presentation to committee)
 First actual use: November 11, 2020
 Second use: channel maps for thesis proposal, December 18, 2020
+Not sure how much other stuff I've added but adding another figure for the M16
+paper, January 13, 2022
 """
 __author__ = "Ramsey Karim"
 
@@ -833,6 +835,41 @@ def compare_32_65_10():
     plt.show()
     # plt.savefig("/home/ramsey/Pictures/2021-05-12-work/CO_65_10.png")
 
+
+def justify_background_figure():
+    """
+    January 13, 2022
+    A figure to justify the use of background subtraction from the pillars
+    """
+    cube = cps2.cutout_subcube(length_scale_mult=15)
+    mom0 = cube.moment0().to_value()
+
+    fig = plt.figure(figsize=(13, 5))
+    ax_img = plt.subplot2grid((1, 3), (0, 0))
+    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2)
+
+    ax_img.imshow(mom0, origin='lower')
+    spec1 = cube.mean(axis=(1, 2)).to_value()
+    pillar_moment = cube.spectral_slab(19*kms, 27*kms).moment0().to_value()
+    pillar_mask = pillar_moment < 70
+    masked_cube = cube.with_mask(pillar_mask)
+    spec2 = masked_cube.mean(axis=(1, 2)).to_value()
+
+    ax_img.contour(pillar_moment, levels=[70], colors='w')
+    ax_img.set_title("CII integrated line intensity")
+    ax_spec.plot(cube.spectral_axis.to_value(), spec1, label='Full field')
+    ax_spec.plot(cube.spectral_axis.to_value(), spec2, label='Outside pillars')
+    ax_spec.axvspan(25, 26, color='k', alpha=0.1)
+    ax_spec.set_title("Average CII spectrum")
+    ax_spec.set_xlabel("Velocity (km/s)")
+    ax_spec.set_ylabel("CII line intensity (K)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("/home/ramsey/Pictures/2022-01-13-work/cii_background_justify.png",
+        metadata=catalog.utils.create_png_metadata(title="Moment 0 at full range, contour using cutoff 70 Kkm/s between 19-27km/s",
+            file=__file__, func='justify_background_figure'))
+
+
 if __name__ == "__main__":
     # m16_channel_maps()
-    single_parallel_pillar_pvs()
+    justify_background_figure()

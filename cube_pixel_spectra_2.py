@@ -611,8 +611,10 @@ def plot_noise_and_vlims(ax, noise, vel_lims):
     November 5, 2021
     Moved from m16_deepdive.py on Nov 11
     """
-    [ax.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
-    [ax.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
+    if noise is not None:
+        [ax.axhline(sign*noise, color='grey', alpha=0.3, linestyle='--') for sign in (-1, 1)]
+    if vel_lims is not None:
+        [ax.axvline(v, color='grey', alpha=0.5) for v in vel_lims]
 
 
 def plot_box(ax, i_lims, j_lims, show_box_lo_lims):
@@ -649,13 +651,13 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
     if model is None:
         return
     fitted_spectrum = model(xaxis)
-    ax.plot(xaxis, fitted_spectrum, color=m_color, linestyle='-')
+    ax.plot(xaxis, fitted_spectrum, color=m_color, linestyle='-', alpha=0.8)
     if spectrum is not None:
         ax.plot(xaxis, spectrum-fitted_spectrum, color='g', alpha=0.6, linestyle='--')
     for i, m in enumerate(iter_models(model)):
         component_is_nonzero = (m.amplitude.value != 0)
         if component_is_nonzero:
-            ax.plot(xaxis, m(xaxis), color=m_color, linestyle='--', alpha=0.7)
+            ax.plot(xaxis, m(xaxis), color=m_color, linestyle='--', alpha=0.6)
             ax.axvline(m.mean.value, color=m_color, linestyle='--', alpha=0.3)
         amplitude_unc_txt = f"$\pm${m.amplitude.std:.3f}" if m.amplitude.std is not None else ""
         mean_unc_txt = f"$\pm${m.mean.std:.3f}" if m.mean.std is not None else ""
@@ -675,7 +677,7 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
 
 
 def fit_live_interactive(cube, template_model=None, double=False, mask=True, noise=None,
-        ylim_max=23, n_params=None, live_intercept=None):
+        ylim_min=-3, ylim_max=23, n_params=None, live_intercept=None):
     """
     INTERACTIVE fitting and plotting
     :param cube: the cube to fit to
@@ -797,7 +799,7 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
             ax_spectr.set_xlabel("v (km/s)")
             ax_spectr.set_ylabel("T (K)")
             ax_spectr.set_xlim((18, 32)) # (0, 45) for CII
-            ax_spectr.set_ylim((-3, ylim_max)) # 23 for HCOP, 35 for CII
+            ax_spectr.set_ylim((ylim_min, ylim_max)) # 23 for HCOP, 35 for CII
             ax_spectr.legend()
             plot_info_dict['currently_selecting'] = False
         elif event.button == 1 and event.inaxes is ax_spectr:
@@ -1856,14 +1858,24 @@ if __name__ == "__main__":
 
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
 
+    test_cii_background()
+
     if False:
         #### HCOP
-        regrid = True
+        regrid = False
         if regrid:
             subcube = cutout_subcube(length_scale_mult=None, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits")
+            noise = 0.12
+            stddev = 0.55
         else:
-            subcube = cutout_subcube(length_scale_mult=1, data_filename=f"carma/M16.ALL.hcop.sdi.cm.subpv.fits",
+            subcube = cutout_subcube(length_scale_mult=1.5, data_filename=f"carma/M16.ALL.hcop.sdi.cm.subpv.fits",
                 reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+            noise = 0.546
+            stddev = 0.46
+        #### 12CO10
+        # subcube = cutout_subcube(length_scale_mult=1.5, data_filename="bima/M16_12CO1-0_7x4.Kkms.fits", reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+        # noise = 6 # units: K. Checked this on 2022-01-11
+        # stddev = 0.46
         #### CII
         # subcube = cutout_subcube(length_scale_mult=1.5, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
         # cii_bg_spectrum = get_cii_background()
@@ -1891,12 +1903,12 @@ if __name__ == "__main__":
         # g_init = g_init + g_init[2].copy()
 
         ### template model by hand
-        g0 = models.Gaussian1D(amplitude=10, mean=24.5, stddev=(0.55 if regrid else 0.46),
-            bounds={'amplitude': (0, None), 'mean': (20, 30), 'stddev': (0.3, 1.)})
+        g0 = models.Gaussian1D(amplitude=10, mean=24.5, stddev=stddev,
+            bounds={'amplitude': (0, None), 'mean': (20, 30), 'stddev': (0.3, 1.3)})
         g1 = g0.copy()
         g1.mean = 25.5
         g_init = g0 + g1
-        fix_std(g_init)
+        # fix_std(g_init)
         tie_std_models(g_init)
         print(g_init)
 
@@ -1908,16 +1920,19 @@ if __name__ == "__main__":
 
     # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.12)
 
+
     # live_intercept_dict = {'ij': None}
-    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=(0.12 if regrid else 0.546),
-    #     ylim_max=25, n_params=6, live_intercept=live_intercept_dict) # noise from: (125, 32) at length_scale_mult=1
+    # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=noise,
+    #     ylim_min=-3, ylim_max=25, n_params=6, live_intercept=live_intercept_dict) # noise from: (125, 32) at length_scale_mult=1
+
         ## HCOP noise: 0.546, CII noise: ~1, HCOP at CII grid noise: 0.12
+
 
     # investigate_fit(subcube, double=False, template_model=g_init,
     #     filename_stub="models/gauss_fit_hcop_3G_v2",
     #     ylim_max=25, show='mom0')
 
-    investigate_template_model_fit(2, line='cii', version=2)
+    # investigate_template_model_fit(2, line='cii', version=2)
 
     # regrid_hcop()
 

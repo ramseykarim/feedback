@@ -92,7 +92,8 @@ def pv(selected_region=0):
     onesigma = [1,] + [0.3,]*2 + [5,]*2
 
     # set up the vectors
-    reg_filename = catalog.utils.search_for_file("catalogs/pillar1_threads_pv_v4.reg")
+    reg_filename_short = "catalogs/pillar1_threads_pv_v5_withboxes.reg"
+    reg_filename = catalog.utils.search_for_file(reg_filename_short)
     pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=10*u.arcsec)
     vel_limits = np.array([20, 28])*u.km/u.s
 
@@ -154,7 +155,10 @@ def pv(selected_region=0):
         coord.set_axislabel('')
     plt.subplots_adjust(left=0.05, right=0.95)
     # plt.show()
-    fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
+    # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-12-work/pv_{selected_region}{smooth_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}",
+            file=__file__, func='pv'))
 
 
 def sample_spectra(selected_region=0):
@@ -162,6 +166,7 @@ def sample_spectra(selected_region=0):
     Created: September 21, 2021
     Figure out how to make selected_region 0 or 1 and use the correct regions
     2021-10-12: switched from averaging over circles to just using a single spectrum along the line
+    2022-01-14: dressing it up a little for the paper
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
@@ -189,14 +194,16 @@ def sample_spectra(selected_region=0):
 
 
     # set up regions
-    reg_filename = catalog.utils.search_for_file("catalogs/pillar1_threads_pv_v5.reg")
+    reg_filename_short = "catalogs/pillar1_threads_pv_v5.reg"
+    reg_filename = catalog.utils.search_for_file(reg_filename_short)
     # set up the vector; width=None
     pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=None)
     point_reg_list = regions.read_ds9(reg_filename) # only reads 4 points, doesn't "see" vectors
     # set up the POINTS
     point_reg_list = point_reg_list[selected_region*2:(selected_region+1)*2] # index the correct 2 of them
     # set up background sample circle
-    bg_reg_filename = catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg")
+    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_4.reg"
+    bg_reg_filename = catalog.utils.search_for_file(bg_reg_filename_short)
     bg_reg_all = regions.read_ds9(bg_reg_filename)
     selected_bg = (0, 3)
     bg_reg_selected = [bg_reg_all[i] for i in selected_bg]
@@ -285,7 +292,10 @@ def sample_spectra(selected_region=0):
 
     plt.tight_layout()
     # plt.show()
-    fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/sample_spectra_{selected_region}{co_stub}_BG{selected_bg[0]+1}-{selected_bg[1]+1}.png")
+    # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/sample_spectra_{selected_region}{co_stub}_BG{selected_bg[0]+1}-{selected_bg[1]+1}.png")
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-14-work/sample_spectra_{selected_region}{co_stub}_BG{selected_bg[0]+1}-{selected_bg[1]+1}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'regs from {reg_filename_short}, bg from {bg_reg_filename_short}',
+            file=__file__, func='sample_spectra'))
 
 
 def sample_spectra_2(selected_region=0):
@@ -996,12 +1006,15 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     4 are across P1, and 2 are down each thread (these are the ones I want)
 
     2021-10-12: moved from pvdiagrams_2.py to m16_threads.py
+    2022-01-11: revisiting this so I can make the figure on my laptop and put it
+    in the paper
 
     :param selected_set: this is either 0 or 1, "0" is first 3 (transverse), "1" is last 3 (vertical, threads)
         "2" will select only the East and West vertical paths (not the Center)
     :param line_stub: indicator of which atomic/molecular line to use. Must be in the list "line_stubs"
     """
-    reg_filename = catalog.utils.search_for_file("catalogs/pillar1_threads_pv_v4.reg")
+    reg_filename_short = "catalogs/pillar1_threads_pv_v5_withboxes.reg"
+    reg_filename = catalog.utils.search_for_file(reg_filename_short)
     path_list = pvdiagrams.path_from_ds9(reg_filename, None, width=None) # no width needed, just use the inherent beam dilation
 
     fig = plt.figure(figsize=(15, 7))
@@ -1024,11 +1037,14 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     handles = []
     reg_index = 1
     # data_filename=f"apex/M16_12CO3-2_truncated.fits",
-    line_stubs = ['cii', 'hcop', 'hcn', 'nh2p', 'cs']
-    line_names = ['CII', 'HCO+', 'HCN', 'NH2+', 'CS']
+    line_stubs = ['cii', 'hcop', 'hcn', 'nh2p', 'cs', '12co10']
+    line_names = ['CII', 'HCO+', 'HCN', 'NH2+', 'CS', '$^{12}$CO (1$-$0)']
     if line_stub == "cii":
         line_fn = None
         levels = np.arange(10, 401, 10)
+    elif line_stub == '12co10':
+        line_fn = "bima/M16_12CO1-0_7x4.Kkms.fits"
+        levels = np.arange(20, 401, 20)
     else:
         line_fn = f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SMOOTH.fits"
         if selected_set > 0:
@@ -1058,6 +1074,9 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
             ax_sl.coords[0].set_major_formatter('x.xx')
             ax_sl.set_xlabel(f"Offset, from {direction_stub} (arcseconds)")
             ax_sl.set_ylabel("Velocity (km/s)")
+            if line_stub == '12co10':
+                ax_sl.invert_yaxis()
+            ax_sl.get_ylim()
             ax_sl.set_title(f"{line_name} PV diagrams")
         contour_args = (sl.data,)
         cargs_list.append(contour_args)
@@ -1111,7 +1130,10 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     # Plot the beam in degrees in the x coord and axes in the y coord
     ax_sl.plot([x_offset, x_offset + beam_size_mean], [0.1, 0.1], transform=beamtransform, color='k', marker='|', alpha=0.5)
     plt.subplots_adjust(left=0.05, right=0.95)
-    fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pillar_series{selected_set}_{line_stub}_PVs.png")
+    # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pillar_series{selected_set}_{line_stub}_PVs.png")
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-12-work/pillar_series{selected_set}_{line_stub}_PVs.png",
+        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}",
+            file=__file__, func='m16_pv_again2'))
     # plt.show()
 
 
@@ -1292,10 +1314,92 @@ def check_blue_excess_in_cii():
     plt.savefig("/home/rkarim/Pictures/2021-10-12-work/blue_excess.png")
 
 
+def make_spectrum_series_across_threads():
+    """
+    January 11, 2022
+    I want to try that "series" plot type again, from pvdiagrams.py
+    I was working with this type of plot briefly in Fall 2020, but never really
+    used it after that. I think it would be a good demonstration of how the
+    spectrum evolves from east to west across the two threads, in a way that the
+    PV diagram can't really capture
+    """
+    path_info = pvdiagrams.linear_series_from_ds9(catalog.utils.search_for_file("catalogs/p1_threads_pathsandpoints.reg"), pvpath_width=pvdiagrams.m16_allpillars_series_kwargs['pvpath_width'])
+    cube = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
+    pvdiagrams.run_plot_and_save_series(cube, (17, 30), *path_info,
+        "/home/ramsey/Pictures/2022-01-11-work/threadseries/test1.png")
+    del cube
+
+
+def figure_for_hcop_linewidths():
+    """
+    January 12, 2022
+    A figure to show how I got the average single-component linewidths for HCO+
+    at native resolution
+    """
+    # Get cube
+    cube = cps2.cutout_subcube(length_scale_mult=2.5, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits")
+    # Get regions and convert to pixel coords
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file("catalogs/p1_hcop_linewidth_samples.reg"))
+    pixel_coords = [tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1]) for reg in sky_regions]
+
+    # Set up axes
+    fig = plt.figure(figsize=(10, 10))
+    ax_img = plt.subplot2grid((2, 2), (0, 0), projection=cube[0, :, :].wcs)
+    ax_spec0 = plt.subplot2grid((2, 2), (0, 1))
+    ax_spec1 = plt.subplot2grid((2, 2), (1, 0))
+    ax_spec2 = plt.subplot2grid((2, 2), (1, 1))
+    ax_spec_list = [ax_spec0, ax_spec1, ax_spec2]
+    # Make moment 0 to plot
+    vel_lims = (19*kms, 27*kms)
+    mom0 = cube.spectral_slab(*vel_lims).moment0()
+    ax_img.imshow(mom0.to_value(), origin='lower', vmin=0, cmap='plasma')
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+    # Initialize things for fitting
+    # Make template model for fitting
+    g0 = cps2.models.Gaussian1D(amplitude=10, mean=24.5, stddev=0.46,
+        bounds={'amplitude': (0, None), 'mean': (20, 30), 'stddev': (0.3, 1.3)})
+    g1 = g0.copy()
+    g1.mean = 25.5
+    g_init = g0
+    # cps2.fix_std(g_init)
+    # Fitter
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    # Spectral axis
+    spectral_axis = cube.spectral_axis.to_value()
+    # Noise
+    noise = 0.546
+    weights = np.full(spectral_axis.size, 1.0/noise)
+    # Loop through the 3 pixels and plot things
+    for idx, (i, j) in enumerate(pixel_coords):
+        # Label the point on the reference image
+        ax_img.plot([j], [i], 'o', markersize=5, color='w')
+        ax_img.text(j+10, i+10, str(idx+1), color='w', fontsize=12, ha='center', va='center')
+        ax_spec_list[idx].text(0.9, 0.9, str(idx+1), color='k', fontsize=14, ha='center', va='center', transform=ax_spec_list[idx].transAxes)
+        # Extract, fit, and plot spectrum
+        spectrum = cube[:, i, j].to_value()
+        g_fit = fitter(g_init, spectral_axis, spectrum, weights=weights)
+        cps2.plot_noise_and_vlims(ax_spec_list[idx], noise, None)
+        cps2.plot_everything_about_models(ax_spec_list[idx], spectral_axis, spectrum, g_fit, noise=noise, dof=(spectral_axis.size - 3))
+        ax_spec_list[idx].set_xlabel("Velocity (km/s)")
+        ax_spec_list[idx].set_ylabel("HCO+ line intensity (K)")
+        ax_spec_list[idx].set_ylim([-2, 12])
+    plt.tight_layout()
+    fig.savefig("/home/ramsey/Pictures/2022-01-11-work/hcop_single_component_linewidths.png",
+        metadata={'Author': "Ramsey Karim", 'Title': "HCO+ single component linewidths",
+            'Source': f'{os.path.basename(__file__).replace(".py", "")}.figure_for_hcop_linewidths'})
+
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
     # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
     # channel_maps_again('c18o10', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
 
-    emission_peak_spectra(check_peak=True)
+    # m16_pv_again2(selected_set=2, line_stub='12co10')
+    sample_spectra()
+
+    # figure_for_hcop_linewidths()
+
+    # emission_peak_spectra(check_peak=True)
