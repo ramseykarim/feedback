@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import sys
 import os
+import datetime
 
 from math import ceil
 
@@ -26,6 +27,8 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
+
+from reproject import mosaicking
 
 # Lord forgive me
 from . import crosscut
@@ -131,7 +134,7 @@ def m16_channel_maps():
         ticks: 5, 25, 125
         velocity limits: 15, 35
         grid shape: 5, 4
-        figure size: 16, 20
+        figure size: 16, 20 or 20,28 if large?
         text color: black
     CO10: vlims: 4, 125 (arcsinh)
         label text position: 0.70, 0.68
@@ -149,6 +152,7 @@ def m16_channel_maps():
         text color: white
     N2HP: vlims: 0, 7
         ticks: 1, 3, 7
+        velocity limits: 18, 27 (another multi-line thing)
         all else same as above
     12CO32: vlims: 0, 75
         ticks: 0, 25, 75
@@ -159,38 +163,39 @@ def m16_channel_maps():
         ticks: 1, 5, 25
         all else same as 12CO32
     """
-    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    # fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
     # fn = catalog.utils.search_for_file("bima/M16_12CO1-0_7x4.fits")
     # fn = catalog.utils.search_for_file("carma/M16.ALL.hcop.sdi.cm.subpv.fits")
     # fn = catalog.utils.search_for_file("carma/M16.ALL.hcn.sdi.cm.subpv.fits")
     # fn = catalog.utils.search_for_file("carma/M16.ALL.cs.sdi.cm.subpv.fits")
-    # fn = catalog.utils.search_for_file("carma/M16.ALL.n2hp.sdi.cm.subpv.fits")
+    fn = catalog.utils.search_for_file("carma/M16.ALL.n2hp.sdi.cm.subpv.fits")
     # fn = catalog.utils.search_for_file("apex/M16_13CO3-2_truncated.fits")
     cube = cube_utils.CubeData(fn).convert_to_K().data
-    # cube = cps2.cutout_subcube(length_scale_mult=22., reg_index=2, data_filename=fn)
+    # cube = cps2.cutout_subcube(length_scale_mult=12., reg_index=2, data_filename=fn)
     # cube._unit = u.K
     # cube.plot_channel_maps(2, 2, [50, 60, 70, 80], cmap='jet')
-    moments = cube_utils.make_moment_series(cube, (5*kms, 40*kms), 1*kms)
+    # moments = cube_utils.make_moment_series(cube, (5*kms, 40*kms), 1*kms)
+    moments = cube_utils.make_moment_series(cube, (18*kms, 27*kms), 1*kms)
     # assert len(moments) == 20
-    grid_shape = (7, 5)
-    fig = plt.figure(figsize=(20, 28))
+    grid_shape = (3, 3)
+    fig = plt.figure(figsize=(12, 12))
     stretch = np.arcsinh
     ax, im = None, None
 
-    # img_to_contour, img_to_contour_hdr = fits.getdata(catalog.utils.search_for_file("sofia/M16_CII_U.mom0.18-28.fits"), header=True)
-    # contour_args = None
+    img_to_contour, img_to_contour_hdr = fits.getdata(catalog.utils.search_for_file("sofia/M16_CII_U.mom0.18-28.fits"), header=True)
+    contour_args = None
 
     for i in range(len(moments)):
         v_left, v_right, mom0 = moments[i]
         ax = plt.subplot2grid(grid_shape, (i//grid_shape[1], i%grid_shape[1]), projection=mom0.wcs)
-        im = ax.imshow(stretch(mom0.to_value()), vmin=stretch(2), vmax=stretch(150), cmap='inferno')
+        im = ax.imshow(stretch(mom0.to_value()), vmin=stretch(0), vmax=stretch(7), cmap='inferno')
         for axis_name in ('x', 'y'):
             ax.tick_params(axis=axis_name, direction='in')
             ax.tick_params(axis=axis_name, labelbottom=False, labelleft=False)
-        ax.text(0.07, 0.95, f"{v_left.to_value():.1f}$-${v_right.to_value():.1f}\n{v_left.unit}", transform=ax.transAxes, fontsize=16, va='top', color='k')
-        # if contour_args is None:
-        #     contour_args = (reproject_interp((img_to_contour, img_to_contour_hdr), mom0.wcs, shape_out=mom0.shape, return_footprint=False),)
-        # ax.contour(*contour_args, colors=marcs_colors[6], linewidths=1, levels=np.linspace(30, 260, 8))
+        ax.text(0.07, 0.95, f"{v_left.to_value():.1f}$-${v_right.to_value():.1f}\n{v_left.unit}", transform=ax.transAxes, fontsize=16, va='top', color='w')
+        if contour_args is None:
+            contour_args = (reproject_interp((img_to_contour, img_to_contour_hdr), mom0.wcs, shape_out=mom0.shape, return_footprint=False),)
+        ax.contour(*contour_args, colors=marcs_colors[6], linewidths=1, levels=np.linspace(30, 300, 10))
     plt.tight_layout(h_pad=0, w_pad=0, pad=1.01)
     # dx, dy = 0.01, 0.015
     # plt.subplots_adjust(wspace=0, hspace=0, left=dx, right=1-dx, top=1-dy, bottom=dy)
@@ -203,15 +208,18 @@ def m16_channel_maps():
         #     ax.set_xlabel("RA")
     insetcax = inset_axes(ax, width="5%", height="60%", loc='lower right', bbox_to_anchor=(0, 0.01, 0.97, 1), bbox_transform=ax.transAxes)
 
-    ticks = [5, 25, 125]
+    ticks = [1, 3, 7]
     cbar = fig.colorbar(im, cax=insetcax, orientation='vertical',
                         ticks=stretch(ticks))
     insetcax.set_yticklabels([f"{x:d}" for x in ticks], fontsize=14)
-    insetcax.tick_params(axis='y', colors='k')
+    insetcax.tick_params(axis='y', colors='w')
     insetcax.yaxis.set_ticks_position('left')
-    ax.text(0.62, 0.05, "T (K km/s)", color='k', transform=ax.transAxes, fontsize=14, zorder=10)
+    ax.text(0.70, 0.68, "T (K km/s)", color='w', transform=ax.transAxes, fontsize=14, zorder=10)
 
-    plt.savefig("/home/ramsey/Pictures/2021-08-31-work/m16_cii_channel_maps_1kms.png")
+    # plt.savefig("/home/ramsey/Pictures/2021-08-31-work/m16_cii_channel_maps_1kms.png")
+    fig.savefig("/home/ramsey/Pictures/2022-01-24-work/m16_n2hp_channel_maps_1kms.png",
+        metadata=catalog.utils.create_png_metadata(title='channel maps n2hp with cii contours 18-28 from 30 Kkms +30',
+        file=__file__, func='m16_channel_maps'))
     # plt.show()
 
 
@@ -857,19 +865,268 @@ def justify_background_figure():
 
     ax_img.contour(pillar_moment, levels=[70], colors='w')
     ax_img.set_title("CII integrated line intensity")
+    ax_img.xaxis.set_ticks([])
+    ax_img.yaxis.set_ticks([])
     ax_spec.plot(cube.spectral_axis.to_value(), spec1, label='Full field')
     ax_spec.plot(cube.spectral_axis.to_value(), spec2, label='Outside pillars')
     ax_spec.axvspan(25, 26, color='k', alpha=0.1)
+    ax_spec.axvline(19, linestyle='--', color='k', alpha=0.1)
+    ax_spec.axvline(27, linestyle='--', color='k', alpha=0.1)
     ax_spec.set_title("Average CII spectrum")
     ax_spec.set_xlabel("Velocity (km/s)")
     ax_spec.set_ylabel("CII line intensity (K)")
     plt.legend()
     plt.tight_layout()
-    plt.savefig("/home/ramsey/Pictures/2022-01-13-work/cii_background_justify.png",
+    plt.savefig("/home/ramsey/Pictures/2022-01-14-work/cii_background_justify.png",
         metadata=catalog.utils.create_png_metadata(title="Moment 0 at full range, contour using cutoff 70 Kkm/s between 19-27km/s",
             file=__file__, func='justify_background_figure'))
 
 
+def background_samples_figure():
+    """
+    January 14, 2022
+    A follow-up to the above figure, justify_background_figure(), where I show
+    the spectra from catalogs/pillar_background_sample_multiple_4.reg (which
+    is what I use in cube_pixel_spectra_2.get_cii_background)
+    I'm thinking to show the individual spectra from each region in different
+    colors (first 4 of marc's colors) and then a thick black line showing the
+    average
+    """
+    cii_cube = cps2.cutout_subcube(length_scale_mult=7)
+    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_4.reg"
+    bg_reg = regions.read_ds9(catalog.utils.search_for_file(bg_reg_filename_short))
+    cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg).mean(axis=(1, 2))
+    kwargs = {'fill': False}
+    fig = plt.figure(figsize=(14, 6))
+    ax_img = plt.subplot2grid((1, 3), (0, 0), projection=cii_cube[0, :, :].wcs)
+    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2)
+    vel_lims = (19*kms, 27*kms)
+    ax_img.imshow(cii_cube.spectral_slab(*vel_lims).moment0().to_value(), origin='lower')
+    ax_spec.plot(cii_cube.spectral_axis.to_value(), cii_bg_spectrum.to_value(), color='k', lw=4, label='Average background', alpha=0.6)
+    for idx, reg in enumerate(bg_reg):
+        reg_pixel = reg.to_pixel(cii_cube[0, :, :].wcs)
+        artist = reg_pixel.as_artist(**kwargs, color=marcs_colors[idx])
+        ax_img.add_artist(artist)
+        x, y = reg_pixel.center.xy
+        ax_img.text(x, y, str(idx+1), color=marcs_colors[idx], ha='center', va='center', fontsize=12)
+        spectrum = cii_cube.subcube_from_regions([reg]).mean(axis=(1, 2)).to_value()
+        ax_spec.plot(cii_cube.spectral_axis.to_value(), spectrum, color=marcs_colors[idx], label=f'{idx+1}')
+    beam_patch_coords = [0.06, 0.94] # Axes coords
+    beam_patch = cii_cube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform(beam_patch_coords), misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs))
+    beam_patch.set_alpha(0.9)
+    beam_patch.set_facecolor('w')
+    beam_patch.set_edgecolor('w')
+    ax_img.add_artist(beam_patch)
+    ax_img.text(beam_patch_coords[0]+0.06, beam_patch_coords[1], '[CII]\nbeam', fontsize=9, color='w', alpha=0.9, transform=ax_img.transAxes, va='center', ha='left')
+    ax_img.set_title(f"Integrated CII intensity, {make_vel_stub(vel_lims)}", fontsize=12)
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+    ax_spec.set_xlabel("Velocity (km/s)")
+    ax_spec.set_ylabel("CII line intensity (K)")
+    ax_spec.legend()
+    plt.tight_layout()
+    fig.savefig("/home/ramsey/Pictures/2022-01-14-work/cii_background_spectra.png",
+        metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}',
+            file=__file__, func='background_samples_figure'))
+
+
+def background_samples_figure_molecular():
+    """
+    January 21, 2022
+    Liz gave me a great idea to check the background of tracers of warm molecular
+    gas, like CO(1-0) or CO(3-2) (which I won't publish, but whatever, educational)
+    The blueshifted wing in CO1-0 rattled me, and I can see a background in
+    CO3-2 in the channel maps. So I want to compare the CII background to
+    these CO backgrounds to see if any of the same components are present
+    If I find something, then I can talk about it in the background subtraction
+    section in the paper
+    """
+    # cii_cube = cps2.cutout_subcube(length_scale_mult=7)
+    cube = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_7x4.fits", length_scale_mult=None)
+    # cube = cps2.cutout_subcube(data_filename="apex/M16_12CO3-2_truncated.fits", length_scale_mult=9)
+
+    line_name = "$^{12}$CO(1$-$0)"
+    line_stub = "12co10"
+
+    # line_name = "$^{12}$CO(3$-$2)"
+    # line_stub = "12co32"
+
+    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_4.reg"
+    bg_reg = regions.read_ds9(catalog.utils.search_for_file(bg_reg_filename_short))
+
+    # cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg).mean(axis=(1, 2))
+
+    kwargs = {'fill': False}
+    fig = plt.figure(figsize=(14, 6))
+    ax_img = plt.subplot2grid((1, 3), (0, 0), projection=cube[0, :, :].wcs)
+    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2)
+    vel_lims = (19*kms, 27*kms)
+    ax_img.imshow(cube.spectral_slab(*vel_lims).moment0().to_value(), origin='lower')
+
+    avg_bg_spectrum = cube.subcube_from_regions(bg_reg).mean(axis=(1, 2)).to_value()
+    ax_spec.plot(cube.spectral_axis.to_value(), avg_bg_spectrum, color='k', lw=4, label='Average background', alpha=0.6)
+
+    for idx, reg in enumerate(bg_reg):
+        reg_pixel = reg.to_pixel(cube[0, :, :].wcs)
+        artist = reg_pixel.as_artist(**kwargs, color=marcs_colors[idx])
+        ax_img.add_artist(artist)
+        x, y = reg_pixel.center.xy
+        ax_img.text(x, y, str(idx+1), color=marcs_colors[idx], ha='center', va='center', fontsize=12)
+        spectrum = cube.subcube_from_regions([reg]).mean(axis=(1, 2)).to_value()
+        ax_spec.plot(cube.spectral_axis.to_value(), spectrum, color=marcs_colors[idx], label=f'{idx+1}')
+
+    beam_patch_coords = [0.06, 0.94] # Axes coords
+    beam_patch = cube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform(beam_patch_coords), misc_utils.get_pixel_scale(cube[0, :, :].wcs))
+    beam_patch.set_alpha(0.9)
+    beam_patch.set_facecolor('w')
+    beam_patch.set_edgecolor('w')
+    ax_img.add_artist(beam_patch)
+    ax_img.text(beam_patch_coords[0]+0.06, beam_patch_coords[1], f'{line_name}\nbeam', fontsize=9, color='w', alpha=0.9, transform=ax_img.transAxes, va='center', ha='left')
+    ax_img.set_title(f"Integrated {line_name} intensity, {make_vel_stub(vel_lims)}", fontsize=12)
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+    ax_spec.set_xlabel("Velocity (km/s)")
+    ax_spec.set_ylabel(f"{line_name} line intensity (K)")
+    ax_spec.legend()
+    plt.tight_layout()
+    # Previously saved on 2022-01-14
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-21-work/{line_stub}_background_spectra.png",
+        metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}',
+            file=__file__, func='background_samples_figure'))
+
+
+def irac8um_to_cii_figure():
+    """
+    January 17, 2021 (MLK birthday)
+    Xander asked for an image of 8micron converted to CII using Cornelia's
+    nonlinear relation.
+    Xander's message:
+        GUSTO is a balloon project to observe [CII].
+        It has a beam of 45” which makes it well suited to survey large fields.
+        Could you make a one square degree mock-up map of your respective
+        regions in the IRAC 8um map at this spatial resolution and then
+        translate this to the expected [CII] intensity using Cornelia’s
+        non-linear relation ?
+    The relation from Pabst+2017 (the Horsehead paper) appears to be:
+        I [C II] [erg s^−1 cm^−2 sr^−1] = 2.2 x 10^−2 (I [8um] [ erg s^−1 cm^−2 sr^−1 ])^0.79
+    I'll load the IRAC 8um data and I'll have to remind myself of the units
+        Units are MJy/sr
+        I need to get rid of a Hz-1 unit, so I need to integrate over a bandpass
+        or just  multiply by an effective width. The IRAC documentation
+        gives an effective width at IRAC channel 4 of
+        3.94e12 Hz (3.94 THz, so the spectrometry R~10 since 8um~37Thz)
+        I will simply multiply the MJy/sr values by the effective width and use
+        that as I_8um
+    I found the effective width in Table 4.3 of this doc:
+    https://irsa.ipac.caltech.edu/data/SPITZER/docs/irac/iracinstrumenthandbook/15/
+
+    It would also be nice to get the figure rotated to align with WCS.
+    """
+    already_aligned = True
+    intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
+    if not already_aligned:
+        irac4_fn = catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic.fits")
+        irac4_out_fn = irac4_fn.replace('.fits', '_ALIGNED.fits')
+        hdul = fits.open(irac4_fn)
+        hdr = hdul[0].header
+        keys_to_save = ['ORIGIN', 'INSTRUME', 'CHNLNUM',
+            'AOT_TYPE', 'AORLABEL', 'OBJECT', 'BUNIT']
+        creator = hdr['CREATOR']
+        original_src_file = creator.split(', ')[1] + 'y' # the y got cutoff
+        original_src_file = "/".join(original_src_file.split('/')[-2:]) + '::mosaic_irac()'
+        new_src_file = "/".join(__file__.split('/')[-2:]) + '::irac8um_to_cii_figure()'
+
+        w_original = WCS(hdul[0].header)
+        w_aligned, shape_aligned = mosaicking.find_optimal_celestial_wcs(
+            [(hdul[0].data, hdul[0].header)],
+        )
+        data_aligned = reproject_interp(hdul[0], w_aligned, shape_out=shape_aligned, return_footprint=False)
+
+        fig = plt.figure(figsize=(12, 12))
+        ax1 = plt.subplot(121, projection=w_original)
+        ax2 = plt.subplot(122, projection=w_aligned)
+        ax1.imshow(hdul[0].data, origin='lower')
+        ax2.imshow(data_aligned, origin='lower')
+        fig.savefig('/home/ramsey/Pictures/2021-01-17-work/irac4_regrid.png',
+            metadata=catalog.utils.create_png_metadata(title='IRAC 4 aligned with RA-DEC',
+                file=__file__, func='irac8um_to_cii_figure'))
+        hdu_aligned = fits.PrimaryHDU(data=data_aligned, header=w_aligned.to_header())
+        hdu_aligned.header['AUTHOR'] = "Ramsey Karim"
+        hdu_aligned.header['CREATOR'] = new_src_file
+        hdu_aligned.header['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        # Copy some keys from the previous header
+        for k in keys_to_save:
+            hdu_aligned.header[k] = hdul[0].header[k]
+        hdul.close()
+        hdu_aligned.header['HISTORY'] = "Archival files GLM_01650+0075 and 01750_0075 were mosaicked"
+        hdu_aligned.header['HISTORY'] = "The result was rotated to align with RA-DEC"
+        hdu_aligned.header['HISTORY'] = 'Functions used:'
+        hdu_aligned.header['HISTORY'] = original_src_file
+        hdu_aligned.header['HISTORY'] = new_src_file
+        hdu_aligned.writeto(irac4_out_fn)
+        print("DONE")
+        return
+    already_converted = True
+    if not already_converted:
+        # Already aligned with RA-DEC, so I can just load that file now
+        irac4_fn = catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic_ALIGNED.fits")
+        hdul = fits.open(irac4_fn)
+        mjysr = u.Unit(hdul[0].header['BUNIT'])
+        irac4_effective_width = 3.94e12 * u.Hz
+        desired_unit = intensity_unit_cgs # erg s-1 cm-2 sr-1
+        I_8um = (hdul[0].data * mjysr * irac4_effective_width).to(desired_unit)
+        """
+        Cornelia's equation:
+        I [C II] [erg s^−1 cm^−2 sr^−1] = 2.2 x 10^−2 (I [8um] [ erg s^−1 cm^−2 sr^−1 ])^0.79
+        """
+        I_CII = 2.2e-2 * (I_8um/desired_unit).decompose()**0.79 * desired_unit
+        hdul[0].header['BUNIT'] = str(desired_unit)
+        hdul[0].header['COMMENT'] = 'This is the estimated integrated CII line intensity from observed 8um'
+        hdul[0].header['COMMENT'] = 'Estimated using the relation from Pabst et al. 2017'
+        hdul[0].header['COMMENT'] = 'With both I [C II] and I [8um] in units of BUNIT'
+        hdul[0].header['COMMENT'] = "I [C II] = 2.2 x 10^-2 (I [8um])^0.79"
+        hdul[0].header['COMMENT'] = "8um converted from MJy/sr to BUNIT using effective width"
+        hdul[0].header['COMMENT'] = '3.94 THz from Table 4.3 of IRAC Instrument Handbook'
+        hdul[0].data = (I_CII/desired_unit).decompose().to_value()
+        hdul.writeto(os.path.join(os.path.dirname(irac4_fn), 'estimated_cii_intensity.fits'), overwrite=True)
+        hdul.close()
+    """
+    Convert the CII to intensity to compare to the 8um estimate
+    Referencing the similar conversions made in m16_deepdive.py::prepare_pdrt_tables()
+    and cii_pacs_contrib.py
+    """
+    cii_cube = cps2.cutout_subcube(length_scale_mult=None)
+    new_hdr = cii_cube[0, :, :].wcs.to_header()
+    del new_hdr['SPECSYS']
+    new_hdr['AUTHOR'] = "Ramsey Karim"
+    new_hdr['CREATOR'] = "/".join(__file__.split('/')[-2:]) + '::irac8um_to_cii_figure()'
+    new_hdr['BUNIT'] = str(intensity_unit_cgs)
+    new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    new_hdr['COMMENT'] = 'Created from the SOFIA CII cube M16_CII_U.fits'
+    new_hdr['COMMENT'] = 'Integrated across full range'
+    new_hdr['COMMENT'] = 'Converted to CGS using channel width as the spectral term'
+    new_hdr['COMMENT'] = 'mom0[K km/s] / [km/s] -> [Jy/sr], *= [km/s]->[Hz], -> CGS'
+    cii_fn_out = os.path.join(cps2.cube_info['dir'], 'cii_integrated_intensity_cgs.fits')
+    line_center = cii_cube.header['RESTFREQ']*u.Hz
+    velocity_axis = cii_cube.spectral_axis[::-1].to(u.Hz, equivalencies=u.doppler_radio(line_center))
+    dv_channel = np.mean(np.diff(velocity_axis))
+    print(dv_channel.to(u.MHz))
+    cii_mom0 = cii_cube.moment0().to(u.K*kms)
+    cii_mom0_cgs = (cii_mom0/kms).decompose().to(u.Jy/u.sr, equivalencies=u.brightness_temperature(line_center)) * dv_channel
+    cii_mom0_cgs = cii_mom0_cgs.to(intensity_unit_cgs)
+    hdu = fits.PrimaryHDU(data=(cii_mom0_cgs/intensity_unit_cgs).decompose().to_value(),
+        header=new_hdr)
+    hdu.writeto(cii_fn_out)
+    print()
+
+
 if __name__ == "__main__":
-    # m16_channel_maps()
-    justify_background_figure()
+    m16_channel_maps()
+    # justify_background_figure()
+    # background_samples_figure_molecular()
+
+    # irac8um_to_cii_figure()

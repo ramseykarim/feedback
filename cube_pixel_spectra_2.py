@@ -5,7 +5,7 @@ if __name__ == "__main__":
     matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import sys
+import os, sys
 import warnings
 import datetime
 import time
@@ -669,7 +669,7 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
     if noise is not None:
         chisq = np.sum((spectrum-fitted_spectrum)**2 / noise**2)
         if dof is not None:
-            chisq_stub = "chisq/dof"
+            chisq_stub = "$\\chi^{2}$/dof"
             chisq = chisq/dof
         else:
             chisq_stub = "chisq"
@@ -1723,10 +1723,22 @@ def get_cii_background(cii_cube=None, return_artist=False, **kwargs):
 
 def test_cii_background():
     """
+    #######################
+    USEFUL DEBUG FUNCTION!!!! CHECK IF BACKGROUND RUNS THE SAME ON JUPITER AND
+    LAPTOP!!
+    #######################
     Nov 19, 2021
     Unnerving discrepancy between running the background subtraction on my
     laptop vs desktop, so I need to investigate that...
     The solution was an astropy/regions update. Weird!
+    Jan 14, 2022: I verified again that this produces the same result on both
+        jupiter and my laptop. I also checked that the astropy versions were
+        both as up-to-date as possible (laptop runs py3.9 so astropy is 5.0,
+        jupiter runs py3.7 so astropy is 4.3.1) and that is appparently good
+        enough
+        I want to create a plot similar to this to show the background spectra
+        but I will do it in m16_pictures since this is a good function to leave
+        alone for future debugging.
     """
     cii_cube = cutout_subcube(length_scale_mult=6)
     cii_bg_spectrum, artists = get_cii_background(cii_cube=cii_cube, return_artist=True)
@@ -1817,26 +1829,36 @@ def regrid_hcop():
     data=hcop_cube.unmasked_data, which provides a "view" not an array. Maybe
     unmasked_data[:] would be better? But this whole thing takes so long to
     run that I don't want to test that theory.
+    January 20, 2022: bug fix about shapes not matching. See below
     """
-    if True:
+    if False:
         cii_cube = cutout_subcube(length_scale_mult=4.)
         hcop_cube_obj = cube_utils.CubeData("carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits")
         hcop_cube = hcop_cube_obj.data
 
         # The reproject function apparently messes with the spectral axis too, so...
         # get the delta_velocity of HCO+ ; this is how they do it in spectral_cube
-        hcop_dv = np.mean(np.diff(hcop_cube.spectral_axis))
-        cii_dv = np.mean(np.diff(cii_cube.spectral_axis))
-        mean_filter_width = (cii_dv/hcop_dv).decompose().to_value()
-        print(mean_filter_width)
-        mean_filter_width = np.round(mean_filter_width, 4)
-        print(mean_filter_width)
-        from astropy.convolution import Box1DKernel
-        mean_filter = Box1DKernel(mean_filter_width)
-        print(mean_filter.array)
-        hcop_cube = hcop_cube.spectral_smooth(mean_filter)
-        hcop_cube = hcop_cube.spectral_interpolate(cii_cube.spectral_axis.to(hcop_cube.spectral_axis.unit))
-        hcop_cube.write(hcop_cube_obj.full_path.replace('.fits', '.boxsmooth.fits'), format='fits')
+        boxsmooth_filename = hcop_cube_obj.full_path.replace('.fits', '.boxsmooth.fits')
+        if not os.path.exists(boxsmooth_filename):
+            hcop_dv = np.mean(np.diff(hcop_cube.spectral_axis))
+            cii_dv = np.mean(np.diff(cii_cube.spectral_axis))
+            mean_filter_width = (cii_dv/hcop_dv).decompose().to_value()
+            print(mean_filter_width)
+            mean_filter_width = np.round(mean_filter_width, 4)
+            print(mean_filter_width)
+            from astropy.convolution import Box1DKernel
+            mean_filter = Box1DKernel(mean_filter_width)
+            print(mean_filter.array)
+            hcop_cube = hcop_cube.spectral_smooth(mean_filter)
+            hcop_cube = hcop_cube.spectral_interpolate(cii_cube.spectral_axis.to(hcop_cube.spectral_axis.unit))
+            hcop_cube.write(boxsmooth_filename, format='fits')
+        else:
+            """
+            I saved a version of this on Jan 20 2022 since the above code takes
+            like a full 5 minutes to run, and the rest of the reproject code
+            take just a few seconds.
+            """
+            hcop_cube = cube_utils.SpectralCube.read(boxsmooth_filename)
 
         # now finish it
         hdr = hcop_cube.wcs.to_header()
@@ -1844,13 +1866,24 @@ def regrid_hcop():
         w = WCS(hdr)
         hcop_cube = cube_utils.SpectralCube(data=hcop_cube.unmasked_data[:], wcs=w, meta=hcop_cube.meta)
         hcop_cube = hcop_cube.reproject(cii_cube.header)
-        hcop_cube = hcop_cube.minimal_subcube()
+        """
+        Bug fix January 20, 2022
+        # hcop_cube = hcop_cube.minimal_subcube()
+        # print(hcop_cube.shape[1:])
+        I had minimal_subcube in there (idr why) but the interesting thing is,
+        HCO+ actually doesn't cover the top edge of this reprojected frame.
+        So minimal_subcube shaves off the top row of data, making the shapes of
+        HCO+ regrid and CII(length_scale_mult=4) not match.
+        Luckily, it's the top row, so the coordinates still match and everything
+        works unless you give it i=48 as a coordinate
+        I will just leave the NaN row in there as a reminder of this
+        """
         hcop_cube = hcop_cube.spectral_slab(17*u.km/u.s, 30*u.km/u.s)
-        savename = hcop_cube_obj.full_path.replace('.fits', '.fullregrid.fits')
+        savename = hcop_cube_obj.full_path.replace('.fits', '.fullregrid_v2.fits')
         hcop_cube.write(savename, format='fits', overwrite=True)
         # Forgot to trim off the extra channels on either end
     else:
-        raise RuntimeError("I already ran this on Dec 7, 2021!")
+        raise RuntimeError("I already ran this on Dec 7, 2021 and Jan 20, 2022!")
 
 
 
@@ -1858,7 +1891,7 @@ if __name__ == "__main__":
 
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
 
-    test_cii_background()
+    # test_cii_background()
 
     if False:
         #### HCOP
@@ -1934,7 +1967,7 @@ if __name__ == "__main__":
 
     # investigate_template_model_fit(2, line='cii', version=2)
 
-    # regrid_hcop()
+    regrid_hcop()
 
     # stack_pillar_spectra(subcube)
     # fit_multicube_live_interactive(*subcubes)

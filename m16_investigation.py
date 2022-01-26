@@ -1111,77 +1111,186 @@ def identify_components_with_co():
     it's like pillar_sample_spectra() where I overplot multiple lines
     I will have to pick a region (0 thru 5, 5 is the background) for each of these plots
     I have copied some of the below from pillar_sample_spectra()
+
+    January 19, 2022
+    I am repurposing this for the paper. The figure will be very similar, but
+    I want to get rid of the CO3-2 lines since those aren't being published here
+    and also use the background from pillar_background_sample_multiple_4.reg
+    (which is used in cube_pixel_spectra_2.get_cii_background)
+    TODO: Idea for adaptation: make this figure with the same bunch of single
+        pixel spectra from pillar1_pointsofinterest_v2.reg, used in
+        m16_deepdive.plot_selected_hcop_spectra_fits().
+        That way there's a range of locations and we can get a better idea of
+        what's going on
+    TODO: also, ask Marc and Xander about the excess in CO(1-0) around pillar 1
+        and keep studying it, make some more spectra
     """
-    cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits", "apex/M16_12CO3-2_truncated_cutout.fits", "apex/M16_13CO3-2_truncated_cutout.fits",
-        "bima/M16_12CO1-0_APEXbeam.fits", "apex/M16_CO6-5_APEXbeam.fits"]
-    line_channel_vlims = [(0, 35), (0, 30), (None, None), (None, None), (None, None)]
-    line_names = ['CII', '12CO(3-2)', '13CO(3-2)',
-        '12CO(1-0) * 0.5', '12CO(6-5)']
-    line_colors = ['b', 'orange', 'g', 'r', 'purple']
-    multiplier = [1, 1, 1, 0.5, 1]
-    kms = u.km/u.s
+    cube_filenames = ["sofia/M16_CII_U.fits",
+        "bima/M16_12CO1-0_14x14.fits",
+        "carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits",
+        "carma/M16.ALL.hcn.sdi.cm.subpv.SOFIAbeam.fits",
+        ]
+    multiplier = [1, 0.5,] + [4,]*2
+    line_names = ['CII',
+        '$^{12}$CO(1$-$0) $\\times$ 0.5',
+        f'HCO+ $\\times$ {multiplier[2]}', f'HCN $\\times$ {multiplier[3]}',
+        ]
+    line_colors = marcs_colors # ['b', 'orange', 'g', 'r', 'purple']
 
-    #### These are for each region in the pillar_samples_components.reg file
-    colors = ['k', 'k', 'r', 'b', 'g', 'k']
-    linestyles = ['--', '-', '-', '-', '-', ':']
-    names = ["Small Dashed Circle", "Small Solid Circle", "Circle 1", "Circle 2", "Circle 3", "Western Circle"]
-    short_names = ["", "", "1 (R)", "2 (B)", "3 (G)", "West"]
-    # I hand-edited some of these scale factors
-    bg_scale_factors = [1.47, 1.96, 1.4, 1.1, 1.28, 1.0] # third version
+    reg_fn = "catalogs/co10_background_investigation.reg"
+    reg_fn_short = os.path.basename(reg_fn).replace('.reg', '')
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_fn))
+    reg_list = reg_list[:8] # Cut off at 8 regions
 
-    reg_fn = "catalogs/pillar_samples_components.reg"
-    reg_list = regions.read_ds9(catalog.utils.search_for_file(reg_fn))
-    reg_idx = 0
-
-    ref_idx = 1
     channel = 24*kms
-    ref_cube = cps2.cutout_subcube(length_scale_mult=12, data_filename=cube_filenames[ref_idx])
+    ref_idx = 0
+    ref_cube = cps2.cutout_subcube(length_scale_mult=6, data_filename=cube_filenames[0])
     channel_map = ref_cube[ref_cube.closest_spectral_channel(channel), :, :]
     reference_name = f"{line_names[ref_idx]} {channel.to_value():04.1f} {channel.unit}"
 
-    fig = plt.figure(figsize=(15, 5)) # originally (18, 10)
-    ax_img = plt.subplot2grid((1, 3), (0, 0))
-    ref_img, ref_wcs = channel_map.to_value(), channel_map.wcs
-    stretch = np.arcsinh
-    im = ax_img.imshow(stretch(ref_img), origin='lower', cmap='nipy_spectral', vmin=stretch(line_channel_vlims[ref_idx][0]), vmax=stretch(line_channel_vlims[ref_idx][1]))
-    # fig.colorbar(im, ax=ax_img)
+    cii_bg_spectrum = cps2.get_cii_background(cii_cube=ref_cube).to_value()
+
+    # Set up axes. There are 9 regions in co10_background_investigation.reg
+    # There are 8 points in pillar1_pointsofinterest_v2.reg
+    # Just do 8 regions for both, so it's easier
+    fig = plt.figure(figsize=(13, 12))
+    ax_spec_list = []
+    for i in range(3):
+        for j in range(3):
+            if (i == 0) and (j == 2):
+                # Image ax
+                ax_img = plt.subplot2grid((3, 3), (i, j), projection=channel_map.wcs)
+            else:
+                ax_spec_list.append(plt.subplot2grid((3, 3), (i, j)))
+
+    ref_img = channel_map.to_value()
+    stretch = lambda x: x
+    im = ax_img.imshow(stretch(ref_img), origin='lower', cmap='nipy_spectral', vmin=0, vmax=30)
+    fig.colorbar(im, ax=ax_img)
     ax_img.set_title(reference_name)
+    for coord in ax_img.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
 
-    reg = reg_list[reg_idx]
-
-    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2, rowspan=1)
     for i, c_fn in enumerate(cube_filenames):
-        cube = cube_utils.CubeData(c_fn)
-        cube.convert_to_K()
-        cube.data = cube.data.with_spectral_unit(kms)
-        subcube = cube.data.subcube_from_regions([reg])
-        spectrum = subcube.mean(axis=(1, 2)).to_value() * multiplier[i]
         if line_names[i] == 'CII':
-            bg_spectrum = cube.data.subcube_from_regions([reg_list[reg_idx+3]]).mean(axis=(1, 2)).to_value() #* bg_scale_factors[reg_idx]
-            ax_spec.plot(cube.data.spectral_axis.to_value(), spectrum, label=f"{line_names[i]}", color=line_colors[i], linestyle='--')
-            spectrum -= bg_spectrum
-            ax_spec.plot(cube.data.spectral_axis.to_value(), spectrum, label=f"{line_names[i]} (BG subtracted)", color=line_colors[i])
+            cube = ref_cube
         else:
-            ax_spec.plot(cube.data.spectral_axis.to_value(), spectrum, label=f"{line_names[i]}", color=line_colors[i])
-    pixreg = reg.to_pixel(ref_wcs)
-    pix_center = pixreg.center.xy
-    pix_radius = pixreg.radius
-    # ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{idx}", color='r', fontsize=11, ha='center', va='bottom')
-    pixreg.plot(ax=ax_img, color='k', lw=2, ls=linestyles[reg_idx])
+            cube = cps2.cutout_subcube(data_filename=c_fn, length_scale_mult=None)
+        xaxis = cube.spectral_axis.to_value()
+        for j, reg in enumerate(reg_list):
+            # Get spectrum
+            if isinstance(reg, regions.CircleSkyRegion):
+                subcube = cube.subcube_from_regions([reg])
+                spectrum = subcube.mean(axis=(1, 2)).to_value() * multiplier[i]
+                del subcube
+            elif isinstance(reg, regions.PointSkyRegion):
+                pixel_coords = tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1])
+                spectrum = cube[(slice(None), *pixel_coords)]
+                del pixel_coords
+            # Plot spectrum, perhaps with background subtraction
+            ax_spec = ax_spec_list[j]
+            if line_names[i] == 'CII':
+                # bg_spectrum = cube.data.subcube_from_regions([reg_list[reg_idx+3]]).mean(axis=(1, 2)).to_value() #* bg_scale_factors[reg_idx]
+                ax_spec.plot(xaxis, spectrum, label=f"{line_names[i]}", color=line_colors[i], linestyle='--')
+                spectrum -= cii_bg_spectrum
+                ax_spec.plot(xaxis, spectrum, label=f"{line_names[i]} (BG subtracted)", color=line_colors[i])
+            else:
+                ax_spec.plot(xaxis, spectrum, label=f"{line_names[i]}", color=line_colors[i])
 
-    spec_xlim = (0, 55)
-    ax_spec.legend()
-    # ax_spec.set_ylim(spec_ylim)
-    ax_spec.set_xlim(spec_xlim)
-    # ax_spec.axvspan(*(pvl.to_value() for pvl in pillar_vel_limits), color='grey', alpha=0.05)
-    ax_spec.axvline(channel.to_value(), color='k', alpha=0.2)
-    ax_spec.axhline(0, color='k', alpha=0.2)
+    for j, reg in enumerate(reg_list):
+        ax_spec = ax_spec_list[j]
+        pixreg = reg.to_pixel(channel_map.wcs)
+        pix_center = pixreg.center.xy
+        try:
+            pix_radius = pixreg.radius
+        except:
+            pix_radius = 7
+        ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{j+1}", color='k', fontsize=11, ha='center', va='bottom')
+        pixreg.plot(ax=ax_img, color='k')
+        ax_spec.text(0.9, 0.9, str(j+1), color='k', fontsize=14, ha='center', va='center', transform=ax_spec.transAxes)
 
-    ax_spec.set_xlabel("velocity (km/s)")
-    ax_spec.set_ylabel("Line intensity (K)")
-    ax_spec.set_title("Line spectra (20\" beam) averaged over selected position")
-    # plt.show()
-    fig.savefig(f"/home/ramsey/Pictures/2021-06-08-work/pillar_samples_{reg_idx}.png")
+        ax_spec.set_ylim([-2, 27])
+        ax_spec.xaxis.set_ticks_position('both')
+        ax_spec.yaxis.set_ticks_position('both')
+        ax_spec.xaxis.set_tick_params(direction='in', which='both')
+        ax_spec.yaxis.set_tick_params(direction='in', which='both')
+        spec_xlim = (10, 40) # (0, 55)
+        if j == 7:
+            ax_spec.legend(loc='upper left')
+        # ax_spec.set_ylim(spec_ylim)
+        ax_spec.set_xlim(spec_xlim)
+        # ax_spec.axvspan(*(pvl.to_value() for pvl in pillar_vel_limits), color='grey', alpha=0.05)
+        ax_spec.axvline(channel.to_value(), color='k', alpha=0.2)
+        ax_spec.axhline(0, color='k', alpha=0.2)
+        if j+1 not in [1, 3, 6]:
+            ax_spec.yaxis.set_ticklabels([])
+        if j+1 not in [6, 7, 8]:
+            ax_spec.xaxis.set_ticklabels([])
+        # ax_spec.set_xlabel("Velocity (km/s)")
+        # ax_spec.set_ylabel("Line intensity (K)")
+        # ax_spec.set_title("Line spectra (14\" beam) averaged over selected position")
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0, wspace=0)
+    # fig.savefig(f"/home/ramsey/Pictures/2021-06-08-work/pillar_samples_{reg_idx}.png")
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-19-work/pillar_samples_{reg_fn_short}_v2.png",
+        metadata=catalog.utils.create_png_metadata(title='molecular lines and CII bgsub',
+            file=__file__, func='identify_components_with_co'))
+
+
+def co_moment_image():
+    """
+    January 19, 2022
+    Checking on the strange 20-22 km/s excess in CO(1-0) emission
+    It's clearly visible in the image from identify_components_with_co
+    """
+    cube_co = cps2.cutout_subcube(data_filename="bima/M16_12CO1-0_7x4.fits", length_scale_mult=None)
+    cube_hcop = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits", length_scale_mult=9)
+
+    vel_lims = (20*kms, 22*kms)
+    vel_lims_pillar = (24*kms, 26*kms)
+
+    mom0_co = cube_co.spectral_slab(*vel_lims).moment0().to_value()
+    mom0_pillar_co = cube_co.spectral_slab(*vel_lims_pillar).moment0().to_value()
+    mom0_hcop = cube_hcop.spectral_slab(*vel_lims).moment0().to_value()
+    mom0_pillar_hcop = cube_hcop.spectral_slab(*vel_lims_pillar).moment0().to_value()
+
+    fig = plt.figure(figsize=(12, 7))
+    stretch = np.sqrt
+
+    ax_co = plt.subplot(121)
+    im_co = ax_co.imshow(stretch(mom0_co), origin='lower', vmin=stretch(0), vmax=stretch(120))
+    ticks = np.arange(0, 121, 20)
+    cbar = fig.colorbar(im_co, ax=ax_co, ticks=stretch(ticks))
+    cbar.ax.set_yticklabels(ticks)
+    ax_co.contour(mom0_pillar_co, colors='k', alpha=0.5)
+
+    ax_hcop = plt.subplot(122)
+    im_hcop = ax_hcop.imshow(stretch(mom0_hcop), origin='lower', vmin=stretch(0), vmax=stretch(6))
+    ticks = np.arange(0, 6.1, 1)
+    cbar = fig.colorbar(im_hcop, ax=ax_hcop, ticks=stretch(ticks))
+    cbar.ax.set_yticklabels(ticks)
+    ax_hcop.contour(mom0_pillar_hcop, colors='k', alpha=0.5)
+
+    reg_fn = "catalogs/co10_background_investigation.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_fn))
+    reg_list = reg_list[:8] # Cut off at 8 regions
+
+    # for j, reg in enumerate(reg_list):
+    #     for ax, cube in zip((ax_co, ax_hcop), (cube_co, cube_hcop)):
+    #         pixreg = reg.to_pixel(cube[0, :, :].wcs)
+    #         pix_center = pixreg.center.xy
+    #         try:
+    #             pix_radius = pixreg.radius
+    #         except:
+    #             pix_radius = 7
+    #         ax.text(pix_center[0], pix_center[1]+pix_radius, f"{j+1}", color=marcs_colors[1], alpha=0.9, fontsize=11, ha='center', va='bottom')
+    #         pixreg.plot(ax=ax, color=marcs_colors[1], alpha=0.9)
+
+    fig.savefig("/home/ramsey/Pictures/2022-01-19-work/co_hcop_moment_20-22_v2.png",
+        metadata=catalog.utils.create_png_metadata(title='img 20-22, sqrt stretch, contour 24-26 linear',
+            file=__file__, func='co_moment_image'))
 
 
 def save_transparent_moment_img():
@@ -1376,7 +1485,9 @@ if __name__ == "__main__":
     # overlaid_contours_for_offset()
 
 
-    convolve_carma_to_sofia()
+    # convolve_carma_to_sofia()
+    # identify_components_with_co()
+    co_moment_image()
 
     ### showing the colors
     # plt.subplot(111)

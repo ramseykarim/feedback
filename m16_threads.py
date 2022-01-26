@@ -554,7 +554,10 @@ def verify_background_doesnt_change_results(selected_region=0):
                 ax_blue.plot([0], [blue_excess_value], color='grey', marker='x')
                 ax_peak.plot([0], [peak_shift_value], color='grey', marker='x')
         else:
-            blue_excess_mask = (TODO) ###################################################################################################################### LEFT OF HERE
+            blue_excess_mask = ... # TODO ## LEFT OF HERE # but I don't remember what i was doing...
+            """
+            Revewied this Jan 19, 2022: sadly I no longer remember what I was really trying to do here...
+            """
     for i, ax_spec in enumerate(ax_spec_list):
         if i == 0:
             ax_spec.set_title("Spectra")
@@ -859,6 +862,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     Copied largely from m16_investigation.thin_channel_maps_rb
     Repurposed to make improved channel maps of CII on CO / HCO+
     And also grid them like in m16_pictures.m16_channel_maps
+    TODO: remake these and contour a set xsigma above noise. so you have to check the noise actually this time
     :param cube_idxs: The first argument in cube_idxs should have the largest footprint
     :param idx_for_img: If None, all contours. If int, index of cube_idxs argument tuple that will be imshow'd
     """
@@ -984,7 +988,10 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         insetcax.tick_params(axis='y', colors=default_text_color)
         insetcax.yaxis.set_ticks_position('left')
 
-    fig.savefig(f"/home/rkarim/Pictures/2021-10-18-work/contouroverlay_{unique_label}_channelmaps.png")
+    # fig.savefig(f"/home/rkarim/Pictures/2021-10-18-work/contouroverlay_{unique_label}_channelmaps.png")
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-24-work/contouroverlay_{unique_label}_channelmaps.png",
+        metadata=catalog.utils.create_png_metadata(title='channel maps in contours',
+            file=__file__, func='channel_maps_again'))
     # plt.show()
 
 
@@ -1393,12 +1400,12 @@ def figure_for_hcop_linewidths():
 
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
-    # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
+    vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
-    # channel_maps_again('c18o10', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
+    channel_maps_again('cii', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
 
     # m16_pv_again2(selected_set=2, line_stub='12co10')
-    sample_spectra()
+    # sample_spectra()
 
     # figure_for_hcop_linewidths()
 
