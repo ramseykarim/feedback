@@ -73,6 +73,7 @@ def pv(selected_region=0):
         Right now (check 2021-07-15 images) the contour-on-contour PVs look great
         I just want to see CO(1-0) and HCO+ in the same image
         Can see where it goes from there
+    Revisited January 12 and 25, 2022. Prepping paper.
     """
     smooth = True
     if smooth:
@@ -89,7 +90,7 @@ def pv(selected_region=0):
     names = ['[CII]', 'HCO+', 'HCO+ (CII beam)', '12CO(1-0)', '12CO(1-0) (CII beam)']
     short_names = ['cii', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
     levels = [list(np.linspace(15, 40, 9))] + [list(np.linspace(2, 7, 7))]*2 + [list(np.linspace(25, 80, 8))]*2
-    onesigma = [1,] + [0.3,]*2 + [5,]*2
+    onesigma = [1,] + [0.3, 0.14] + [6, 2.5]
 
     # set up the vectors
     reg_filename_short = "catalogs/pillar1_threads_pv_v5_withboxes.reg"
@@ -122,8 +123,8 @@ def pv(selected_region=0):
         # plot the molecule slices as images on each of axes
         for j, ax, sl in zip(range(len(axes)), axes, slices):
             ax.imshow(sl.data, origin='lower', cmap='Greys', aspect=((3./4)*sl.shape[1]/sl.shape[0]))
-            ax.contour(sl.data, linewidths=1.2, levels=np.linspace(onesigma[mol_idx+j], np.nanmax(sl.data), 6), colors=colors[mol_idx+j])
-            ax.contour(cii_reproj, linewidths=1.2, levels=np.linspace(onesigma[0], np.nanmax(cii_reproj), 8), colors=colors[0])
+            ax.contour(sl.data, linewidths=1.2, levels=np.arange(onesigma[mol_idx+j], np.nanmax(sl.data), onesigma[mol_idx+j]*3), colors=colors[mol_idx+j])
+            ax.contour(cii_reproj, linewidths=1.2, levels=np.arange(onesigma[0], np.nanmax(cii_reproj), onesigma[0]*3), colors=colors[0])
             ax.coords[1].set_format_unit(u.km/u.s)
             ax.coords[0].set_format_unit(u.arcsec)
             ax.coords[0].set_major_formatter('x')
@@ -156,8 +157,9 @@ def pv(selected_region=0):
     plt.subplots_adjust(left=0.05, right=0.95)
     # plt.show()
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
-    fig.savefig(f"/home/ramsey/Pictures/2022-01-12-work/pv_{selected_region}{smooth_stub}.png",
-        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}",
+    # 2021-01-12,
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-25-work/pv_{selected_region}{smooth_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, 0th contour = 1sig",
             file=__file__, func='pv'))
 
 
@@ -195,21 +197,15 @@ def sample_spectra(selected_region=0):
 
     # set up regions
     reg_filename_short = "catalogs/pillar1_threads_pv_v5.reg"
+    # reg_filename_short = "catalogs/pillar1_pointsofinterest_v2.reg"
     reg_filename = catalog.utils.search_for_file(reg_filename_short)
     # set up the vector; width=None
     pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=None)
-    point_reg_list = regions.read_ds9(reg_filename) # only reads 4 points, doesn't "see" vectors
+    point_reg_list = regions.Regions.read(reg_filename) # only reads 4 points, doesn't "see" vectors
     # set up the POINTS
     point_reg_list = point_reg_list[selected_region*2:(selected_region+1)*2] # index the correct 2 of them
-    # set up background sample circle
-    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_4.reg"
-    bg_reg_filename = catalog.utils.search_for_file(bg_reg_filename_short)
-    bg_reg_all = regions.read_ds9(bg_reg_filename)
-    selected_bg = (0, 3)
-    bg_reg_selected = [bg_reg_all[i] for i in selected_bg]
-    bg_reg_labels = [f'BG sample {i+1}' for i in selected_bg]
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(16, 8))
 
     ax_spec_cii = plt.subplot2grid((3, 3), (0, 1), colspan=2)
     ax_spec_hcop = plt.subplot2grid((3, 3), (1, 1), colspan=2)
@@ -220,7 +216,7 @@ def sample_spectra(selected_region=0):
     spectra_lists = []
     # identify cii spectra
     cii_spectra = None
-    cii_bg_spectra = None
+    cii_bg_spectrum = cps2.get_cii_background()
     for i, c_fn in enumerate(cube_filenames):
         if i in [1, 3]:
             continue
@@ -237,24 +233,13 @@ def sample_spectra(selected_region=0):
         print(short_names[i], np.std(spectra[1][:20] - np.mean(spectra[1][:20])))
         ax_spec = ax_spec_list[i//2]
         # ax_spec = ax_spec_list[0] if i == 0 else ax_spec_list[(i+1)//2] # if I want to use the unconv versions
-        ax_spec.plot(spectral_axis, spectra[0], color=colors[0], linestyle=('-' if i else '--'), label=f"NE {names[i]}")
-        ax_spec.plot(spectral_axis, spectra[1], color=colors[1], linestyle=('-' if i else '--'), label=f"SW {names[i]}")
+
         if i == 0:
-            cii_spectra = spectra
-            # now im subtracting different BG spectra from each side of the pillar
-            cii_bg_spectra = [cube.subcube_from_regions([bg_reg]).mean(axis=(1, 2)) for bg_reg in bg_reg_selected]
-            ax_spec.plot(spectral_axis, cii_bg_spectra[0], color=colors[0], linestyle=':', label=f"BG (for NE) {names[i]}")
-            ax_spec.plot(spectral_axis, cii_bg_spectra[1], color=colors[1], linestyle=':', label=f"BG (for SW) {names[i]}")
-            cii_bgsub = [spectra[j]-cii_bg_spectra[j] for j in range(2)]
-            ax_spec.plot(spectral_axis, cii_bgsub[0], color=colors[0], linestyle='-', label=f"NE BGsub {names[i]}")
-            ax_spec.plot(spectral_axis, cii_bgsub[1], color=colors[1], linestyle='-', label=f"SW BGsub {names[i]}")
-            spectra = cii_bgsub
-        # spec_mask = (spectral_axis > 20) & (spectral_axis < 27.5)
-        # mean_velocities = [(np.sum(spectra[j][spec_mask]*spectral_axis[spec_mask])/np.sum(spectra[j][spec_mask])).to_value() for j in range(2)]
-        # peak_velocities = [spectral_axis[spec_mask][np.argmax(spectra[j][spec_mask])] for j in range(2)]
-        # for j in range(2):
-        #     ax_spec.axvline(mean_velocities[j], color=colors[j], linestyle=':', alpha=0.4, label=f'Mean velocity: {mean_velocities[j]:.2f} km/s (vertical line)')
-        #     ax_spec.axvline(peak_velocities[j], color=colors[j], linestyle='-', alpha=0.4, label=f'Peak velocity: {peak_velocities[j]:.2f} km/s (vertical line)')
+            spectra = [s - cii_bg_spectrum for s in spectra]
+
+        ax_spec.plot(spectral_axis, spectra[0], color=colors[0], linestyle='-', label=f"NE {names[i]}")
+        ax_spec.plot(spectral_axis, spectra[1], color=colors[1], linestyle='-', label=f"SW {names[i]}")
+
     for i, ax_spec in enumerate(ax_spec_list):
         if i == 0:
             ax_spec.set_title("Spectra")
@@ -272,17 +257,13 @@ def sample_spectra(selected_region=0):
     # plot reference image
     ax_img = plt.subplot2grid((3, 3), (0, 0), rowspan=3, projection=w)
     ax_img.imshow(img, origin='lower', **vlims, cmap='Greys_r')
-    ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'), alpha=0.3)
+    # ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'), alpha=0.3)
     # plot circles over reference
     from matplotlib.lines import Line2D
     for i, reg in enumerate(point_reg_list):
         pixreg = reg.to_pixel(w)
         artist = Line2D([pixreg.center.xy[0]], [pixreg.center.xy[1]], marker='x', markersize=8, color=colors[i])
         ax_img.add_artist(artist)
-    # plot background samples
-    for i, reg in enumerate(bg_reg_selected):
-        pixreg = reg.to_pixel(w)
-        pixreg.plot(ax=ax_img, color=colors[i], linestyle=':')
 
     # axis stuff
     for coord in ax_img.coords:
@@ -290,11 +271,22 @@ def sample_spectra(selected_region=0):
         coord.set_ticklabel_visible(False)
         coord.set_axislabel('')
 
+    for i, ax in enumerate(ax_spec_list):
+        ax.xaxis.set_ticks_position('both')
+        ax.yaxis.set_ticks_position('both')
+        ax.xaxis.set_tick_params(direction='in', which='both')
+        ax.yaxis.set_tick_params(direction='in', which='both')
+        if i < 2:
+            ax.xaxis.set_ticklabels([])
+
+
     plt.tight_layout()
+    plt.subplots_adjust(hspace=0)
     # plt.show()
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/sample_spectra_{selected_region}{co_stub}_BG{selected_bg[0]+1}-{selected_bg[1]+1}.png")
-    fig.savefig(f"/home/ramsey/Pictures/2022-01-14-work/sample_spectra_{selected_region}{co_stub}_BG{selected_bg[0]+1}-{selected_bg[1]+1}.png",
-        metadata=catalog.utils.create_png_metadata(title=f'regs from {reg_filename_short}, bg from {bg_reg_filename_short}',
+    # 2021-01-14,
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-25-work/sample_spectra_{selected_region}{co_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'regs from {reg_filename_short}, standard cii BGsub',
             file=__file__, func='sample_spectra'))
 
 
@@ -1015,6 +1007,7 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     2021-10-12: moved from pvdiagrams_2.py to m16_threads.py
     2022-01-11: revisiting this so I can make the figure on my laptop and put it
     in the paper
+    2022-01-25: making all the contours have meaning in terms of noise
 
     :param selected_set: this is either 0 or 1, "0" is first 3 (transverse), "1" is last 3 (vertical, threads)
         "2" will select only the East and West vertical paths (not the Center)
@@ -1048,16 +1041,18 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     line_names = ['CII', 'HCO+', 'HCN', 'NH2+', 'CS', '$^{12}$CO (1$-$0)']
     if line_stub == "cii":
         line_fn = None
-        levels = np.arange(10, 401, 10)
+        levels = np.arange(10, 401, 10) # 1 is 1sigma
     elif line_stub == '12co10':
         line_fn = "bima/M16_12CO1-0_7x4.Kkms.fits"
-        levels = np.arange(20, 401, 20)
+        levels = np.arange(20, 401, 20) # 5 is 1sigma
     else:
         line_fn = f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SMOOTH.fits"
+        hcop_smooth_noise = 0.3
+        # hcop_noise = 0.55
         if selected_set > 0:
-            levels = np.sinh(np.linspace(np.arcsinh(1), np.arcsinh(61), 10))
+            levels = np.sinh(np.linspace(np.arcsinh(hcop_smooth_noise*2), np.arcsinh(61), 10))
         else:
-            levels = np.arange(1, 61, 1)
+            levels = np.arange(hcop_smooth_noise*3, 61, hcop_smooth_noise*3)
     line_name = line_names[line_stubs.index(line_stub)]
     vel_lims = (22*u.km/u.s, 28*u.km/u.s)
     subcube = cps2.cutout_subcube(reg_filename=reg_filename, reg_index=reg_index, length_scale_mult=2, data_filename=line_fn).spectral_slab(*vel_lims)
@@ -1138,8 +1133,9 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     ax_sl.plot([x_offset, x_offset + beam_size_mean], [0.1, 0.1], transform=beamtransform, color='k', marker='|', alpha=0.5)
     plt.subplots_adjust(left=0.05, right=0.95)
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pillar_series{selected_set}_{line_stub}_PVs.png")
-    fig.savefig(f"/home/ramsey/Pictures/2022-01-12-work/pillar_series{selected_set}_{line_stub}_PVs.png",
-        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}",
+    # 2021-01-12,
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-25-work/pillar_series{selected_set}_{line_stub}SMOOTH_2sig_PVs.png",
+        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, contours are 0th=2sig arcsinh hcopSMOOTH",
             file=__file__, func='m16_pv_again2'))
     # plt.show()
 
@@ -1400,12 +1396,13 @@ def figure_for_hcop_linewidths():
 
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
-    vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
+    # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
-    channel_maps_again('cii', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
+    # channel_maps_again('cii', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
 
-    # m16_pv_again2(selected_set=2, line_stub='12co10')
-    # sample_spectra()
+    pv()
+    # m16_pv_again2(selected_set=2, line_stub='hcop')
+    # sample_spectra(1)
 
     # figure_for_hcop_linewidths()
 
