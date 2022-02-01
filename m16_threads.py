@@ -66,7 +66,7 @@ kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
 
-def pv(selected_region=0):
+def pv(selected_region=0, pillar=1):
     """
     September 16, 2021
         Follows from m16_investigation.compare_carma_to_sofia_pv (copy+paste+edit)
@@ -89,14 +89,19 @@ def pv(selected_region=0):
     colors = [marcs_colors[0],] + [marcs_colors[1], marcs_colors[6],]*2
     names = ['[CII]', 'HCO+', 'HCO+ (CII beam)', '12CO(1-0)', '12CO(1-0) (CII beam)']
     short_names = ['cii', 'hcop', 'hcopCONV', 'co10', 'co10CONV']
-    levels = [list(np.linspace(15, 40, 9))] + [list(np.linspace(2, 7, 7))]*2 + [list(np.linspace(25, 80, 8))]*2
-    onesigma = [1,] + [0.3, 0.14] + [6, 2.5]
+    # levels = [list(np.linspace(15, 40, 9))] + [list(np.linspace(2, 7, 7))]*2 + [list(np.linspace(25, 80, 8))]*2
+    onesigma = [1,] + [0.31, 0.15] + [6.2, 2.6]
 
     # set up the vectors
-    reg_filename_short = "catalogs/pillar1_threads_pv_v5_withboxes.reg"
+    if pillar == 1:
+        reg_filename_short = "catalogs/pillar1_threads_pv_v5_withboxes.reg" # Pillar 1
+        vel_limits = np.array([20, 28])*u.km/u.s # Pillar 1
+    elif pillar == 2:
+        reg_filename_short = "catalogs/pillar2_across.reg" # Pillar 2
+        vel_limits = np.array([18, 26])*u.km/u.s # Pillar 2
+    pillar_stub = f"p{pillar}"
     reg_filename = catalog.utils.search_for_file(reg_filename_short)
     pv_path = pvdiagrams.path_from_ds9(reg_filename, selected_region, width=10*u.arcsec)
-    vel_limits = np.array([20, 28])*u.km/u.s
 
     fig = plt.figure(figsize=(16, 9))
 
@@ -123,8 +128,8 @@ def pv(selected_region=0):
         # plot the molecule slices as images on each of axes
         for j, ax, sl in zip(range(len(axes)), axes, slices):
             ax.imshow(sl.data, origin='lower', cmap='Greys', aspect=((3./4)*sl.shape[1]/sl.shape[0]))
-            ax.contour(sl.data, linewidths=1.2, levels=np.arange(onesigma[mol_idx+j], np.nanmax(sl.data), onesigma[mol_idx+j]*3), colors=colors[mol_idx+j])
-            ax.contour(cii_reproj, linewidths=1.2, levels=np.arange(onesigma[0], np.nanmax(cii_reproj), onesigma[0]*3), colors=colors[0])
+            ax.contour(sl.data, linewidths=1.2, levels=np.arange(onesigma[mol_idx+j], np.nanmax(sl.data), onesigma[mol_idx+j]*2), colors=colors[mol_idx+j])
+            ax.contour(cii_reproj, linewidths=1.2, levels=np.arange(onesigma[0], np.nanmax(cii_reproj), onesigma[0]*2), colors=colors[0])
             ax.coords[1].set_format_unit(u.km/u.s)
             ax.coords[0].set_format_unit(u.arcsec)
             ax.coords[0].set_major_formatter('x')
@@ -157,9 +162,9 @@ def pv(selected_region=0):
     plt.subplots_adjust(left=0.05, right=0.95)
     # plt.show()
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
-    # 2021-01-12,
-    fig.savefig(f"/home/ramsey/Pictures/2022-01-25-work/pv_{selected_region}{smooth_stub}.png",
-        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, 0th contour = 1sig",
+    # 2021-01-12, 2022-01-25
+    fig.savefig(f"/home/ramsey/Pictures/2022-02-01/pv_{pillar_stub}_{selected_region}{smooth_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, 0th contour = 1sig, steps of 2sig",
             file=__file__, func='pv'))
 
 
@@ -866,7 +871,12 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
     cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits", "bima/M16.BIMA.13co1-0.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits", "bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
     names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)', "$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)", "C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
-    short_names = ['cii', 'hcn', 'hcnCONV', 'hcop', 'hcopCONV', 'co10', 'co10CONV', '13co10', '13co10CONV', 'c18o10', 'c18o10CONV']
+    short_names = ['cii',
+        'hcn', 'hcnCONV',
+        'hcop', 'hcopCONV',
+        'co10', 'co10CONV',
+        '13co10', '13co10CONV',
+        'c18o10', 'c18o10CONV']
 
 
     if idx_for_img is None:
@@ -876,15 +886,33 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         colors = [marcs_colors[i] for i in [1, 2, 3]]
         default_text_color = 'k'
 
-    contour_levels = [
-        np.arange(15, 100, 7.5), # cii
-        # np.arange(0.5, 20, 1), np.arange(0.5, 20, 2), # hcn
-        # np.arange(0.5, 20, 1), np.arange(0.5, 20, 2), # hcop
-        ] + [[0.5, 1.5, 3, 6, 10, 15, 20],]*4 + [
-        np.arange(15, 130, 15), np.arange(15, 130, 15), # co10/CONV
-        np.arange(5, 60, 5), np.arange(3, 60, 3), # 13co
-        np.arange(0.5, 3, 0.5), np.arange(0.5, 3, 0.5), #c18o
+    onesigmas = [ # all values in K. These are the 1sigma noise levels, which contours will be based on
+        1.0, # CII (might be 1.2 but sampling that really dark area shows 1 and that seems good to me)
+        0.57, 0.27, # HCN -- haven't checked yet, not gonna use it
+        0.57, 0.27, # HCO+/conv
+        6.2, 2.0, # 12co10/conv
+        2.6, 0.7, # 13co10/conv
+        0.66, 0.40, # c18o10/conv
+
     ]
+    zeroth_contour_sigma = 3
+    contour_sigma_step = 5
+    """
+    Have to account for the number of channels in each bin for each line;
+    this is a function that can be used once we do that.
+    The channel counting happens in make_moment_series, and the noise calc
+    happens on the fly right before the contour command
+    """
+    contour_stretch_base = 1.822
+    contour_stretch_coeff = 3
+    contour_levels_multipliers = [zeroth_contour_sigma] + [zeroth_contour_sigma + int(round(contour_stretch_coeff * contour_stretch_base**i)) for i in range(10)]
+    print("<CONTOURS AT (xsigma)>")
+    print(contour_levels_multipliers)
+    print('<end CONTOURS>')
+    def make_contour_levels(sigma):
+        # sigma is 1sigma noise level after accounting for moment
+        return [sigma*n for n in contour_levels_multipliers]
+
     img_vlims = [
         (0, 50), # cii
         (0, 15), (0, 15), # hcn
@@ -910,15 +938,36 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     vel_start *= kms
     vel_stop *= kms
     channel_width = 0.5*kms
+    # Use these to create histogram bins using arange, which is exactly how make_moment_series works
+    bins = np.arange(vel_start.to_value(), vel_stop.to_value(), channel_width.to_value())
 
     def make_moment_series(cube):
-        return cube_utils.make_moment_series(cube, (vel_start, vel_stop), channel_width)
+        return cube_utils.make_moment_series(cube, (vel_start, vel_stop), channel_width, return_nchannels=True)
 
-    cube_moments = [make_moment_series(cube) for cube in cubes]
+    cube_moments, channels_per_moment = (zip(*(make_moment_series(cube) for cube in cubes)))
     """
     cube_moments has an entry for each line (CII, CO10, etc)
-    each entry of cube_moments is a list of moment 0 info tuples: (v0, v1, moment)
+    each entry of cube_moments is a list of [moment 0 info tuples: (v0, v1, moment)]
+    length of list is number of moments
+
+    channels_per_moment has an entry for each line, same as cube_moments
+    each entry of channels_per_moment is an array of ints. int indicates the number
+        of channel maps that went into creating that moment. for noise purposes
     """
+    #### DEBUG 2022-02-01
+    # # number of lines
+    # print(len(cube_moments))
+    # # number of moments
+    # print(len(cube_moments[0]))
+    # # should be 3: vlo, vhi, moment0_img
+    # print(len(cube_moments[0][0]))
+    # # size of moment image
+    # print(cube_moments[0][0][2].shape)
+    # print('='*40)
+    # print(channels_per_moment)
+    # print('='*40)
+    # return cube_moments, channels_per_moment
+
     # assert len(cube_moments[0]) == 20 # good opportunity for a quick check
     if grid_shape is None:
         grid_shape = (5, 5)
@@ -931,12 +980,18 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         v_left, v_right, img1_raw = cube_moments[0][i]
         additional_imgs = []
         footprints = []
+        """
+        Reproject everything to the first line's grid
+        """
         for j in range(1, len(cube_moments)):
             # Iterate through distinct molecular/atomic lines (CII, CO10, etc)
             additional_img_raw = cube_moments[j][i][2]
             additional_img, fp = reproject_interp((additional_img_raw.to_value(), additional_img_raw.wcs), img1_raw.wcs, shape_out=img1_raw.shape, return_footprint=True)
             additional_imgs.append(additional_img)
             footprints.append(fp > 0.5)
+        """
+        Isolate the area where all the data is valid (get rid of NaN edges from reproject)
+        """
         if min_cutout_sl is None:
             min_cutout_sl = misc_utils.minimum_valid_cutout(np.all(footprints, axis=0))
         img1 = img1_raw.to_value()[min_cutout_sl]
@@ -946,6 +1001,9 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
 
         ax = plt.subplot2grid(grid_shape, (i//grid_shape[1], i%grid_shape[1])) # can't do projection=wcs easily since we used slices
 
+        """
+        Plot background image
+        """
         if idx_for_img is not None:
             vmin = img_vlims[cube_idxs[idx_for_img]][0]
             vmax = img_vlims[cube_idxs[idx_for_img]][1] # alternatively, None for floating vmax
@@ -953,6 +1011,9 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         else:
             ax.imshow(np.zeros_like(all_imgs[0]), origin='lower', vmin=0, vmax=1, cmap='Greys')
 
+        """
+        Loop through and plot contours, and add the label text to first Axes
+        """
         color_idx = 0
         text_x = 0.97
         text_y = 0.90
@@ -960,7 +1021,19 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         text_kwargs = dict(fontsize=12, transform=ax.transAxes, ha='right')
         for j in range(len(cube_moments)):
             if j != idx_for_img:
-                ax.contour(all_imgs[j], colors=colors[color_idx], levels=contour_levels[cube_idxs[j]])
+                # Calculate the noise associated with this moment 0 image
+                nchannels = channels_per_moment[j][i]
+                noise_1sig_channel = onesigmas[cube_idxs[j]]
+                cube_dv = np.diff(cubes[j].spectral_axis[:2])[0].to(kms).to_value()
+                # This calculation is based on the work I did in my notebook on 1/25/2022
+                # Moment 0 = integral( I_nu )d_nu
+                # The error on a sum is x_err*sqrt(N) if all N elements have the same error x_err
+                # Moment 0 error is then x_err*sqrt(N)*d_nu
+                noise_1sig_moment = noise_1sig_channel * cube_dv * np.sqrt(nchannels)
+                levels = make_contour_levels(noise_1sig_moment)
+                # Linestyles: make the first one dashed, everything else solid
+                linestyles = ['--'] + ['-']*(len(levels) - 1)
+                ax.contour(all_imgs[j], colors=colors[color_idx], levels=levels, linestyles=linestyles, linewidths=0.75)
                 if i == 0:
                     ax.text(text_x, text_y, f"{names[cube_idxs[j]]}", c=colors[color_idx], **text_kwargs)
                 color_idx += 1
@@ -968,21 +1041,27 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
                 if i == 0:
                     ax.text(text_x, text_y, f"{names[cube_idxs[j]]} (color)", c=default_text_color, **text_kwargs)
             text_y = text_y - text_y_step
+        """
+        Add velocity text to each Axes
+        """
         vel_str = make_vel_stub((v_left, v_right))
         ax.text(text_x, 0.95, vel_str, color=default_text_color, **text_kwargs)
         for axis_name in ('x', 'y'):
             ax.tick_params(axis=axis_name, direction='in')
             ax.tick_params(axis=axis_name, labelbottom=False, labelleft=False)
     plt.tight_layout(h_pad=0, w_pad=0, pad=1.01)
+    """
+    Add colorbar to last Axes
+    """
     if idx_for_img is not None:
         insetcax = inset_axes(ax, width="5%", height="60%", loc='lower right', bbox_to_anchor=(0, 0.01, 0.97, 1), bbox_transform=ax.transAxes)
         cbar = fig.colorbar(im, cax=insetcax, orientation='vertical')
         insetcax.tick_params(axis='y', colors=default_text_color)
         insetcax.yaxis.set_ticks_position('left')
 
-    # fig.savefig(f"/home/rkarim/Pictures/2021-10-18-work/contouroverlay_{unique_label}_channelmaps.png")
-    fig.savefig(f"/home/ramsey/Pictures/2022-01-24-work/contouroverlay_{unique_label}_channelmaps.png",
-        metadata=catalog.utils.create_png_metadata(title='channel maps in contours',
+    # 2021-10-18, 2022-01-24,
+    fig.savefig(f"/home/ramsey/Pictures/2022-02-01/contouroverlay_{unique_label}_channelmaps.png",
+        metadata=catalog.utils.create_png_metadata(title=f'contours {contour_levels_multipliers} xsigma',
             file=__file__, func='channel_maps_again'))
     # plt.show()
 
@@ -1394,13 +1473,44 @@ def figure_for_hcop_linewidths():
         metadata={'Author': "Ramsey Karim", 'Title': "HCO+ single component linewidths",
             'Source': f'{os.path.basename(__file__).replace(".py", "")}.figure_for_hcop_linewidths'})
 
+
+def test_moment_noise_thing():
+    """
+    February 1, 2022
+    Checking if a moment that only includes 1 channel is different than a channel map
+    It should be, since the moment uses the channel width in the calculation
+    """
+    cube = cps2.cutout_subcube(length_scale_mult=4)
+    vel_lims = (24.5*kms, 25.0*kms)
+    channel_map_0 = cube[cube.closest_spectral_channel(vel_lims[0]), :, :]
+    channel_map_1 = cube[cube.closest_spectral_channel(vel_lims[1]), :, :]
+    subcube = cube.spectral_slab(*vel_lims)
+    moment0 = subcube.moment0()
+    mom0_by_hand = (channel_map_0 + channel_map_1)*(cube.spectral_axis[1]-cube.spectral_axis[0])
+    result = mom0_by_hand / moment0
+    plt.subplot(131)
+    plt.imshow(moment0.to_value(), origin='lower')
+    plt.title("spectral_cube")
+    plt.colorbar()
+    plt.subplot(132)
+    plt.imshow(result.decompose().to_value(), origin='lower')
+    plt.title("by hand / code")
+    plt.colorbar()
+    plt.subplot(133)
+    plt.imshow(moment0.to_value(), origin='lower')
+    plt.title("by hand")
+    plt.colorbar()
+    plt.show()
+
+
+
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
     # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
-    # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
-    # channel_maps_again('cii', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=None)
+    vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
+    args = channel_maps_again('cii', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=0)
 
-    pv()
+    # pv(0, pillar=1)
     # m16_pv_again2(selected_set=2, line_stub='hcop')
     # sample_spectra(1)
 

@@ -581,13 +581,13 @@ def overlaid_contours_for_offset():
     We have all that weird WCS footprint code somewhere in "catalog", can
     try to use that to do a regrid to the proper WCS. TOMORROW
     """
-    selected_img = "irac4"
-    selected_contours = ["cii",]
+    selected_img = "12co10"
+    selected_contours = ["13co10", "cii"]
     vel_lims = (19*kms, 27*kms) # marc's cubes are usually 19-27
     vel_str = f"{vel_lims[0].to_value():.1f}-{vel_lims[1].to_value():.1f} {vel_lims[0].unit}"
 
     supported_data = ["12co10", "13co10", "12co32", "13co32", "cii", "12co65", "irac4", "hcop", "pacs70"]
-    filenames = ["bima/M16_12CO1-0_7x4.fits", "bima/M16.BIMA.13co-1.fits", # co10
+    filenames = ["bima/M16_12CO1-0_7x4.fits", "bima/M16.BIMA.13co1-0.fits", # co10
         "apex/M16_12CO3-2_truncated.fits", "apex/M16_13CO3-2_truncated.fits", # co32
         "sofia/M16_CII_U.fits", "apex/M16_12CO6-5.fits", # cii, co65
         "spitzer/SPITZER_I4_mosaic.fits", "carma/M16.ALL.hcop.sdi.cm.subpv.fits", # irac4, hcop
@@ -604,7 +604,7 @@ def overlaid_contours_for_offset():
         np.exp(np.linspace(np.log(100), np.log(1000), 10)), np.linspace(2.5, 42, 5)] # irac4, hcop
     # cube_utils.Beam.from_fits_header(fits.getheader(file))
 
-    colors = ['k', marcs_colors[2], marcs_colors[6]]
+    colors = ['k', marcs_colors[1], marcs_colors[6]] # 2 is also good
     def format_beam_patch(beam_patch):
         beam_patch.set_alpha(0.9)
         beam_patch.set_facecolor('grey')
@@ -674,7 +674,10 @@ def overlaid_contours_for_offset():
         coord.set_axislabel('')
     plt.tight_layout()
     contour_stub = "contours_" + "-".join(selected_contours)
-    plt.savefig(f"/home/ramsey/Pictures/2021-09-14-work/{selected_img}-{contour_stub}.png")
+    # 2021-09-14,
+    plt.savefig(f"/home/ramsey/Pictures/2022-01-31/{selected_img}-{contour_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title='19-27 limits, contour levels not fixed to noise yet',
+            file=__file__, func='overlaid_contours_for_offset'))
     # plt.show()
 
 
@@ -1472,6 +1475,55 @@ def highlight_threads_regions():
 
 
 
+def get_noise_graph(data_filename=None):
+    """
+    January 31, 2022
+    Enough with my eyeballed noise estimates from DS9. I'm going to make a graph
+    and histogram of the standard deviation of the image
+    :param data_filename: the short path name for a cube. The cube will be
+        loaded through cps2.cutout_subcube so it will be in K km/s.
+        Can also be the "short name" for a cube, I'll have a dict here
+    """
+    data_filenames = {'cii': 'sofia/M16_CII_U.fits',
+        '12co10': 'bima/M16_12CO1-0_7x4.Kkms.fits', '12co10CONV': 'bima/M16_12CO1-0_14x14.Kkms.fits',
+        '13co10': 'bima/M16.BIMA.13co1-0.fits', '13co10CONV': 'bima/M16.BIMA.13co1-0.SOFIAbeam.fits',
+        'c18o10': 'bima/M16.BIMA.c18o.cm.fits', 'c18o10CONV': 'bima/M16.BIMA.c18o.cm.SOFIAbeam.fits',
+        'c18o10SMOOTH': 'bima/M16.BIMA.c18o.cm.SMOOTH.fits', 'c18o10SMOOTHCONV': 'bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits',
+        'hcop': 'carma/M16.ALL.hcop.sdi.cm.subpv.fits', 'hcopSMOOTH': 'carma/M16.ALL.hcop.sdi.cm.subpv.SMOOTH.fits',
+        'hcopSOFIAbeam': 'carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits', 'hcopSMOOTHSOFIAbeam': 'carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.SMOOTH.fits',
+        'hcopregrid': 'carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits',
+    }
+    short_name = data_filename
+    if data_filename is not None:
+        if data_filename in data_filenames:
+            data_filename = data_filenames[data_filename]
+    else:
+        data_filename = data_filenames['cii']
+    cube = cps2.cutout_subcube(data_filename=data_filename, length_scale_mult=None)
+    moment0 = cube.moment0().to_value()
+    median_moment = np.median(moment0[np.isfinite(moment0) & (moment0>0)])
+    print(median_moment)
+    mask = np.isfinite(moment0) & (moment0 < median_moment) & (moment0 > 0)
+    std = cube.std(axis=0)
+    std_unit = std.unit
+    print(std.unit)
+    std = std.to_value()
+    std_lo, std_hi = misc_utils.flquantiles(std[mask].ravel(), 30)
+    std_lo = np.min(std[mask])
+    fig = plt.figure(figsize=(15, 6))
+    ax_img = plt.subplot(121)
+    print(std_lo, std_hi)
+    im = ax_img.imshow(std, origin='lower', vmin=std_lo, vmax=std_hi)
+    fig.colorbar(im, ax=ax_img, label='Standard deviation of spectra (K)')
+    ax_img.contour(moment0, levels=[median_moment], colors='k', linewidths=2)
+    ax_img.set_title("STD. Contour shows mask from moment 0")
+    ax_hist = plt.subplot(122)
+    ax_hist.hist(std[mask].ravel(), bins=32, range=(std_lo, std_hi))
+    ax_hist.set_title(f"Masked STD histogram. median: {np.median(std[mask]):.2f} {std_unit}")
+    fig.savefig(f"/home/ramsey/Pictures/2022-01-31/{short_name}_NOISE.png",
+        metadata=catalog.utils.create_png_metadata(title='noise',
+            file=__file__, func='get_noise_graph'))
+
 
 
 
@@ -1484,10 +1536,11 @@ if __name__ == "__main__":
     # compare_carma_to_sofia_pv(mol_idx=3)
     # overlaid_contours_for_offset()
 
+    get_noise_graph('c18o10SMOOTHCONV')
 
     # convolve_carma_to_sofia()
     # identify_components_with_co()
-    co_moment_image()
+    # co_moment_image()
 
     ### showing the colors
     # plt.subplot(111)

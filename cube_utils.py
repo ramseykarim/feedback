@@ -149,7 +149,7 @@ class CubeData:
         self.wcs_flat = self.data[0, :, :].wcs
 
 
-def make_moment_series(cube, velocity_range, velocity_spacing):
+def make_moment_series(cube, velocity_range, velocity_spacing, return_nchannels=False):
     """
     :param cube: SpectralCube with at least good velocity units
     :param velocity_range: two-element sequence of (low, high) velocity
@@ -158,7 +158,16 @@ def make_moment_series(cube, velocity_range, velocity_spacing):
         These are the first two arguments for a "range" function
     :param velocity_spacing: Spacing for the channel maps. Should be a Quantity.
         This is the third argument to a "range" function.
-
+    :param return_nchannels: bool: also return a list, same length as the regular return value,
+        of the number of channels averaged into each moment0.
+        This return value is optional for backwards compatibility
+    :returns: a list whose length is the number of moment images in the range.
+        Each element is a 3-item tuple: low velocity limit, high velocity limit,
+        and the moment image in units of K*velocity_unit
+        The low and high velocity limits are for each channel
+        If return_nchannels is True, also returns a list of ints for the number
+        of original channels that were integrated into each moment (this is
+        useful for noise estimation purposes)
     2021-10-11: Moved from m16_pictures.py to cube_utils.py
     """
     v_unit = velocity_spacing.unit
@@ -167,11 +176,16 @@ def make_moment_series(cube, velocity_range, velocity_spacing):
     v0_range = np.arange(*(v.to(v_unit).to_value() for v in velocity_range), velocity_spacing.to_value()) * v_unit
     # Gather moments into list
     moments = []
+    nchannels = []
     for v0 in v0_range:
         v1 = v0 + velocity_spacing
-        moments.append((v0, v1, cube.spectral_slab(v0, v1).moment0().to(u.K*v_unit)))
-    return moments
-
+        spectral_slab = cube.spectral_slab(v0, v1)
+        nchannels.append(spectral_slab.shape[0])
+        moments.append((v0, v1, spectral_slab.moment0().to(u.K*v_unit)))
+    if return_nchannels:
+        return moments, nchannels
+    else:
+        return moments
 
 
 def montage_ProjectCube(filename_cube, filename_target):
