@@ -853,7 +853,7 @@ def emission_peak_spectra(check_peak=True):
 
 
 
-def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=None, figsize=None, idx_for_img=None):
+def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=None, figsize=None, idx_for_img=None, level_scaling='log', check_levels=False):
     """
     Created: October 11, 2021
     Copied largely from m16_investigation.thin_channel_maps_rb
@@ -862,6 +862,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     TODO: remake these and contour a set xsigma above noise. so you have to check the noise actually this time
     :param cube_idxs: The first argument in cube_idxs should have the largest footprint
     :param idx_for_img: If None, all contours. If int, index of cube_idxs argument tuple that will be imshow'd
+    :param level_scaling: string, 'linear' or 'log', for how contour levels are distributed
+    :param check_levels: bool, if True just print out the noise multipliers for the contours and do nothing else
     """
     kms = u.km/u.s
     # copied from the crosscut version
@@ -874,7 +876,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     short_names = ['cii',
         'hcn', 'hcnCONV',
         'hcop', 'hcopCONV',
-        'co10', 'co10CONV',
+        '12co10', '12co10CONV',
         '13co10', '13co10CONV',
         'c18o10', 'c18o10CONV']
 
@@ -883,7 +885,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         colors = [marcs_colors[i] for i in [1, 0, 2]]
         default_text_color = 'k'
     else:
-        colors = [marcs_colors[i] for i in [1, 2, 3]]
+        colors = [marcs_colors[i] for i in [1, 5, 2]]
         default_text_color = 'k'
 
     onesigmas = [ # all values in K. These are the 1sigma noise levels, which contours will be based on
@@ -895,20 +897,25 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         0.66, 0.40, # c18o10/conv
 
     ]
-    zeroth_contour_sigma = 3
-    contour_sigma_step = 5
+    zeroth_contour_sigma = 5
     """
     Have to account for the number of channels in each bin for each line;
     this is a function that can be used once we do that.
     The channel counting happens in make_moment_series, and the noise calc
     happens on the fly right before the contour command
     """
-    contour_stretch_base = 1.822
-    contour_stretch_coeff = 3
-    contour_levels_multipliers = [zeroth_contour_sigma] + [zeroth_contour_sigma + int(round(contour_stretch_coeff * contour_stretch_base**i)) for i in range(10)]
+    if level_scaling == 'log':
+        contour_stretch_base = 1.822
+        contour_stretch_coeff = 3
+        contour_levels_multipliers = [zeroth_contour_sigma] + [zeroth_contour_sigma + int(round(contour_stretch_coeff * contour_stretch_base**i)) for i in range(10)]
+    elif level_scaling == 'linear':
+        contour_sigma_step = 10
+        contour_levels_multipliers = [zeroth_contour_sigma + contour_sigma_step*i for i in range(10)]
     print("<CONTOURS AT (xsigma)>")
     print(contour_levels_multipliers)
     print('<end CONTOURS>')
+    if check_levels:
+        return
     def make_contour_levels(sigma):
         # sigma is 1sigma noise level after accounting for moment
         return [sigma*n for n in contour_levels_multipliers]
@@ -1024,7 +1031,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
                 # Calculate the noise associated with this moment 0 image
                 nchannels = channels_per_moment[j][i]
                 noise_1sig_channel = onesigmas[cube_idxs[j]]
-                cube_dv = np.diff(cubes[j].spectral_axis[:2])[0].to(kms).to_value()
+                cube_dv = np.abs(np.diff(cubes[j].spectral_axis[:2])[0].to(kms).to_value())
                 # This calculation is based on the work I did in my notebook on 1/25/2022
                 # Moment 0 = integral( I_nu )d_nu
                 # The error on a sum is x_err*sqrt(N) if all N elements have the same error x_err
@@ -1059,8 +1066,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         insetcax.tick_params(axis='y', colors=default_text_color)
         insetcax.yaxis.set_ticks_position('left')
 
-    # 2021-10-18, 2022-01-24,
-    fig.savefig(f"/home/ramsey/Pictures/2022-02-01/contouroverlay_{unique_label}_channelmaps.png",
+    # 2021-10-18, 2022-01-24, 2022-02-01
+    fig.savefig(f"/home/ramsey/Pictures/2022-02-15/contouroverlay_{unique_label}_channelmaps.png",
         metadata=catalog.utils.create_png_metadata(title=f'contours {contour_levels_multipliers} xsigma',
             file=__file__, func='channel_maps_again'))
     # plt.show()
@@ -1506,9 +1513,9 @@ def test_moment_noise_thing():
 
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
-    # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
-    vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
-    args = channel_maps_again('cii', 'hcn', **vel_lims, grid_shape=(4, 4), figsize=(20, 20), idx_for_img=0)
+    vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production
+    # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
+    args = channel_maps_again('cii', '12co10CONV', '13co10CONV', **vel_lims, grid_shape=(4, 4), figsize=(25, 25), idx_for_img=0, level_scaling='log', check_levels=False)
 
     # pv(0, pillar=1)
     # m16_pv_again2(selected_set=2, line_stub='hcop')

@@ -20,10 +20,15 @@ from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 
-
+"""
+RCW49 specific things
+"""
 wd2_center_coord = SkyCoord("10 23 58.1 -57 45 49", unit=(u.hourangle, u.deg), frame='fk5')
 wd2_cluster_center_coord = SkyCoord("10:24:01.7533 -57:45:33.193", unit=(u.hourangle, u.deg)) # ~11 arcsec error
 
+"""
+Project-specific path definitions and functions
+"""
 feedback_path = "/home/rkarim/Research/Feedback/"
 if not os.path.isdir(feedback_path):
     feedback_path = "/home/ramsey/Documents/Research/Feedback/"
@@ -96,6 +101,9 @@ def load_cii(n=0):
     return img, WCS(hdr)
 
 
+"""
+Debug/plotting utilities
+"""
 def plot_coordinates(data_gen_f, coords, setup=True, show=True, subplot=(111,)):
     """
     Quickly throw up some coordinates onto an image
@@ -128,6 +136,9 @@ def get_transform():
     return plt.gca().get_transform('world')
 
 
+"""
+Saving catalog (debug, but also just useful)
+"""
 def save_df_html(df, na_rep='--'):
     """
     Quickly save the argument dataframe to a test.html file, and print its length
@@ -136,6 +147,9 @@ def save_df_html(df, na_rep='--'):
     df.to_html("~/Downloads/test.html", na_rep=na_rep)
 
 
+"""
+This is a personal utility, I should save this in some package I use for every project
+"""
 def create_png_metadata(title=None, file=None, func=None, **extra_metadata_kwargs):
     """
     January 12, 2022
@@ -172,7 +186,9 @@ def create_png_metadata(title=None, file=None, func=None, **extra_metadata_kwarg
 """
 Something related to point separation
 """
-
+"""
+Everything below is a utility for this project
+"""
 def coordinate_midpoint(coord1, coord2):
     """
     Return the SkyCoord midpoint between two coordinates.

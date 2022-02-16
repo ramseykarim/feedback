@@ -1040,6 +1040,8 @@ def irac8um_to_cii_figure():
         original_src_file = "/".join(original_src_file.split('/')[-2:]) + '::mosaic_irac()'
         new_src_file = "/".join(__file__.split('/')[-2:]) + '::irac8um_to_cii_figure()'
 
+        # Note to future self: this is how I am aligning it with WCS
+        # If you just feed find_optimal_celestial_wcs the unaligned WCS, it aligns it!
         w_original = WCS(hdul[0].header)
         w_aligned, shape_aligned = mosaicking.find_optimal_celestial_wcs(
             [(hdul[0].data, hdul[0].header)],
