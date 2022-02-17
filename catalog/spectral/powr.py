@@ -270,7 +270,7 @@ class PoWRGrid:
     @staticmethod
     def plot_spectrum(*args, setup=True, show=True, fuv=False,
             xlim=None, ylim=None, xunit=None,
-            xlog=True, ylog=True, label=None):
+            xlog=True, ylog=True, **kwargs):
         if len(args) == 2:
             wl, flux = args
         else:
@@ -286,7 +286,7 @@ class PoWRGrid:
             wl, flux = wl[mask], flux[mask]
         if xunit:
             wl = wl.to(xunit, equivalencies=u.spectral())
-        plt.plot(wl, flux, label=label)
+        plt.plot(wl, flux, **kwargs)
         if setup:
             plt.xlabel(f'wavelength ({wl.unit.to_string()})')
             plt.ylabel(f'flux ({flux.unit.to_string()})')

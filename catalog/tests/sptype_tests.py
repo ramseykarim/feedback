@@ -26,7 +26,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
-    return test_L_vs_T_vs_g()
+    return test_WR_calibration()
 
 
 def plot_sptype_calibration_stuff():
@@ -385,7 +385,7 @@ def test_powr_retrieval_by_L():
 def test_STResolver_WR():
     spectral.stresolver.random.seed(1312)
     np.random.seed(1312)
-    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in ('OB', "WNE", "WNL")}
+    powr_grids = {x: spectral.powr.PoWRGrid(x) for x in ('OB', "WNE", "WNL", "WNL-H50")}
     cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
     ltables = spectral.leitherer.LeithererTable()
 
@@ -396,7 +396,7 @@ def test_STResolver_WR():
 
     st = s.spectral_types['WN6ha'][0]
     print(st)
-    print("Rtrans: ", np.log10(spectral.powr.PoWRGrid.calculate_Rt(*st[5:])))
+    print("Rtrans: ", np.log10(spectral.powr.PoWRGrid.calculate_Rt(*st[5:9])))
     s.populate_all()
     # for pm in s.powr_models['WN6ha']:
     #     print(pm)
@@ -523,6 +523,61 @@ def test_catalog():
     df.to_csv(fn)
     # df = pd.read_csv(fn)
     return df
+
+
+"""
+A few tests to check the WR luminosity calibration issue
+"""
+def WR_tests():
+    print("test_powr_plot")
+    test_powr_plot()
+    print("testSuite_PoWR")
+    testSuite_PoWR()
+    print("test_STResolver_WR")
+    test_STResolver_WR()
+
+
+def test_WR_calibration():
+    """
+    Plot the spectrum, check what it integrates to, see if I can normalize it
+    by hand
+    """
+    spectral.stresolver.random.seed(1312)
+
+    tbl = spectral.powr.PoWRGrid('WNL-H50')
+    powr_grids = {'WNL-H50': tbl}
+    cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
+    ltables = spectral.leitherer.LeithererTable()
+
+    s = spectral.stresolver.STResolver('WN6ha')
+    s.link_calibration_table(cal_tables)
+    s.link_leitherer_table(ltables)
+    s.link_powr_grids(powr_grids)
+
+    # st = s.spectral_types['WN6ha'][0]
+    lum_list = np.array([spectral.stresolver.STResolver.get_WR_luminosity(st) for st in s.spectral_types['WN6ha']])
+    lum = np.mean(lum_list)
+    mdls = {m['MODEL']: m for m in s.powr_models['WN6ha']}
+
+    wl_spectra_tuples = {m_name: mdls[m_name]['grid'].get_model_spectrum(mdls[m_name]) for m_name in mdls.keys()}
+
+    setup = True
+    for m_name in wl_spectra_tuples.keys():
+        wl, flux = wl_spectra_tuples[m_name]
+        print(np.log10(np.trapz(flux, x=wl).to(u.solLum).to_value()))
+        
+    #     tbl.plot_spectrum(*wl_spectra_tuples[m_name], label=m_name, setup=setup, xunit=u.Angstrom, ylog=False, show=False, linewidth=0.7)
+    #     if setup:
+    #         setup = False
+    # plt.xlim((2e2, 5e3))
+    # plt.show()
+
+
+    # print(s.powr_models['WN6ha'][0])
+    # plt.hist(lum_list)
+    # plt.show()
+    # print(f"{lum:.3E}")
+
 
 
 

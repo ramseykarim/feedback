@@ -522,7 +522,6 @@ class STResolver:
     """
 
     """
-    TODO:::::::::::::::::::::::: I LEFT OFF HERE
     My plan is:
     if you look at STResolver.link_powr_grids and stuff like that, it's already
     pretty well set up to handle a bunch of random WR stars. I don't need
@@ -640,7 +639,7 @@ class STResolver:
             spectral type tuple. There are parameters embedded in the tuple
             for WR stars (not for OB or other stars)
         :param st_tuple: standard tuple format of spectral type, extended
-            for WR stars. 9 elements total.
+            for WR stars. (at least) 9 elements total.
         :returns: tuple(paramx, paramy), with float params
         """
         # Check if this WR tuple has parameters
