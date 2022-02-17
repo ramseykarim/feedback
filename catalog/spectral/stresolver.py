@@ -422,7 +422,7 @@ class STResolver:
         If one of the binary components cannot be looked up at all, ignore it
         """
         # Make a FUV flux-finding function
-        def find_FUV_flux(model_info):
+        def find_FUV_flux(st_tuple, model_info):
             # model_info is a dictionary containing all the columns in modelparameters.txt
             # as well as 'grid' which contains the PoWR grid object
             # Isn't that nifty ;)
@@ -435,12 +435,13 @@ class STResolver:
                 return STResolver.fuv_memoization[model_identifier]
             else:
                 # Calculate it
-                wlflux = model_info['grid'].get_model_spectrum(model_info)
+                # This function STResolver.get_model_spectrum handles the WR luminosity scaling
+                wlflux = STResolver.get_model_spectrum(st_tuple, model_info)
                 integrated_flux = powr.PoWRGrid.integrate_flux(wlflux)
                 # Memoize it
                 STResolver.fuv_memoization[model_identifier] = integrated_flux
                 return integrated_flux
-        self.fuv = STResolver.map_to_components(find_FUV_flux, (self.powr_models,), f_list=u.Quantity)
+        self.fuv = STResolver.map_to_components(find_FUV_flux, (self.spectral_types, self.powr_models,), f_list=u.Quantity)
 
     def populate_ionizing_flux(self):
         """
@@ -448,7 +449,7 @@ class STResolver:
         Populate self.ionizing with possibilities
         Same rules as FUV flux for missing values
         """
-        def find_ionizing_photon_flux(model_info):
+        def find_ionizing_photon_flux(st_tuple, model_info):
             # Nearly identical to find_FUV_flux function
             if model_info is None:
                 return np.nan / u.s
@@ -459,14 +460,14 @@ class STResolver:
                 return STResolver.ioniz_memoization[model_identifier]
             else:
                 # Calculate it
-                wlflux = model_info['grid'].get_model_spectrum(model_info)
+                wlflux = STResolver.get_model_spectrum(st_tuple, model_info)
                 def flux_to_photon_rate(wl, flux):
                     return flux / wl.to(u.erg, equivalencies=u.spectral())
                 integrated_photon_flux = powr.PoWRGrid.integrate_flux(wlflux, f=flux_to_photon_rate, low=13.6, high=None, result_unit=(1/u.s))
                 # Memoize it
                 STResolver.ioniz_memoization[model_identifier] = integrated_photon_flux
                 return integrated_photon_flux
-        self.ionizing = STResolver.map_to_components(find_ionizing_photon_flux, (self.powr_models,), f_list=u.Quantity)
+        self.ionizing = STResolver.map_to_components(find_ionizing_photon_flux, (self.spectral_types, self.powr_models,), f_list=u.Quantity)
 
     def populate_stellar_mass(self):
         """
@@ -723,7 +724,7 @@ class STResolver:
         :returns: tuple of Quantity arrays, (wavelength, flux)
         """
         # Pull the model info; same step for any kind of star
-        wl, flux = model_info['grid'].get_model_info(model_info)
+        wl, flux = model_info['grid'].get_model_spectrum(model_info)
         if STResolver.isWR(st_tuple):
             # WR behavior, scale spectrum
             luminosity = STResolver.get_WR_luminosity(st_tuple)
