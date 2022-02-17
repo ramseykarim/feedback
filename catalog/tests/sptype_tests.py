@@ -26,6 +26,7 @@ def main():
     Easier to have this at the top, never have to scroll down.
     "args" variable will contain any return values
     """
+    confirm_that_WR_needs_calibration()
     return test_WR_calibration()
 
 
@@ -537,10 +538,9 @@ def WR_tests():
     test_STResolver_WR()
 
 
-def test_WR_calibration():
+def confirm_that_WR_needs_calibration():
     """
-    Plot the spectrum, check what it integrates to, see if I can normalize it
-    by hand
+    Confirm that model spectra integrate to logL=5.3 solLum
     """
     spectral.stresolver.random.seed(1312)
 
@@ -565,7 +565,39 @@ def test_WR_calibration():
     for m_name in wl_spectra_tuples.keys():
         wl, flux = wl_spectra_tuples[m_name]
         print(np.log10(np.trapz(flux, x=wl).to(u.solLum).to_value()))
-        
+
+
+
+def test_WR_calibration():
+    """
+    Plot the spectrum, check what it integrates to, see if I can normalize it
+    by hand
+    """
+    spectral.stresolver.random.seed(1312)
+
+    tbl = spectral.powr.PoWRGrid('WNL-H50')
+    powr_grids = {'WNL-H50': tbl}
+    cal_tables = spectral.sttable.STTable(*spectral.sternberg.load_tables_df())
+    ltables = spectral.leitherer.LeithererTable()
+
+    s = spectral.stresolver.STResolver('WN6ha')
+    s.link_calibration_table(cal_tables)
+    s.link_leitherer_table(ltables)
+    s.link_powr_grids(powr_grids)
+
+    # st = s.spectral_types['WN6ha'][0]
+    lum_list = np.log10(np.array([spectral.stresolver.STResolver.get_WR_luminosity(st) for st in s.spectral_types['WN6ha']]))
+    integrated_spec_list = []
+    for st, model_info in zip(s.spectral_types['WN6ha'], s.powr_models['WN6ha']):
+        wl, flux = model_info['grid'].get_model_spectrum(model_info)
+        lum = np.log10(np.trapz(flux, x=wl).to(u.solLum).to_value())
+        integrated_spec_list.append(lum)
+    plt.plot(lum_list, integrated_spec_list, '.')
+    plt.xlim([5.2, 6.2])
+    plt.ylim([5.2, 6.2])
+    plt.show()
+
+
     #     tbl.plot_spectrum(*wl_spectra_tuples[m_name], label=m_name, setup=setup, xunit=u.Angstrom, ylog=False, show=False, linewidth=0.7)
     #     if setup:
     #         setup = False

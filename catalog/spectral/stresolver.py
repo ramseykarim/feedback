@@ -709,6 +709,28 @@ class STResolver:
             return np.nan
 
     @staticmethod
+    def get_model_spectrum(st_tuple, model_info):
+        """
+        Shortcut to get the PoWR model spectrum. Returns (wavelength, flux)
+        tuple, where each element is a Quantity array.
+        Special treatment for WR stars. PoWR normalizes all spectra to logL=5.3,
+        so they must be scaled to the actual luminosity. This function handles
+        that, and that's why it needs st_tuple.
+        :param st_tuple: standard tuple format of spectral type, extended
+            for WR stars
+        :param model_info: the PoWR model information dictionary that will
+            be stored as self.powr_models in an STResolver instance
+        :returns: tuple of Quantity arrays, (wavelength, flux)
+        """
+        # Pull the model info; same step for any kind of star
+        wl, flux = model_info['grid'].get_model_info(model_info)
+        if STResolver.isWR(st_tuple):
+            # WR behavior, scale spectrum
+            luminosity = STResolver.get_WR_luminosity(st_tuple)
+            flux *= (luminosity / (10**5.3))
+        return wl, flux
+
+    @staticmethod
     def select_powr_grid(st_tuple):
         """
         This is, by necessity, a big, nested if-else block
