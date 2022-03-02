@@ -586,6 +586,8 @@ def overlaid_contours_for_offset():
     TODO: need special handling for the PACS and IRAC images, should do a cutout
     We have all that weird WCS footprint code somewhere in "catalog", can
     try to use that to do a regrid to the proper WCS. TOMORROW
+
+    Feb 15, 2022: using this for some moment0 img/contour overlays
     """
     selected_img = "c18o10"
     selected_contours = ["12co10",]
@@ -603,18 +605,10 @@ def overlaid_contours_for_offset():
     # short_labels = ["$^{12}$CO(1-0)", "$^{13}$CO(1-0)", "$^{12}$CO(3-2)", "$^{13}$CO(3-2)", "[CII]", "$^{12}$CO(6-5)",
     #     "8 $\mu$m", "HCO+", "70 $\mu$m"]
     only_2D = ['irac4', 'pacs70']
-    """
-    All this uncertainty stuff is copied from m16_threads.channel_maps_again, where I first ironed out this technique
-    The contour levels can now be tied to the noise (which I also figured out for each map pretty well)
-    """
-    onesigmas = { # all values in K. These are the 1sigma noise levels, which contours will be based on
-        'cii': 1.0, # CII (might be 1.2 but sampling that really dark area shows 1 and that seems good to me)
-        'hcn': 0.57, 'hcnCONV': 0.27, # HCN -- haven't checked yet, not gonna use it
-        'hcop': 0.57, 'hcopCONV': 0.27, # HCO+/conv
-        '12co10': 6.2, '12co10CONV': 2.0, # 12co10/conv
-        '13co10': 2.6, '13co10CONV': 0.7, # 13co10/conv
-        'c18o10': 0.66, 'c18o10CONV': 0.40, # c18o10/conv
-    }
+
+    # ONESIGMAS
+    onesigmas = cube_utils.onesigmas
+
     zeroth_contour_sigma = 5
     level_scaling = 'linear'
     if level_scaling == 'log':
@@ -622,7 +616,7 @@ def overlaid_contours_for_offset():
         contour_stretch_base = 2
         contour_stretch_coeff = 5
         contour_levels_multipliers = [zeroth_contour_sigma] + [zeroth_contour_sigma + int(round(contour_stretch_coeff * contour_stretch_base**i)) for i in range(10)]
-    elif level_scaling = 'linear'
+    elif level_scaling == 'linear':
         ### Arithmetic
         contour_sigma_step = 5
         contour_levels_multipliers = [zeroth_contour_sigma + contour_sigma_step*i for i in range(10)]
@@ -768,7 +762,8 @@ def pillar_sample_spectra(reg_idx):
     I have a region file called pillar_samples.reg with relevant samples
     The code from cii_systematic_emission_2 can be copied and modified into this file
     """
-    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_samples.reg"))
+    reg_filename_short = "catalogs/pillar_samples.reg"
+    reg_list = regions.read_ds9(catalog.utils.search_for_file(reg_filename_short))
 
     cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits", "apex/M16_12CO3-2_truncated_cutout.fits", "apex/M16_13CO3-2_truncated_cutout.fits",
         "bima/M16_12CO1-0_APEXbeam.fits", "apex/M16_CO6-5_APEXbeam.fits"]
@@ -848,7 +843,10 @@ def pillar_sample_spectra(reg_idx):
     ax_spec.set_ylabel("Line intensity (K)")
     ax_spec.set_title("Line spectra (20\" beam) averaged over selected position")
     # plt.show()
-    fig.savefig(f"/home/rkarim/Pictures/2021-06-03-work/pillar_samples_{reg_idx}.png")
+    # 2021-06-03 (jupiter),
+    fig.savefig(f"/home/ramsey/Pictures/2022-03-01/pillar_samples_{reg_idx}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"region {reg_idx} from {reg_filename_short}",
+            file=__file__, func='pillar_sample_spectra'))
 
 
 def multiple_moments():
@@ -1612,7 +1610,8 @@ if __name__ == "__main__":
     # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
 
     # compare_carma_to_sofia_pv(mol_idx=3)
-    overlaid_contours_for_offset()
+    # overlaid_contours_for_offset()
+    pillar_sample_spectra(0)
 
     # get_noise_graph('c18o10SMOOTHCONV')
 

@@ -21,6 +21,25 @@ except ModuleNotFoundError:
 
 from . import catalog
 
+
+"""
+All this uncertainty stuff is copied from m16_threads.channel_maps_again, where I first ironed out this technique
+The contour levels can now be tied to the noise (which I also figured out for each map pretty well)
+On feb 22 2022 I moved this from m16_investigation.overlaid_contours_for_offset
+to here so that I can have just one main copy and make sure I'm always using
+the same noise values across all functions.
+"""
+onesigmas = { # all values in K. These are the 1sigma noise levels, which contours will be based on
+    'cii': 1.0, # CII (might be 1.2 but sampling that really dark area shows 1 and that seems good to me)
+    'hcn': 0.57, 'hcnCONV': 0.27, # HCN -- haven't checked yet, not gonna use it
+    'hcop': 0.57, 'hcopCONV': 0.27, # HCO+/conv
+    '12co10': 6.2, '12co10CONV': 2.0, # 12co10/conv
+    '13co10': 2.6, '13co10CONV': 0.7, # 13co10/conv
+    'c18o10': 0.66, 'c18o10CONV': 0.40, # c18o10/conv
+}
+
+
+
 def beam_area(theta_a, theta_b):
     """
     Return beam area in steradians given the half-power full widths

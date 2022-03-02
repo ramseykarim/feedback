@@ -401,8 +401,8 @@ def single_parallel_pillar_pvs():
 
     subcube_kwargs = dict(reg_index=1, length_scale_mult=2, reg_filename=reg_filename)
     # CII, native resolution
-    # subcube_cii = cps2.cutout_subcube(**subcube_kwargs).with_spectral_unit(u.km/u.s) # original
-    subcube_cii = cps2.cutout_subcube(data_filename="sofia/M16_CII_pillar1_BGsubtracted.fits", **subcube_kwargs).with_spectral_unit(u.km/u.s) # bgsub
+    subcube_cii = cps2.cutout_subcube(**subcube_kwargs).with_spectral_unit(u.km/u.s) # original
+    # subcube_cii = cps2.cutout_subcube(data_filename="sofia/M16_CII_pillar1_BGsubtracted.fits", **subcube_kwargs).with_spectral_unit(u.km/u.s) # bgsub
     # CO 1-0 BIMA, 14x14
 
     def process_co(fn):
@@ -543,7 +543,10 @@ def single_parallel_pillar_pvs():
 
 
     plt.tight_layout(h_pad=0, w_pad=0, pad=5)
-    plt.savefig("/home/rkarim/Pictures/2021-11-04-work/pv_along.png")
+    # 2021-11-04 (jupiter),
+    plt.savefig("/home/ramsey/Pictures/2022-02-22/pv_along.png",
+        metadata=catalog.utils.create_png_metadata(title='pv along',
+        file=__file__, func='single_parallel_pillar_pvs'))
     # plt.show()
 
 """
@@ -619,24 +622,32 @@ def save_fits_thin_channel_maps():
     can find
 
     Right now, I'm thinking 24-25, 25-26, 26-27
+
+    Feb 22, 2022
+    Repurposing for Arrowhead conference figure, to highlight threads
+    and blue cap over HST (too big to reproject in Python)
     """
     # fn = catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits")
-    fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
-    kms = u.km/u.s
-    cube = SpectralCube.read(fn)
-    cube._unit = u.K
-    cube = cube.with_spectral_unit(kms)
-    vel_start, channel_width = 24.*kms, 1*kms
+    # fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
+    cube = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
+        length_scale_mult=None)
+    # cube = SpectralCube.read(fn)
+    # cube._unit = u.K
+    # cube = cube.with_spectral_unit(kms)
+    # vel_start, channel_width = 24.*kms, 1*kms
+    vel_lims_list = [(22, 23.5), (24, 24.5), (25.5, 26)] # same as m16_threads.highlight_threads_moment0
     for i in range(3):
-        vel_limits = (vel_start + i*channel_width, vel_start + (i+1)*channel_width)
+        # vel_limits = (vel_start + i*channel_width, vel_start + (i+1)*channel_width)
+        vel_limits = tuple(v*kms for v in vel_lims_list[i])
         mom0 = cube.spectral_slab(*vel_limits).moment0()
         hdr = mom0.wcs.to_header()
-        hdr['DATE'] = "May 3, 2021"
+        # hdr['DATE'] = "May 3, 2021"
+        hdr['DATE'] = "Feb 22, 2022"
         hdr['CREATOR'] = "Ramsey Karim via m16_pictures.save_fits_thin_channel_maps"
         hdr['OBJECT'] = "M16"
-        hdr['COMMENT'] = f"CII moment 0 image {make_vel_stub(vel_limits)}"
+        hdr['COMMENT'] = f"HCO+ moment 0 image {make_vel_stub(vel_limits)}"
         hdu = fits.PrimaryHDU(data=mom0.data, header=hdr)
-        hdu.writeto(f"{catalog.utils.m16_data_path}sofia/thin_channel_{i}.fits")
+        hdu.writeto(f"{catalog.utils.m16_data_path}carma/hcop_thin_channel_{i}.fits")
     print("done")
 
 
@@ -1127,7 +1138,10 @@ def irac8um_to_cii_figure():
 
 
 if __name__ == "__main__":
-    m16_channel_maps()
+    # m16_channel_maps()
+    # save_fits_thin_channel_maps()
+    single_parallel_pillar_pvs()
+
     # justify_background_figure()
     # background_samples_figure_molecular()
 
