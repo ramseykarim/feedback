@@ -763,30 +763,42 @@ def pillar_sample_spectra(reg_idx):
     The code from cii_systematic_emission_2 can be copied and modified into this file
     """
     reg_filename_short = "catalogs/pillar_samples.reg"
-    reg_list = regions.read_ds9(catalog.utils.search_for_file(reg_filename_short))
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
 
-    cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits", "apex/M16_12CO3-2_truncated_cutout.fits", "apex/M16_13CO3-2_truncated_cutout.fits",
-        "bima/M16_12CO1-0_APEXbeam.fits", "apex/M16_CO6-5_APEXbeam.fits"]
-    line_names = ['CII', '12CO(3-2)', '13CO(3-2)',
-        '12CO(1-0) * 0.5', '12CO(6-5)']
-    multiplier = [1, 1, 1, 0.5, 1]
-    kms = u.km/u.s
+    ### APEX beam set
+    # cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits",
+    #     "apex/M16_12CO3-2_truncated_cutout.fits", "apex/M16_13CO3-2_truncated_cutout.fits",
+    #     "bima/M16_12CO1-0_APEXbeam.fits", "apex/M16_CO6-5_APEXbeam.fits"]
+    # line_names = ['CII', '12CO(3-2)', '13CO(3-2)',
+    #     '12CO(1-0) * 0.5', '12CO(6-5)']
+    ### SOFIA beam set
+    cube_filenames = ["sofia/M16_CII_U.fits",
+        "bima/M16_12CO1-0_14x14.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.fits",
+        "carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits", "carma/M16.ALL.hcn.sdi.cm.subpv.SOFIAbeam.fits",]
+    short_names = ['cii',
+        '12co10CONV', '13co10CONV', 'c18o10CONV',
+        'hcopCONV', 'hcnCONV',]
+    line_names = ['[C II]',
+        '$^{12}$CO(1$-$0)', '$^{13}$CO(1$-$0)', 'C$^{18}$O(1$-$0)',
+        'HCO+(1$-$0)', 'HCN(1$-$0)']
+    # multiplier = [1, 1, 1, 0.5, 1]
+    multiplier = [1, 1, 4, 15, 4, 4]
 
     reference_filename = catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")
     reference_name = "HST F657N"
     # reference_filename = catalog.utils.search_for_file("apex/M16_12CO6-5_mom0.fits") # smaller test reference file
     # reference_name = "12CO(6-5)"
 
-    if reg_idx < 3:
+    if reg_idx < 6:
         pillar_vel_limits = (22.5*kms, 27.5*kms)
-    elif reg_idx == 3:
-        pillar_vel_limits = (20*kms, 27.5*kms)
+    # elif reg_idx == : # not sure what this was from
+    #     pillar_vel_limits = (20*kms, 27.5*kms)
     else:
         pillar_vel_limits = (19*kms, 24*kms)
 
     pillar_vel_stub = make_vel_stub(pillar_vel_limits)
 
-    fig = plt.figure(figsize=(15, 5)) # originally (18, 10)
+    fig = plt.figure(figsize=(15, 7)) # originally (18, 10)
 
     ax_img = plt.subplot2grid((1, 5), (0, 0))
     ref_img, ref_hdr = fits.getdata(reference_filename, header=True)
@@ -800,31 +812,38 @@ def pillar_sample_spectra(reg_idx):
     reg = reg_list[reg_idx]
 
     ax_spec = plt.subplot2grid((1, 5), (0, 1), colspan=4, rowspan=1)
-    def add_spectrum(cube, spec_ax, reg, idx):
+    def add_spectrum(cube, spec_ax, reg, idx, cii=False):
         # holdover from cii_systematic_emission_2() where there were multiple img/spec axes
-        subcube = cube.subcube_from_regions([reg])
-        spectrum = subcube.mean(axis=(1, 2)) * multiplier[idx]
-        if reg_idx < 4:
+        pixreg = reg.to_pixel(cube[0, :, :].wcs)
+        j, i = [int(round(c)) for c in pixreg.center.xy]
+        spectrum = cube[:, i, j]
+        if False: #reg_idx < 4: # currently causing bug (March 2, 2022)
             mean_vel = np.nanmean(subcube.spectral_slab(*pillar_vel_limits).moment1().to_value())
             mean_stub = f" [Mean: {mean_vel:.2f}]"
         else:
             mean_stub = ""
-        p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value(), label=f"{line_names[idx]}{mean_stub}")
-        if reg_idx < 4:
-            spec_ax.axvline(mean_vel, color=p[0].get_c(), alpha=0.6)
+        multiplier_stub = '' if multiplier[idx] == 1 else f' $\\times${multiplier[idx]}'
+        p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub}{mean_stub}",
+            linestyle='-' if not cii else '--')
+        if cii:
+            bg_spectrum = cps2.get_cii_background()
+            spectrum = spectrum - bg_spectrum
+            p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub}{mean_stub} (BG sub)",
+                linestyle='-', color=p[0].get_c())
+        # if False:#reg_idx < 4:
+        #     spec_ax.axvline(mean_vel, color=p[0].get_c(), alpha=0.6)
         return p
-
     for i, c_fn in enumerate(cube_filenames):
         cube = cube_utils.CubeData(c_fn)
         cube.convert_to_K()
         cube.data = cube.data.with_spectral_unit(kms)
-        add_spectrum(cube.data, ax_spec, reg, i)
+        add_spectrum(cube.data, ax_spec, reg, i, cii=(i==0))
     pixreg = reg.to_pixel(ref_wcs)
     pix_center = pixreg.center.xy
     pix_radius = pixreg.radius
     # ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{idx}", color='r', fontsize=11, ha='center', va='bottom')
-    if reg_idx < 4:
-        ax_spec.text(0.7, 0.6, "Mean velocity taken from\nwithin shaded velocity range", color='k', fontsize=11, ha='left', va='bottom', transform=ax_spec.transAxes)
+    # if reg_idx < 4:
+    #     ax_spec.text(0.7, 0.6, "Mean velocity taken from\nwithin shaded velocity range", color='k', fontsize=11, ha='left', va='bottom', transform=ax_spec.transAxes)
     pixreg.plot(ax=ax_img, color='r')
 
 
@@ -841,10 +860,10 @@ def pillar_sample_spectra(reg_idx):
 
     ax_spec.set_xlabel("velocity (km/s)")
     ax_spec.set_ylabel("Line intensity (K)")
-    ax_spec.set_title("Line spectra (20\" beam) averaged over selected position")
+    ax_spec.set_title("Line spectra (14\" beam) averaged over selected position")
     # plt.show()
     # 2021-06-03 (jupiter),
-    fig.savefig(f"/home/ramsey/Pictures/2022-03-01/pillar_samples_{reg_idx}.png",
+    fig.savefig(f"/home/ramsey/Pictures/2022-03-02/pillar_samples_{reg_idx}.png",
         metadata=catalog.utils.create_png_metadata(title=f"region {reg_idx} from {reg_filename_short}",
             file=__file__, func='pillar_sample_spectra'))
 
@@ -1602,6 +1621,98 @@ def get_noise_graph(data_filename=None):
 
 
 
+def multiple_line_moment1s(moment=1, conv=False):
+    """
+    March 2, 2022 (at Arrowhead Day 3)
+    Copied this from m16_investigation.multiple_moments() and adapted for new
+    purpose
+    I want to compare moment1 images of 12CO10, 13CO10, HCO+, and CII around
+    Pillar 2. I am going to mask the cube to make the moment image nice
+    """
+    vel_lims = (19*kms, 24*kms)
+    vel_str = f"{vel_lims[0].to_value():.1f}-{vel_lims[1].to_value():.1f}"
+
+    # Pillar1: 0, Pillar2: 2
+    ref_reg_idx = 2
+
+    if conv:
+        # Convolved to SOFIA
+        cube_fns = [None, "bima/M16_12CO1-0_14x14.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
+            "carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits"]
+        short_names = ['cii', '12co10CONV', '13co10CONV', 'hcopCONV']
+    else:
+        # native resolutions
+        cube_fns = [None, "bima/M16_12CO1-0_7x4.fits", "bima/M16.BIMA.13co1-0.fits",
+            "carma/M16.ALL.hcop.sdi.cm.subpv.fits"]
+        short_names = ['cii', '12co10', '13co10', 'hcop']
+
+    line_names = ['[C II]', '$^{12}$CO(1$-$0)', '$^{13}$CO(1$-$0)', 'HCO+(1$-$0)']
+
+
+    fig = plt.figure(figsize=(16, 12))
+    mom0_cutoffs = [15, 40, 0.5, 0.5] # made with 19-24 limits, CONV (works for unconv too)
+    # vlims = [(None, 90), (21, 23), (1, 3)] # 19-24
+    cargs, ckwargs = None, None
+    cargs2, ckwargs2 = None, None
+    for i in range(4):
+        # loop through lines, make moment 1
+
+        cube = cps2.cutout_subcube(data_filename=cube_fns[i], length_scale_mult=4., reg_index=ref_reg_idx)
+        if i == 0:
+            cube = cube - cps2.get_cii_background()[:, np.newaxis, np.newaxis]
+        cube = cube.spectral_slab(*vel_lims)
+        mom0 = cube.moment0()
+        if moment > 0:
+            mom_plus = cube.with_mask(mom0.to_value() > mom0_cutoffs[i]).moment(order=moment)
+            img = mom_plus
+        else:
+            img = mom0
+
+        ax = plt.subplot2grid((2, 2), (i//2, i%2), projection=mom0.wcs)
+        if moment == 1:
+            kwargs = dict(vmin=20.5, vmax=24)
+        elif moment == 2:
+            kwargs = dict(vmin=0, vmax=2)
+        else:
+            kwargs = dict()
+        im = ax.imshow(img.to_value(), origin='lower', cmap='nipy_spectral', **kwargs)
+        fig.colorbar(im, ax=ax)
+
+        plt.grid(color='k', ls='-')
+        if moment == 0:
+            ax.contour(mom0.to_value(), levels=[mom0_cutoffs[i]], colors='k')
+        else:
+            ax.contour(mom0.to_value(), colors='k', linewidths=0.6, alpha=0.6)
+
+
+        # if cargs is None:
+        #     cargs = (mom.to_value(),)
+        #     if any(vlims[0][j] is not None for j in range(2)):
+        #         if vlims[0][0] is not None:
+        #             cargs[0][cargs[0] < vlims[0][0]] = vlims[0][0]
+        #         if vlims[0][1] is not None:
+        #             cargs[0][cargs[0] > vlims[0][1]] = vlims[0][1]
+        #     ckwargs = dict(colors='k', linewidths=1)
+        # elif cargs2 is None:
+        #     cargs2 = (mom.to_value(),)
+        #     cargs2[0][cargs2[0] < vlims[1][0]] = vlims[1][0]
+        #     cargs2[0][cargs2[0] > vlims[1][1]] = vlims[1][1]
+        #     ckwargs2 = dict(colors='cyan', linewidths=1, levels=[24.6, 24.8, 25.35, 25.45])
+        # ax.contour(*cargs, **ckwargs)
+        # if cargs2 is not None:
+        #     ax.contour(*cargs2, **ckwargs2)
+        ax.set_title(f"{line_names[i]} Moment {moment} {make_vel_stub(vel_lims)}")
+        # ax.set_xticks([]), ax.set_yticks([])
+        ax.set_xlabel(' '), ax.set_ylabel(' ')
+    plt.tight_layout()
+    # 2021-06-03,
+    conv_stub = '_unconv' if not conv else '_conv'
+    fig.savefig(f"/home/ramsey/Pictures/2022-03-02/multiple_moment{moment}s_{vel_str}{conv_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'length_scale_mult=4',
+            file=__file__, func='multiple_line_moment1s'))
+    # plt.show()
+
+
 
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
@@ -1611,7 +1722,12 @@ if __name__ == "__main__":
 
     # compare_carma_to_sofia_pv(mol_idx=3)
     # overlaid_contours_for_offset()
-    pillar_sample_spectra(0)
+
+    # pillar_sample_spectra(0) # 6, 7 are Pillar 2
+    for i in [1]:
+        for j in range(2):
+            conv = bool(j)
+            multiple_line_moment1s(moment=i, conv=conv)
 
     # get_noise_graph('c18o10SMOOTHCONV')
 
