@@ -408,7 +408,7 @@ def integrate_shell_on_image(use_background=False, plot_anything=False):
     print(f"Column density thru shell {N_thru_shell:.2E}, Av {(N_thru_shell/N_Av).decompose().to_value():.1f}")
 
     print("Column density samples:")
-    tau160_sample_1 = 10.**(-2.2) * u.cm**-2
+    tau160_sample_1 = 10.**(-2.2) * u.cm**-2 ## WHAT ARE THESE UNITS?????? Cext should have the 1/cm2 units, so I guess this is some sort of bandaid
     tau160_sample_2 = 10.**(-1.6) * u.cm**-2
     tau160_background = tau160_background * u.cm**-2
     N_sample_1 = convert_tautoN_C(tau160_sample_1, Cext160)
@@ -733,15 +733,170 @@ def prepare_img_for_plot(img, scale=np.arcsinh, low_cutoff=np.nanmedian):
     return img
 
 
+"""
+&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+Get N(H2) values at Maitraiyee's specified regions
+Regions are in rcw49_data/catalogs/tiwari_regions_2022.reg and are "point"
+regions
+&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+"""
 
+def get_tau_and_NH_at_locations(use_background=False, plot_anything=False):
+    """
+    March 17, 2022 (St Patrick's day)
+    Use the regions in rcw49_data/catalogs/tiwari_regions_2022.reg and get
+    tau and N(H nucleus) for each location
+    Most of this code copied from integrate_shell_on_image()
+    """
+    reg_filename_short = "catalogs/tiwari_regions_2022.reg"
+    reg_filename = catalog.utils.search_for_file(reg_filename_short)
+    point_reg_list = regions.Regions.read(reg_filename)
+
+    Rv = 3.1
+    d = Draine_data(Rv)
+    wl = get_wl(d)
+    Cext = get_C(d)
+    kabs = get_k(d)
+    # k will produce slightly higher mass since g-to-d includes He
+    # Albedo is 0 so ext = abs (no sca)
+    Cext160 = get_val_at(160., wl, Cext)
+    # Distance is the Vargas-Alvarez value
+    losD = 4.16*1000
+    # Conversion factor from N to Av
+    N_Av = 1.9e21*u.cm**-2
+
+    tau160, tau160_h = load_tau(colorcolor=3)
+    tau160 = 10.**tau160
+    tau160_w = WCS(tau160_h)
+    tau160_background = 10**(-2.6) # np.nanmedian(tau160) is really high
+    if use_background:
+        # Subtract an optical depth background
+        # Has a factor of ~2 effect on the mass
+        print(f"Using a tau160 background of {tau160_background:.2E}")
+        tau160 -= tau160_background
+        N_background = convert_tautoN_C(tau160_background, Cext160) * u.cm**-2
+        print(f"Background column equivalent: {N_background:.2E}")
+        print(f"Background Av equivalent: {(N_background/N_Av).decompose().to_value():.1f}")
+
+    # Save point region coords for later plotting
+    point_coords = []
+    point_labels = []
+    # Loop through regions and get tau and N(H nucleus)
+    for reg in point_reg_list:
+        # Convert to pixel region from sky region
+        pixreg = reg.to_pixel(tau160_w)
+        # Get region name
+        reg_name = reg.meta['label']
+        point_labels.append(reg_name)
+        # xy is ji
+        j, i = tuple(int(round(x)) for x in pixreg.center.xy)
+        # Save coords as xy (for plotting)
+        point_coords.append([j, i])
+        # Extract the 160 micron dust optical depth value
+        tau160_value = tau160[i, j]
+        # Convert to hydrogen nucleus column density
+        N_value = convert_tautoN_C(tau160_value, Cext160) * u.cm**-2 # Units are ok now
+        # Convert to Av using the constant
+        Av_value = (N_value/N_Av).decompose().to_value()
+        print(f"Region: {reg_name}")
+        print(f"Tau_160micron =            {tau160_value:6.2E}")
+        print(f"H nucleus column density = {N_value:6.2E}")
+        print(f"Av =                       {Av_value:4.1f}")
+        print()
+
+
+    if plot_anything:
+        cmap = 'inferno'
+        cbar_tick_labelsize = 13
+        cbar_labelsize = 16
+        cbar_labelpad = -70
+        T, T_h = load_T()
+        fig = plt.figure(figsize=(16, 9))
+        axT = plt.subplot(121, projection=tau160_w)
+        caxT = inset_axes(axT, width="100%", height="5%", loc='lower center',
+            bbox_to_anchor=(0, 1.01, 1, 1), bbox_transform=axT.transAxes, borderpad=0)
+        im = axT.imshow(T, origin='lower', vmin=15, vmax=55, cmap=cmap)
+        cbarT = fig.colorbar(im, cax=caxT, orientation='horizontal',
+            ticks=[20, 30, 40, 50])
+        cbarT.set_label("Dust temperature (K)", labelpad=cbar_labelpad, fontsize=cbar_labelsize)
+        caxT.xaxis.set_ticks_position('top')
+        caxT.tick_params(labelsize=cbar_tick_labelsize)
+        axT.tick_params(axis='x', direction='in')
+        axT.tick_params(axis='y', direction='in')
+        # cbarT.outline.set_edgecolor("white")
+        axT.set_xlabel("Right Ascension")
+        axT.set_ylabel("Declination")
+
+        axN = plt.subplot(122, projection=tau160_w)
+        caxN = inset_axes(axN, width="100%", height="5%", loc='lower center',
+            bbox_to_anchor=(0, 1.01, 1, 1), bbox_transform=axN.transAxes, borderpad=0)
+        N = np.log10(convert_tautoN_C(tau160.copy(), Cext160))
+        im = axN.imshow(N, origin='lower', vmin=21.5, vmax=23.5, cmap=cmap)
+        cbarN = fig.colorbar(im, cax=caxN, orientation='horizontal',
+            ticks=[22, 22.5, 23])
+        caxN.set_xticklabels(['22', '23.5', '23'])
+        cbarN.set_label("Hydrogen nucleus column density [cm$^{-2}$]", labelpad=cbar_labelpad-2, fontsize=cbar_labelsize)
+        caxN.xaxis.set_ticks_position('top')
+        caxN.tick_params(labelsize=cbar_tick_labelsize)
+        axN.tick_params(axis='x', direction='in')
+        axN.tick_params(axis='y', direction='in')
+        axN.set_xlabel(" ")
+        axN.tick_params(axis='y', labelleft=False)
+        # axN.tick_params(axis='x', labelbottom=False)
+
+        # inset_img = Cutout2D(N, (600, 500), (400, 300), wcs=tau160_w) # 300:700, 450:750 (pixel ranges)
+        inset_img = Cutout2D(N, (585, 515), (280, 280), wcs=tau160_w) # modified because ref wanted more zoom (feb 1, 2021)
+
+        insetaxkwargs = dict(width="42%", height="42%", loc='upper right')
+        # insetaxN = inset_axes(axN, width="36%", height="48%", loc='upper right')
+        insetaxN = inset_axes(axN, **insetaxkwargs) # modified because ref wanted more zoom (feb 1, 2021)
+        insetaxN.tick_params(axis='x', labelbottom=False)
+        insetaxN.tick_params(axis='y', labelleft=False)
+        insetaxN.set_xticks([])
+        insetaxN.set_yticks([])
+        N = N[inset_img.slices_original]
+        insetaxN.imshow(N, origin='lower', vmin=21.5, vmax=23.5, cmap=cmap)
+
+        insetaxT = inset_axes(axT, **insetaxkwargs)
+        insetaxT.tick_params(axis='x', labelbottom=False)
+        insetaxT.tick_params(axis='y', labelleft=False)
+        insetaxT.set_xticks([])
+        insetaxT.set_yticks([])
+        T = T[inset_img.slices_original]
+        insetaxT.imshow(T, origin='lower', vmin=15, vmax=55, cmap=cmap)
+
+        # Cycle through and plot all regions on all axes
+        axes = [axT, axN, insetaxT, insetaxN]
+        pad = 5
+        for idx, reg in enumerate(point_reg_list):
+            reg_name = point_labels[idx]
+            for ax_idx, ax in enumerate(axes):
+                if ax_idx > 1:
+                    j, i = inset_img.to_cutout_position(point_coords[idx])
+                    ax.text(j+pad, i-pad, reg_name, fontsize=9, color='k', ha='center', va='top')
+                else:
+                    j, i = point_coords[idx]
+                ax.plot([j], [i], color='k', marker='+')
+
+
+        plt.subplots_adjust(wspace=0, bottom=0, top=0.92, left=0.1, right=0.95)
+        bg_stub = '_withbackground' if use_background else ''
+        fig.savefig(f"/home/ramsey/Pictures/2022-03-17/dust_column_points{bg_stub}.png")
+        # plt.show()
 
 if __name__ == "__main__":
     # ellipse_region_mask(savemask=True, half=True)
     # print("CII")
     # integrate_shell_cii_mask(n=2)
-    print("ELLIPSE")
-    integrate_shell_on_image(plot_anything=True)
+
+    #### This is the thing that was most recently uncommented (as of 2022)
+    # print("ELLIPSE")
+    # integrate_shell_on_image(plot_anything=True)
+
+
     # m1_old, m2_old = 2.42e4*u.solMass, 4.02e4*u.solMass
     # m1_new, m2_new = 1.79e4*u.solMass, 2.82e4*u.solMass
     # print(m1_new/m1_old)
     # print(m2_new/m2_old)
+
+    get_tau_and_NH_at_locations(plot_anything=True, use_background=True)
