@@ -892,8 +892,17 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
-    cube_filenames = ["sofia/M16_CII_U.fits", *get_both_mol("hcn"), *get_both_mol("hcop"), "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits", "bima/M16_12CO1-0_14x14.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits", "bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
-    names = ['CII', 'HCN', 'HCN (CII beam)', 'HCO+', 'HCO+ (CII beam)', '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)', "$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)", "C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
+    cube_filenames = ["sofia/M16_CII_U.fits",
+        *get_both_mol("hcn"), *get_both_mol("hcop"),
+        "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits",
+        "bima/M16.BIMA.13co1-0.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
+        "bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
+    names = ['CII',
+        'HCN', 'HCN (CII beam)',
+        'HCO+', 'HCO+ (CII beam)',
+        '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)',
+        "$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)",
+        "C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
     short_names = ['cii',
         'hcn', 'hcnCONV',
         'hcop', 'hcopCONV',
@@ -907,7 +916,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         default_text_color = 'k'
     else:
         # colors = [marcs_colors[i] for i in [1, 5, 2]]
-        colors = ['white'] + [marcs_colors[i] for i in [1, 5, 2]]
+        colors = ['white', 'k'] + [marcs_colors[i] for i in [1, 5, 2]]
         default_text_color = 'w'
 
     """
@@ -1033,10 +1042,11 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         """
         Plot background image
         """
+        cmap = 'magma'
         if idx_for_img is not None:
             vmin = img_vlims[cube_idxs[idx_for_img]][0]
             vmax = img_vlims[cube_idxs[idx_for_img]][1] # alternatively, None for floating vmax
-            im = ax.imshow(all_imgs[idx_for_img], origin='lower', cmap='magma', vmin=vmin, vmax=vmax) # Blues
+            im = ax.imshow(all_imgs[idx_for_img], origin='lower', cmap=cmap, vmin=vmin, vmax=vmax) # Blues
         else:
             ax.imshow(np.zeros_like(all_imgs[0]), origin='lower', vmin=0, vmax=1, cmap='Greys')
 
@@ -1064,7 +1074,16 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
                 linestyles = ['--'] + ['-']*(len(levels) - 1)
                 ax.contour(all_imgs[j], colors=colors[color_idx], levels=levels, linestyles=linestyles, linewidths=0.75)
                 if i == 0:
-                    ax.text(text_x, text_y, f"{names[cube_idxs[j]]} (contour)", c=colors[color_idx], **text_kwargs)
+                    # (colors[color_idx] if not (colors[color_idx] in ('k', 'black') and ) else ...)
+                    if (colors[color_idx] in ('k', 'black')) and (idx_for_img is not None) and (cmap in ('magma', 'inferno')):
+                        # This complex case statement basically means: if you're about to throw black text on a black background, don't.
+                        # Magma and inferno have black/very dark as their low-value colors
+                        txt_color = 'white'
+                        contour_stub = '(black contours)'
+                    else:
+                        txt_color = colors[color_idx]
+                        contour_stub = '(contours)'
+                    ax.text(text_x, text_y, f"{names[cube_idxs[j]]} {contour_stub}", c=txt_color, **text_kwargs)
                 color_idx += 1
             else:
                 if i == 0:
@@ -1101,8 +1120,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         insetcax.tick_params(axis='y', colors=default_text_color)
         insetcax.yaxis.set_ticks_position('left')
     plt.subplots_adjust(hspace=0, wspace=0)
-    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15
-    fig.savefig(f"/home/ramsey/Pictures/2022-02-22/contouroverlay_{unique_label}_channelmaps.png",
+    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15, 2022-02-22
+    fig.savefig(f"/home/ramsey/Pictures/2022-03-24/contouroverlay_{unique_label}_channelmaps_{level_scaling.upper()}.png",
         metadata=catalog.utils.create_png_metadata(title=f'contours {contour_levels_multipliers} xsigma',
             file=__file__, func='channel_maps_again'))
     # plt.show()
@@ -1860,22 +1879,24 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
     # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production at 4,4
-    # vel_lims = dict(vel_start=20, vel_stop=27.5) # production at 3,5
+    vel_lims = dict(vel_start=20, vel_stop=27.5) # production at 3,5
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
     ###
     # fig_params = dict(grid_shape=(4, 4), figsize=(25, 25))
-    # fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
+    fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
     # fig_params = dict(grid_shape=(3, 5), figsize=(25, 13)) # just for the zoomed in version
     ###
-    # args = channel_maps_again('hcopCONV', 'cii', **vel_lims, **fig_params, idx_for_img=0, level_scaling='log', check_levels=False)
+    args = channel_maps_again('c18o10', 'cii', **vel_lims, **fig_params, idx_for_img=1, level_scaling='linear', check_levels=False)
 
     # highlight_threads_moment0()
 
     # pv_again(selected_set='across-wide', clip_bright=True, contour='cii')
+
     # pv_again(selected_set='along', clip_bright=True, contour='cii')
-    pv_again(selected_set='along', clip_bright=True, contour='molecular')
+    # pv_again(selected_set='along', clip_bright=True, contour='molecular')
     # pv_again(selected_set='along', clip_bright=False)
-    # gain2(selected_set=2, line_stub='cii')
+
+    # gain2(selected_set=2, line_stub='cii') #????
     # sample_spectra(0)
 
     # figure_for_hcop_linewidths()

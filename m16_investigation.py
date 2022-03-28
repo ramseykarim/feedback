@@ -560,7 +560,7 @@ def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefi
         plt.show()
 
 
-def overlaid_contours_for_offset():
+def overlaid_contours_for_offset(length_scale_mult=None):
     """
     August 6, 2021
     This is going to be very similar to the function above, the repurposed RB
@@ -588,9 +588,20 @@ def overlaid_contours_for_offset():
     try to use that to do a regrid to the proper WCS. TOMORROW
 
     Feb 15, 2022: using this for some moment0 img/contour overlays
+
+    March 25, 2022: I am looking for the code responsible for the 2021-08-13
+    images, since those are perfect rotated IRAC4 maps with CII contours. Where
+    did that code go!! It must have been this function
+    Ok Update: I found it, the Aug 13 2021 commit has that code. Turns out I was
+    reprojecting everything to the CO10 grid lol, so probably good not to return
+    to that technique. What I think I'll do is use find_optimal_celestial_wcs
+    on the cutout(length_scale_mult=4 or something) WCS with the IRAC4 pixel
+    scale and regrid to that. Hopefully that is good enough.
+    Also that day: I am embarking on a deep rewrite of this function because
+    it is not set up to do what I want to do easily (the above edits)
     """
-    selected_img = "c18o10"
-    selected_contours = ["12co10",]
+    selected_img = "irac4"
+    selected_contours = ["cii",]
     vel_lims = (19*kms, 27*kms) # marc's cubes are usually 19-27
     vel_str = f"{vel_lims[0].to_value():.1f}-{vel_lims[1].to_value():.1f} {vel_lims[0].unit}"
 
@@ -648,7 +659,7 @@ def overlaid_contours_for_offset():
         img_wcs = WCS(img_hdr, naxis=2)
         img_data = np.squeeze(img_data)
     else:
-        cube = cube_utils.CubeData(filenames[img_idx]).convert_to_K().data
+        cube = cps2.cutout_subcube(data_filename=filenames[img_idx], length_scale_mult=length_scale_mult)
         subcube = cube.spectral_slab(*vel_lims)
         nchannels = subcube.shape[0] # Not using this value but nice to have it pulled out just in case
         mom0 = subcube.moment0().to(u.K*kms)
@@ -683,7 +694,7 @@ def overlaid_contours_for_offset():
             contour_data, contour_hdr = fits.getdata(catalog.utils.search_for_file(filenames[contour_idx]), header=True)
             contour_wcs = WCS(contour_hdr, naxis=2)
         else:
-            cube = cube_utils.CubeData(filenames[contour_idx]).convert_to_K().data
+            cube = cps2.cutout_subcube(data_filename=filenames[contour_idx], length_scale_mult=length_scale_mult)
 
             subcube = cube.spectral_slab(*vel_lims)
             nchannels = subcube.shape[0]
@@ -746,11 +757,252 @@ def overlaid_contours_for_offset():
         coord.set_axislabel('')
     plt.tight_layout()
     contour_stub = "contours_" + "-".join(selected_contours)
-    # 2021-09-14, 2022-01-31, 2022-02-08
-    plt.savefig(f"/home/ramsey/Pictures/2022-02-15/{selected_img}-{contour_stub}.png",
+    ## I think I made the 2021-08-13 images with this code. Those are important!!
+    # 2021-09-14, 2022-01-31, 2022-02-08, 2022-02-15
+    plt.savefig(f"/home/ramsey/Pictures/2022-03-25/{selected_img}-{contour_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f'19-27 limits, contours {contour_levels_multipliers} xsigma',
             file=__file__, func='overlaid_contours_for_offset'))
     # plt.show()
+
+    """
+    ************************************************************************
+    ************************************************************************
+    ************************************************************************
+    ************************************************************************
+    ************************************************************************
+    ************************************************************************
+    ************************************************************************
+    ************************************************************************
+    ************************************************************************
+    """
+
+    # add selected_image and selected_contours to call signature
+    """
+    I should be able to select who is gridded to who, and who is the image
+    This should be like m16_threads.channel_maps_again, where I just list the
+    files and say which one is the image.
+    But I need special handling here to make sure everyone is RA-DEC aligned.
+    I can use the mosaic_vlt.make_wcs_like() function I wrote
+    GOD DAMNIT I ALREADY DID THIS! everything is fine now, no problemo
+    """
+
+    vel_lims = (19*kms, 27*kms) # make this an argument too
+    vel_str = make_vel_stub(vel_lims)
+    # copied from the crosscut version
+    filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
+    filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
+    get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
+    get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
+    cube_filenames = ["sofia/M16_CII_U.fits",
+        *get_both_mol("hcn"), *get_both_mol("hcop"),
+        "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits",
+        "bima/M16.BIMA.13co1-0.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
+        "bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
+    cube_names = ['CII',
+        'HCN', 'HCN (CII beam)',
+        'HCO+', 'HCO+ (CII beam)',
+        '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)',
+        "$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)",
+        "C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
+    cube_short_names = ['cii',
+        'hcn', 'hcnCONV',
+        'hcop', 'hcopCONV',
+        '12co10', '12co10CONV',
+        '13co10', '13co10CONV',
+        'c18o10', 'c18o10CONV']
+    img_2d_filenames = ["spitzer/SPITZER_I4_mosaic_ALIGNED.fits", "herschel/anonymous1603389167/1342218995/level2_5/HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz"]
+    # Herschel needs unit conversion
+    img_2d_names = ['8 $\mu$m', '70 $\mu$m']
+    img_2d_short_names = ['irac4', 'pacs70']
+
+    # ONESIGMAS
+    onesigmas = cube_utils.onesigmas
+
+    zeroth_contour_sigma = 5
+    level_scaling = 'linear'
+    if level_scaling == 'log':
+        ### Logarithmic
+        contour_stretch_base = 2
+        contour_stretch_coeff = 5
+        contour_levels_multipliers = [zeroth_contour_sigma] + [zeroth_contour_sigma + int(round(contour_stretch_coeff * contour_stretch_base**i)) for i in range(10)]
+    elif level_scaling == 'linear':
+        ### Arithmetic
+        contour_sigma_step = 5
+        contour_levels_multipliers = [zeroth_contour_sigma + contour_sigma_step*i for i in range(10)]
+    print("<CONTOURS AT (xsigma)>")
+    print(contour_levels_multipliers)
+    print('<end CONTOURS>')
+    # return
+    def make_contour_levels(sigma):
+        # sigma is 1sigma noise level after accounting for moment
+        return [sigma*n for n in contour_levels_multipliers]
+
+    vlims = [(0, None),]*3 + [(None, None),]*4 + [(None, 400), (None, None), (None, None)]
+    ##################### fix vlims
+    contour_levels = [np.linspace(1.5, 14, 7), np.linspace(30, 250, 6), None, # co10
+        np.linspace(18, 105, 7), np.linspace(5, 45, 7), # co32
+        np.linspace(20, 140, 7), np.linspace(15, 55, 5), # cii, co65
+        np.exp(np.linspace(np.log(100), np.log(1000), 10)), np.linspace(2.5, 42, 5)] # irac4, hcop
+    # cube_utils.Beam.from_fits_header(fits.getheader(file))
+
+    def format_beam_patch(beam_patch):
+        beam_patch.set_alpha(0.9)
+        beam_patch.set_facecolor('grey')
+        beam_patch.set_edgecolor('k')
+
+    if idx_for_img is None:
+        colors = [marcs_colors[i] for i in [1, 0, 2]]
+        default_text_color = 'k'
+    else:
+        # colors = [marcs_colors[i] for i in [1, 5, 2]]
+        colors = ['white', 'k'] + [marcs_colors[i] for i in [1, 5, 2]]
+        default_text_color = 'w'
+
+    # Helper function for sorting through cube/img short names
+    # Modeled/copied from m16_threads.channel_maps_again.check_idx
+    def check_idx(idx):
+        """
+        :param idx: string short_name
+        :returns: the index within the relevant list AND True if cube
+            output is: tuple(int_idx, bool_isCube)
+        """
+        if idx in cube_short_names:
+            idx = cube_short_names.index(idx)
+            return idx, True
+        elif idx in img_2d_short_names:
+            idx = img_2d_short_names.index(idx)
+            return idx, False
+        else:
+            raise RuntimeError(f"Could not find \'{idx}\' in any of the lookup lists.")
+
+    # Assume file_idxs is a list of short_names
+    # Apply the helper function check_idx to the file_idxs list
+    file_idxs = check_idx(idx) for idx in file_idxs)
+    # Now file_idxs is a list of tuple(int idxs, True if cube / False if 2d img)
+
+    def load_file(f_idx, is_cube):
+        """
+        Take the outputs from the check_idx helper function and load the file
+        :param f_idx: the int index within the relevant filename list
+        :param is_cube: True if cube, False if 2D image
+        :returns: array image, WCS object, info_dict
+            info_dict will contain
+            "unit", "name", "short_name"
+            keys with string values
+        """
+        info_dict = {}
+        if is_cube:
+            # Load cube using the length_scale_mult argument
+            cube = cps2.cutout_subcube(data_filename=cube_filenames[f_idx], length_scale_mult=length_scale_mult)
+            subcube = cube.spectral_slab(*vel_lims)
+            # Save this for uncertainty estimation
+            nchannels = subcube.shape[0]
+            mom0 = subcube.moment0().to(u.K*kms)
+            # Fill dictionary
+            info_dict['unit'] = str(mom0.unit)
+            info_dict['name'] = cube_names[f_idx]
+            info_dict['short_name'] = cube_short_names[f_idx]
+            info_dict['is_cube'] = True
+            return mom0.to_value(), mom0.wcs, info_dict
+        else:
+            # Load image
+            img_data, img_hdr = fits.getdata(catalog.utils.search_for_file(img_2d_filenames[f_idx]), header=True)
+            # Get rid of extra length-1 dimensions
+            img_data = np.squeeze(img_data)
+            # Fill dictionary
+            info_dict['unit'] = img_hdr['BUNIT']
+            info_dict['name'] = img_2d_names[f_idx]
+            info_dict['short_name'] = img_2d_short_names[f_idx]
+            info_dict['is_cube'] = False
+            # Use naxis=2 in WCS() call to ensure that WCS is 2D only
+            return img_data, WCS(img_hdr, naxis=2), info_dict
+
+
+    # Grab the first file and save the WCS info
+    img1_raw, img1_wcs, img1_info_dict = load_file(*file_idxs[0])
+    additional_imgs = []
+    footprints = []
+    plotted_short_names = []
+    info_dicts = []
+    for f_idx, is_cube in file_idxs[1:]:
+        # Load/make the 2D map for each additional cube or image
+        img, wcs_obj, info_dict = load_file(f_idx, is_cube)
+        # Reproject to the first image grid
+        img_reproj, fp = reproject_interp((img, wcs_obj), img1_wcs, shape_out=img1_raw.shape, return_footprint=True)
+        additional_imgs.append(img_reproj)
+        # This basically makes a map of True / False, since footprints are 0 or 1 (but can have fractional values I think)
+        footprints.append(fp > 0.5)
+        # Keep a couple records for easy lookup
+        plotted_short_names.append(info_dict['short_name']) # This basically recreates the original argument list
+        info_dicts.append(info_dict)
+    # Isolate area where all data is valid (get rid of NaN edges from reproject)
+    # min_cutout_sl is a tuple of slice objects
+    min_cutout_sl = misc_utils.minimum_valid_cutout(np.all(footprints, axis=0))
+    all_imgs = [img[min_cutout_sl] for img in [img1_raw]+additional_imgs]
+    del additional_imgs
+    trimmed_img_wcs = img1_wcs.slice(min_cutout_sl)
+
+    # Figure and Axes setup
+    fig = plt.figure(figsize=(10, 10))
+    ax = plt.subplot(111, projection=trimmed_img_wcs)
+
+    # Plot background image
+    cmap = 'magma'
+    vlims_for_img = dict()
+    ... # vlims
+    im = ax.imshow(all_imgs[idx_for_img], origin='lower', cmap='cividis', **vlims_for_img)
+    ax.set_title("Image: "+info_dicts[idx_for_img]['name'])
+    # Make colorbar label and be sensitive to what units we're using
+    if info_dicts[idx_for_img]['is_cube']:
+        cbar_label = 'Integrated intenstiy (' + info_dicts[idx_for_img]['unit'] + ')'
+    else:
+        cbar_label = 'Flux density (' + info_dicts[idx_for_img]['unit'] + ')'
+    cbar = fig.colorbar(im, ax=ax, label=cbar_label)
+
+    # Loop through the rest of the images (and skip the background image)
+    # Legend handles
+    handles = []
+    # Init color_idx to 0 and only increment when we actually plot contours
+    color_idx = 0 # Incremented at the end of each successful contour plotting loop
+    for i in range(len(all_imgs)):
+        if i != idx_for_img:
+            ... # Uncertainty
+            levels = None
+            linestyles = '-'
+            color_kwarg = {}
+            if len(all_imgs) > 2: # Can modify this if we ever introduce an all-contour version, since this assumes there is one background image
+                # Same color contours for multiple sets
+                color_kwarg['colors'] = colors[color_idx]
+                handles.append(mpatches.Patch(color=colors[color_idx], label=info_dicts[i]['name']))
+            else:
+                # One set of contours, so use a colormap
+                color_kwarg['cmap'] = 'hot'
+                ... # ax.text()
+            ax.contour(all_imgs[i], **color_kwarg, levels=levels, linestyles=linestyles, linewidths=0.75)
+            # Increment color_idx
+            color_idx += 1
+    if len(all_imgs) > 2:
+        plt.legend(handles=handles)
+    for coord in ax.coords:
+        coord.set_ticks_visible(False)
+        coord.set_ticklabel_visible(False)
+        coord.set_axislabel('')
+    plt.tight_layout()
+    # Get name of image layer
+    img_stub = info_dicts[idx_for_img]['name']
+    # Get name of everything except image layer (so contours)
+    contour_stub = "contours_" + '-'.join([info_dicts[i]['name'] for i in range(len(info_dicts)) if i!=idx_for_img])
+    ## I think I made the 2021-08-13 images with this code. Those are important!!
+    # 2021-09-14, 2022-01-31, 2022-02-08, 2022-02-15, 2022-03-25
+    plt.savefig(f"/home/ramsey/Pictures/2022-03-28/{img_stub}-{contour_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'19-27 limits, contours {contour_levels_multipliers} xsigma',
+            file=__file__, func='overlaid_contours_for_offset'))
+
+
+
+
+
+
 
 
 
@@ -1721,13 +1973,13 @@ if __name__ == "__main__":
     # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
 
     # compare_carma_to_sofia_pv(mol_idx=3)
-    # overlaid_contours_for_offset()
+    overlaid_contours_for_offset()
 
     # pillar_sample_spectra(0) # 6, 7 are Pillar 2
-    for i in [1]:
-        for j in range(2):
-            conv = bool(j)
-            multiple_line_moment1s(moment=i, conv=conv)
+    # for i in [1]:
+    #     for j in range(2):
+    #         conv = bool(j)
+    #         multiple_line_moment1s(moment=i, conv=conv) # this was the most recently uncommented thing on March 25, 2022
 
     # get_noise_graph('c18o10SMOOTHCONV')
 
