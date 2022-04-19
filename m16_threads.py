@@ -874,7 +874,7 @@ def emission_peak_spectra(check_peak=True):
 
 
 
-def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=None, figsize=None, idx_for_img=None, level_scaling='log', check_levels=False):
+def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=None, figsize=None, idx_for_img=None, level_scaling='log', check_levels=False, **cutout_subcube_kwargs):
     """
     Created: October 11, 2021
     Copied largely from m16_investigation.thin_channel_maps_rb
@@ -916,7 +916,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         default_text_color = 'k'
     else:
         # colors = [marcs_colors[i] for i in [1, 5, 2]]
-        colors = ['white', 'k'] + [marcs_colors[i] for i in [1, 5, 2]]
+        colors = ['cyan', 'white']
+        # colors = ['white', 'k'] + [marcs_colors[i] for i in [0, 1, 5, 2]]
         default_text_color = 'w'
 
     """
@@ -972,7 +973,9 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     # c2_idx = 2
     unique_label = "-".join([short_names[idx] for idx in cube_idxs]) + ("_img_" if idx_for_img is not None else "")
     # cubes = [cube_utils.CubeData(cube_filenames[idx]).convert_to_K().data for idx in cube_idxs]
-    cubes = [cps2.cutout_subcube(data_filename=cube_filenames[idx], length_scale_mult=2.5, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2) for idx in cube_idxs]
+
+    ############### length_scale_mult=2.5, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2 ####### these are good for focusing on p1a
+    cubes = [cps2.cutout_subcube(data_filename=cube_filenames[idx], **cutout_subcube_kwargs) for idx in cube_idxs]
     vel_start *= kms
     vel_stop *= kms
     channel_width = 0.5*kms
@@ -1042,7 +1045,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         """
         Plot background image
         """
-        cmap = 'magma'
+        cmap = 'cividis'
         if idx_for_img is not None:
             vmin = img_vlims[cube_idxs[idx_for_img]][0]
             vmax = img_vlims[cube_idxs[idx_for_img]][1] # alternatively, None for floating vmax
@@ -1075,7 +1078,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
                 ax.contour(all_imgs[j], colors=colors[color_idx], levels=levels, linestyles=linestyles, linewidths=0.75)
                 if i == 0:
                     # (colors[color_idx] if not (colors[color_idx] in ('k', 'black') and ) else ...)
-                    if (colors[color_idx] in ('k', 'black')) and (idx_for_img is not None) and (cmap in ('magma', 'inferno')):
+                    if (colors[color_idx] in ('k', 'black')) and (idx_for_img is not None) and (cmap in ('magma', 'inferno', 'cividis')):
                         # This complex case statement basically means: if you're about to throw black text on a black background, don't.
                         # Magma and inferno have black/very dark as their low-value colors
                         txt_color = 'white'
@@ -1120,8 +1123,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         insetcax.tick_params(axis='y', colors=default_text_color)
         insetcax.yaxis.set_ticks_position('left')
     plt.subplots_adjust(hspace=0, wspace=0)
-    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15, 2022-02-22
-    fig.savefig(f"/home/ramsey/Pictures/2022-03-24/contouroverlay_{unique_label}_channelmaps_{level_scaling.upper()}.png",
+    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15, 2022-02-22, 2022-03-24
+    fig.savefig(f"/home/ramsey/Pictures/2022-03-29/contouroverlay_{unique_label}_channelmaps_{level_scaling.upper()}.png",
         metadata=catalog.utils.create_png_metadata(title=f'contours {contour_levels_multipliers} xsigma',
             file=__file__, func='channel_maps_again'))
     # plt.show()
@@ -1886,7 +1889,7 @@ if __name__ == "__main__":
     fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
     # fig_params = dict(grid_shape=(3, 5), figsize=(25, 13)) # just for the zoomed in version
     ###
-    args = channel_maps_again('c18o10', 'cii', **vel_lims, **fig_params, idx_for_img=1, level_scaling='linear', check_levels=False)
+    args = channel_maps_again('12co10', 'hcop', **vel_lims, **fig_params, idx_for_img=0, level_scaling='linear', check_levels=False, length_scale_mult=None)
 
     # highlight_threads_moment0()
 

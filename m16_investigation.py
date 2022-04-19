@@ -59,6 +59,7 @@ mpl_transforms = pvdiagrams.mpl_transforms
 mpatches = pvdiagrams.mpatches
 
 make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
+make_short_vel_stub = lambda x : f"{x[0].to_value():.1f}-{x[1].to_value():.1f}"
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
@@ -560,7 +561,7 @@ def thin_channel_images_rb(c1_idx, c2_idx, vel_start=24.5, vel_stop=25.5, savefi
         plt.show()
 
 
-def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
+def overlaid_contours_for_offset(*file_idxs, idx_for_img=0, vel_lims=None,
     zeroth_contour_sigma=None, level_scaling='linear',
     contour_stretch_base=None, contour_stretch_coeff=None, contour_sigma_step=None,
     **cutout_subcube_kwargs):
@@ -611,7 +612,9 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
     GOD DAMNIT I ALREADY DID THIS! everything is fine now, no problemo
     """
 
-    vel_lims = (19*kms, 27*kms) # make this an argument too
+    if vel_lims is None or not (isinstance(vel_lims, tuple) and len(vel_lims)==2):
+        vel_lims = (19*kms, 27*kms) # make this an argument too
+        print("setting velocity limits to "+make_vel_stub(vel_lims))
     vel_str = make_vel_stub(vel_lims)
     # copied from the crosscut version
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
@@ -635,10 +638,11 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
         '12co10', '12co10CONV',
         '13co10', '13co10CONV',
         'c18o10', 'c18o10CONV']
-    img_2d_filenames = ["spitzer/SPITZER_I4_mosaic_ALIGNED.fits", "herschel/anonymous1603389167/1342218995/level2_5/HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz"]
+    img_2d_filenames = ["spitzer/SPITZER_I4_mosaic_ALIGNED.fits", "herschel/anonymous1603389167/1342218995/level2_5/HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz",
+        "herschel/anonymous1603389167/1342218995/level2_5/extdPMW/hspirepmw696_25pxmp_1823_m1335_1342218995_1342218996_1462565960474.fits.gz"]
     # Herschel needs unit conversion
-    img_2d_names = ['8 $\mu$m', '70 $\mu$m']
-    img_2d_short_names = ['irac4', 'pacs70']
+    img_2d_names = ['8 $\mu$m', '70 $\mu$m', '350 $\mu$m']
+    img_2d_short_names = ['irac4', 'pacs70', 'spire350']
 
     # Beams for PACS 70um and IRAC 8um
     img_2d_beams = {
@@ -647,6 +651,8 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
         # From table in Section 3.1 of obs manual, this means 5.86 x 12.16, PA=63
         # I will just use the geometric mean for now, as a circular beam
         'pacs70': cube_utils.Beam(np.sqrt(5.86*12.16)*u.arcsec),
+        # The SPIRE 350 resolution here I just grabbed from my second year project. I don't think I will publish with 350 but if I do I can go check to make sure
+        'spire350': cube_utils.Beam(24.9*u.arcsec),
         # IRAC "Point Response Function": https://irsa.ipac.caltech.edu/data/SPITZER/docs/irac/iracinstrumenthandbook/19/#_Toc82083619
         # PRF mean is about 2.0 arcseconds (that or slightly less)
         'irac4': cube_utils.Beam(2*u.arcsec),
@@ -738,7 +744,7 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
             # Fill dictionary
             info_dict['unit'] = str(mom0.unit)
             info_dict['abbrev_name'] = cube_names[f_idx] # for things like beam patch
-            info_dict['name'] = cube_names[f_idx] + " " + make_vel_stub(vel_lims)
+            info_dict['name'] = cube_names[f_idx] + " " + vel_str
             info_dict['short_name'] = cube_short_names[f_idx]
             info_dict['is_cube'] = True
             info_dict['nchannels'] = nchannels
@@ -839,7 +845,8 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
                 handles.append(mpatches.Patch(color=colors[color_idx], label=info_dicts[i]['name']))
             else:
                 # One set of contours, so use a colormap
-                color_kwarg['cmap'] = 'hot_r'
+                # color_kwarg['cmap'] = 'hot_r'
+                color_kwarg['cmap'] = 'Reds'
                 # color_kwarg['colors'] = 'cyan'
 
                 txt = "Contours: "+info_dicts[i]['name']
@@ -869,8 +876,8 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
     contour_stub = "contours_" + '-'.join([info_dicts[i]['short_name'] for i in range(len(info_dicts)) if i!=idx_for_img])
     ## I think I made the 2021-08-13 images with this code. Those are important!!
     # 2021-09-14, 2022-01-31, 2022-02-08, 2022-02-15, 2022-03-25
-    plt.savefig(f"/home/ramsey/Pictures/2022-03-28/{img_stub}-{contour_stub}.png",
-        metadata=catalog.utils.create_png_metadata(title=f'19-27 limits, contours {contour_levels_multipliers} xsigma',
+    plt.savefig(f"/home/ramsey/Pictures/2022-03-29/{img_stub}-{contour_stub}-{make_short_vel_stub(vel_lims)}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'{vel_str} limits, contours {contour_levels_multipliers} xsigma',
             file=__file__, func='overlaid_contours_for_offset'))
 
 
@@ -881,16 +888,31 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0,
 
 
 
-def pillar_sample_spectra(reg_idx):
+def pillar_sample_spectra(reg_idx, reg_filename_short="catalogs/pillar_samples.reg", show_positions=False):
     """
     June 1, 2021
     In prep for the meeting with Nicola tomorrow, I want to look at spectra of CO 1-0, 3-2, 6-5, and CII towards the head of P1
     I want to see if CII is more redshifted than CO or just broader
     I have a region file called pillar_samples.reg with relevant samples
     The code from cii_systematic_emission_2 can be copied and modified into this file
+
+    I think I modified this file on March 2, 2022 (during Arrowhead) and I am
+    modifying it again on March 30, 2022 (for paper). I want to make sure it's
+    only using 14'' resolution spectra and is just using single pixels and not
+    averaging over another circle (complicating the beam)
     """
-    reg_filename_short = "catalogs/pillar_samples.reg"
-    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    reg_list_raw = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    reg_list = []
+    for reg in reg_list_raw:
+        if isinstance(reg, regions.PointSkyRegion):
+            new_reg = regions.CircleSkyRegion(reg.center, radius=7*u.arcsec, meta=reg.meta, visual=reg.visual)
+            reg_list.append(new_reg)
+        else:
+            reg_list.append(reg)
+
+    # for reg in reg_list:
+    #     print(reg.meta['text'])
+    # return
 
     ### APEX beam set
     # cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits",
@@ -916,27 +938,47 @@ def pillar_sample_spectra(reg_idx):
     # reference_filename = catalog.utils.search_for_file("apex/M16_12CO6-5_mom0.fits") # smaller test reference file
     # reference_name = "12CO(6-5)"
 
+    fig = plt.figure(figsize=(15, 7)) # originally (18, 10)
+
+    ref_img, ref_hdr = fits.getdata(reference_filename, header=True)
+    ref_wcs = WCS(ref_hdr)
+    if show_positions:
+        # only the reference image
+        ax_img = plt.subplot2grid((1, 1), (0, 0), projection=ref_wcs)
+    else:
+        # grid, make room for spectra
+        ax_img = plt.subplot2grid((1, 5), (0, 0), projection=ref_wcs)
+    im = ax_img.imshow(ref_img, origin='lower', cmap='Greys_r', vmin=0.1, vmax=0.6)
+    fig.colorbar(im, ax=ax_img)
+    ax_img.set_title(reference_name)
+
+
+    if show_positions:
+        # plot every region with labels, and then exit without making spectra
+        # This is just for me to visualize where the regions are
+        for i, reg in enumerate(reg_list):
+            pixreg = reg.to_pixel(ref_wcs)
+            pix_center = pixreg.center.xy
+            # pix_radius = pixreg.radius
+            ax_img.text(*pix_center, f"{i}", color='r', fontsize=11, ha='center', va='center')
+            pixreg.plot(ax=ax_img, color='r')
+            # ax_img.plot(pix_center[0], pix_center[1], color='r', marker='x')
+        plt.show()
+        # Exit the function
+        return
+
+    # Get the region
+    # reg_idx = 0
+    reg = reg_list[reg_idx]
+
+    # Velocity limits and text
     if reg_idx < 6:
         pillar_vel_limits = (22.5*kms, 27.5*kms)
     # elif reg_idx == : # not sure what this was from
     #     pillar_vel_limits = (20*kms, 27.5*kms)
     else:
         pillar_vel_limits = (19*kms, 24*kms)
-
     pillar_vel_stub = make_vel_stub(pillar_vel_limits)
-
-    fig = plt.figure(figsize=(15, 7)) # originally (18, 10)
-
-    ax_img = plt.subplot2grid((1, 5), (0, 0))
-    ref_img, ref_hdr = fits.getdata(reference_filename, header=True)
-    ref_wcs = WCS(ref_hdr)
-    im = ax_img.imshow(ref_img, origin='lower', cmap='Greys_r', vmin=0.1, vmax=0.6)
-    fig.colorbar(im, ax=ax_img)
-    ax_img.set_title(reference_name)
-
-
-    # reg_idx = 0
-    reg = reg_list[reg_idx]
 
     ax_spec = plt.subplot2grid((1, 5), (0, 1), colspan=4, rowspan=1)
     def add_spectrum(cube, spec_ax, reg, idx, cii=False):
@@ -972,6 +1014,7 @@ def pillar_sample_spectra(reg_idx):
     # if reg_idx < 4:
     #     ax_spec.text(0.7, 0.6, "Mean velocity taken from\nwithin shaded velocity range", color='k', fontsize=11, ha='left', va='bottom', transform=ax_spec.transAxes)
     pixreg.plot(ax=ax_img, color='r')
+    ax_img.plot(pix_center[0], pix_center[1], color='r', marker='x')
 
 
     # spec_ylim = (-1, 50) # CII
@@ -989,8 +1032,8 @@ def pillar_sample_spectra(reg_idx):
     ax_spec.set_ylabel("Line intensity (K)")
     ax_spec.set_title("Line spectra (14\" beam) averaged over selected position")
     # plt.show()
-    # 2021-06-03 (jupiter),
-    fig.savefig(f"/home/ramsey/Pictures/2022-03-02/pillar_samples_{reg_idx}.png",
+    # 2021-06-03 (jupiter), 2022-03-02 (laptop)
+    fig.savefig(f"/home/ramsey/Pictures/2022-03-30/pillar_samples_{reg_idx}.png",
         metadata=catalog.utils.create_png_metadata(title=f"region {reg_idx} from {reg_filename_short}",
             file=__file__, func='pillar_sample_spectra'))
 
@@ -1848,9 +1891,12 @@ if __name__ == "__main__":
     # thin_channel_images_rb('cii', 'co10CONV', savefig=1, **vel_lims)
 
     # compare_carma_to_sofia_pv(mol_idx=3)
-    overlaid_contours_for_offset('pacs70', 'cii', zeroth_contour_sigma=15, contour_sigma_step=15, length_scale_mult=3, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
+    #### For CII i used zcs=15, css=15, lsm=3, reg=m16_lines_of_interest, regidx=7
+    #### For 12CO I used zcs=7 (or 5), css=5, lsm=None, rest same as above
+    # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
-    # pillar_sample_spectra(0) # 6, 7 are Pillar 2
+    reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    pillar_sample_spectra(None, show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
     # for i in [1]:
     #     for j in range(2):
     #         conv = bool(j)
