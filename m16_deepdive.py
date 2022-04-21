@@ -23,6 +23,7 @@ if __name__ == "__main__":
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.ticker as ticker
+from matplotlib.colors import LogNorm
 import sys
 import os
 import glob
@@ -1723,6 +1724,131 @@ def plot_selected_hcop_AND_CII_spectra():
             file=__file__, func='plot_selected_hcop_AND_CII_spectra'))
 
 
+
+def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version='3'):
+    """
+    April 19, 2022
+    I want to make a sort of 3d viz but for the paper. So not really 3d.
+    Probably just two 2d histograms, one along RA and one along Dec.
+    Copying a lot of setup boilerplate from
+    cube_pixel_spectra_2.investigate_template_model_fit (written Nov 17, 2021)
+    Hopefully this looks okay
+
+    I have an idea for a third panel, where I can just make an RA/Dec map of
+    the number of acceptable component fits (so amplitude > some cutoff, etc)
+    to show where the model fit "flips" from 3 component to 2 component.
+    I could use that in the paper as some evidence for a different type of
+    gas interaction (or at least observational obstacle) in that region.
+    """
+    if line[:4] == 'hcop':
+        directory = "carma"
+        if version is None:
+            if line == 'hcop':
+                version = 2
+            elif line == 'hcop_regrid':
+                version = 3
+    else:
+        directory = 'sofia'
+        if version is None:
+            version = 1
+    filename_stub = f"{directory}/models/gauss_fit_{line}_{n_submodels}G_v{version}"
+    param_fn = catalog.utils.search_for_file(filename_stub+".param.fits")
+    # resid_fn = catalog.utils.search_for_file(filename_stub+".resid.fits")
+    # model_fn = catalog.utils.search_for_file(filename_stub+".model.fits")
+    hdul = fits.open(param_fn)
+    print(list(hdu.header['EXTNAME'] for hdu in hdul if 'EXTNAME' in hdu.header))
+    # resid_cube = cube_utils.SpectralCube.read(resid_fn)
+    # model_cube = cube_utils.SpectralCube.read(model_fn)
+    means = []
+    amplitudes = []
+    shape = hdul[1].data.shape
+    ii, jj = tuple(x.ravel() for x in np.mgrid[0:shape[0], 0:shape[1]])
+    i_array = []
+    j_array = []
+    if n_submodels > 1:
+        for k in range(n_submodels):
+            means.extend(hdul[f'mean_{k}'].data[:].ravel())
+            amplitudes.extend(hdul[f'amplitude_{k}'].data[:].ravel())
+            i_array.extend(ii)
+            j_array.extend(jj)
+    else:
+        means = list(hdul['mean'].data[:].ravel())
+        amplitudes = list(hdul['amplitude'].data[:].ravel())
+        i_array = list(ii)
+        j_array = list(jj)
+
+    means = np.array(means)
+    amplitudes = np.array(amplitudes)
+    i_array = np.array(i_array)
+    j_array = np.array(j_array)
+    if line == 'hcop':
+        amp_cutoff = 2.5
+    elif line == 'hcop_regrid':
+        amp_cutoff = 0.6
+    else:
+        amp_cutoff = 5
+    amp_mask = amplitudes > amp_cutoff # about 5sigma
+    means = means[amp_mask]
+    amplitudes = amplitudes[amp_mask]
+    i_array = i_array[amp_mask]
+    j_array = j_array[amp_mask]
+
+    fig = plt.figure()
+    ax1 = plt.subplot(221)
+    ax2 = plt.subplot(223)
+    ax3 = plt.subplot(224)
+    # ax.hist(means, bins=256, range=(20, 30))
+    im1 = ax1.hist2d(j_array, means, bins=64)[3]
+    fig.colorbar(im1, ax=ax1)
+    # ax1.set_xlabel("RA")
+    ax1.set_ylabel("Velocity (km/s)")
+    # ax.invert_xaxis()
+
+    im2 = ax2.hist2d(j_array, i_array, bins=64)[3]
+    fig.colorbar(im2, ax=ax2)
+    ax2.set_xlabel("RA")
+    ax2.set_ylabel("Dec")
+
+    im3 = ax3.hist2d(means, i_array, bins=64)[3]
+    fig.colorbar(im3, ax=ax3)
+    ax3.set_xlabel("Velocity (km/s)")
+    ax3.set_ylabel("Dec")
+
+
+    plt.show()
+    # elif True:
+    #     from mayavi import mlab
+    #     mlab.figure(bgcolor=(0.2, 0.2, 0.2), fgcolor=(0.93, 0.93, 0.93), size=(800, 700))
+    #     mlab.axes(ranges=[0, shape[1], 0, shape[0], 20, 30],
+    #         xlabel='j (ra)', ylabel='i (dec)', zlabel='velocity (km/s)', nb_labels=10,
+    #         line_width=19)
+    #     kwargs = dict(mode='cube', colormap='jet',
+    #         scale_mode='none', scale_factor=0.7, opacity=0.2)
+    #     mlab.points3d(j_array, i_array, -1*means*(30 if line=='hcop' else 4), amplitudes, **kwargs)
+    #     mlab.show()
+
+
+def correlations_between_carma_molecule_intensities(molX, molY, integrated=False):
+    """
+    April 20, 2022 (at 4:23 PM)
+    Correlate the intensities of the carma molecules so that I can say
+    stuff in the paper
+    """
+    fn_template = lambda x : f"carma/M16.ALL.{x}.sdi.cm.subpv.fits"
+    cubeX, cubeY = (cps2.cutout_subcube(data_filename=fn_template(x), length_scale_mult=None) for x in (molX, molY))
+    arrX, arrY = (cube.unmasked_data[:].to_value().flatten() for cube in (cubeX, cubeY))
+    fig = plt.figure()
+    ax = plt.subplot(111, aspect='equal')
+    ax.hist2d(arrX, arrY, bins=128, norm=LogNorm())
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    ax.plot(xlim, xlim)
+    # ax.scatter(arrX, arrY, marker='.', alpha=0.5)
+    ax.set_xlabel(f"{molX} intensity (K)")
+    ax.set_ylabel(f"{molY} intensity (K)")
+    plt.show()
+
+
+
 if __name__ == "__main__":
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
@@ -1739,7 +1865,11 @@ if __name__ == "__main__":
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
     # fit_molecular_and_cii_with_gaussians()
-    easy_pv_2()
+
+    # easy_pv_2() # most recently uncommented until Apr 19, 2022
+
+    # make_3d_fit_viz_in_2d(3, line='hcop', version=2) # working on this april 19, 2022
+    correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
     # test_fitting_uncertainties_with_emcee(which_line='cii')
     # investigate_emcee_result('cii')

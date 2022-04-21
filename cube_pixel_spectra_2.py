@@ -677,7 +677,7 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
 
 
 def fit_live_interactive(cube, template_model=None, double=False, mask=True, noise=None,
-        ylim_min=-3, ylim_max=23, n_params=None, live_intercept=None):
+        ylim_min=-3, ylim_max=23, n_params=None, live_intercept=None, invert_xaxis=False):
     """
     INTERACTIVE fitting and plotting
     :param cube: the cube to fit to
@@ -729,6 +729,8 @@ def fit_live_interactive(cube, template_model=None, double=False, mask=True, noi
 
     ax_spectr.plot(spectral_axis, masked_cube.mean(axis=(1, 2)).to(u.K).to_value(), linewidth=0.7)
     ax_spectr.set_xlim((spectral_axis[0], spectral_axis[-1]))
+    if invert_xaxis:
+        ax_spectr.invert_xaxis()
 
     fitter = fitting.LevMarLSQFitter(calc_uncertainties=True)
     plot_info_dict = {'x1': None, 'x2': None, 'currently_selecting': False}
@@ -934,7 +936,8 @@ def identify_longest_run(spec_mask, spectral_axis=None):
     return return_mask
 
 
-def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=None):
+def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=None,
+    skip_low_emission=False):
     """
     Do the big fit
     :param cube: the cube to fit
@@ -957,6 +960,7 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
         masked_cube = cube
     init_conds = prepare_initial_conditions(cube, masked_cube)
     spectral_axis = init_conds['spectral_axis']
+    cube_dv = np.abs((spectral_axis[1] - spectral_axis[0]))
     fitter = fitting.LevMarLSQFitter(calc_uncertainties=True)
     if template_model is None:
         g_init = models.Gaussian1D(7, 25, 0.46, bounds={'amplitude': (0, 50), 'mean': (22, 28), 'stddev': (1, 3.5)})
@@ -985,6 +989,16 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
     for flat_idx in range(masked_cube.shape[1]*masked_cube.shape[2]):
         # Convert the flat index to the 2D image index
         i, j = np.unravel_index(flat_idx, masked_cube.shape[1:])
+
+        if skip_low_emission:
+            # Check if there's significant emission in this spectrum
+            integrated_emission = np.sum(masked_cube.unmasked_data[:, i, j].to_value())
+            moment_noise = noise * cube_dv * np.sqrt(masked_cube.shape[0])
+            if integrated_emission < 3*moment_noise:
+                results[:, i, j] = np.nan
+                residuals_array[:, i, j] = np.nan
+                models_array[:, i, j] = np.nan
+                continue
 
         if template_model is None:
             g_init = initialize_gaussian(init_conds, g_init, (i, j))
@@ -1021,7 +1035,7 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
     print(f"Finished at {datetime.datetime.now(datetime.timezone.utc).astimezone().ctime()}")
     print(f"Time elapsed: {str(datetime.timedelta(seconds=(timing_t1-timing_t0)))}")
 
-    filename_stub = "models/gauss_fit_hcop_regrid_2G_v3"
+    filename_stub = "models/gauss_fit_13co10_3G_v1"
     param_units = ['K', 'km / s', 'km / s'] * ((int(double) + 1) if template_model is None else g_init.n_submodels)
     wcs_flat = cube.moment(order=0).wcs
     to_header = lambda : wcs_flat.to_header()
@@ -1030,7 +1044,7 @@ def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=
     phdu.header['CREATOR'] = f"Ramsey, {__file__}"
     phdu.header['COMMENT'] = f"Fit with best masking settings right now."
     # phdu.header['COMMENT'] = "Using a confusing weight scheme.."
-    phdu.header['COMMENT'] = "Cutout with length_scale_mult 1.5"
+    phdu.header['COMMENT'] = "Cutout with length_scale_mult 2"
     hdu_list = [phdu]
     for i in range(n_params):
         hdu = fits.ImageHDU(data=results[i], header=to_header())
@@ -1362,10 +1376,18 @@ def investigate_template_model_fit(n_submodels=3, line='hcop', version='3'):
                 version = 2
             elif line == 'hcop_regrid':
                 version = 3
-    else:
+        # vel_coeff just stretches out the velocity axis, like an aspect ratio
+        vel_coeff = 30
+    elif line[:3] == 'cii':
         directory = 'sofia'
         if version is None:
             version = 1
+        vel_coeff = 4
+    elif line == '13co10':
+        directory = 'bima'
+        if version is None:
+            version = 1
+        vel_coeff = 30
     filename_stub = f"{directory}/models/gauss_fit_{line}_{n_submodels}G_v{version}"
     param_fn = catalog.utils.search_for_file(filename_stub+".param.fits")
     # resid_fn = catalog.utils.search_for_file(filename_stub+".resid.fits")
@@ -1420,7 +1442,7 @@ def investigate_template_model_fit(n_submodels=3, line='hcop', version='3'):
             line_width=19)
         kwargs = dict(mode='cube', colormap='jet',
             scale_mode='none', scale_factor=0.7, opacity=0.2)
-        mlab.points3d(j_array, i_array, -1*means*(30 if line=='hcop' else 4), amplitudes, **kwargs)
+        mlab.points3d(j_array, i_array, -1*means*vel_coeff, amplitudes, **kwargs)
         mlab.show()
 
 
@@ -1893,22 +1915,26 @@ if __name__ == "__main__":
 
     # test_cii_background()
 
-    if False:
+    if True:
         #### HCOP
-        regrid = False
-        if regrid:
-            subcube = cutout_subcube(length_scale_mult=None, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits")
-            noise = 0.12
-            stddev = 0.55
-        else:
-            subcube = cutout_subcube(length_scale_mult=1.5, data_filename=f"carma/M16.ALL.hcop.sdi.cm.subpv.fits",
-                reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
-            noise = 0.546
-            stddev = 0.46
+        # regrid = False
+        # if regrid:
+        #     subcube = cutout_subcube(length_scale_mult=None, data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits")
+        #     noise = 0.12
+        #     stddev = 0.55
+        # else:
+        #     subcube = cutout_subcube(length_scale_mult=1.5, data_filename=f"carma/M16.ALL.hcop.sdi.cm.subpv.fits",
+        #         reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+        #     noise = 0.546
+        #     stddev = 0.46
         #### 12CO10
-        # subcube = cutout_subcube(length_scale_mult=1.5, data_filename="bima/M16_12CO1-0_7x4.Kkms.fits", reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
-        # noise = 6 # units: K. Checked this on 2022-01-11
+        # subcube = cutout_subcube(length_scale_mult=3, data_filename="bima/M16_12CO1-0_7x4.Kkms.fits", reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+        # noise = 6.2 # units: K. Checked this on 2022-01-11, 2022-04-21
         # stddev = 0.46
+        #### 13CO10
+        subcube = cutout_subcube(length_scale_mult=2, data_filename="bima/M16.BIMA.13co1-0.fits", reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
+        noise = 2.6 # units: K. Checked this on 2022-04-21
+        stddev = 0.46
         #### CII
         # subcube = cutout_subcube(length_scale_mult=1.5, reg_filename="catalogs/p1_IDgradients_thru_head.reg", reg_index=2)
         # cii_bg_spectrum = get_cii_background()
@@ -1927,7 +1953,7 @@ if __name__ == "__main__":
 
     # check_if_wings_trace_peak_emission(subcube)
 
-    if False:
+    if True:
         #############
         ##### TEMPLATE MODEL SETUP
         #############
@@ -1940,7 +1966,11 @@ if __name__ == "__main__":
             bounds={'amplitude': (0, None), 'mean': (20, 30), 'stddev': (0.3, 1.3)})
         g1 = g0.copy()
         g1.mean = 25.5
-        g_init = g0 + g1
+
+        g2 = g0.copy()
+        g2.mean = 23
+
+        g_init = g0 + g1 + g2
         # fix_std(g_init)
         tie_std_models(g_init)
         print(g_init)
@@ -1951,23 +1981,23 @@ if __name__ == "__main__":
         # g_init.stddev_0 = 1.1
         #############
 
-    # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=0.12)
+    # fit_image_to_file(subcube, mask=False, template_model=g_init, noise=noise, skip_low_emission=True)
 
 
     # live_intercept_dict = {'ij': None}
     # fit_live_interactive(subcube, mask=False, template_model=g_init, noise=noise,
-    #     ylim_min=-3, ylim_max=25, n_params=6, live_intercept=live_intercept_dict) # noise from: (125, 32) at length_scale_mult=1
+    #     ylim_min=-10, ylim_max=50, n_params=7, live_intercept=live_intercept_dict) # noise from: (125, 32) at length_scale_mult=1
 
         ## HCOP noise: 0.546, CII noise: ~1, HCOP at CII grid noise: 0.12
 
 
     # investigate_fit(subcube, double=False, template_model=g_init,
-    #     filename_stub="models/gauss_fit_hcop_3G_v2",
-    #     ylim_max=25, show='mom0')
+    #     filename_stub="models/gauss_fit_13co10_3G_v1",
+    #     ylim_max=50, show='mom0')
 
-    # investigate_template_model_fit(2, line='cii', version=2)
+    investigate_template_model_fit(3, line='13co10', version=1)
 
-    regrid_hcop()
+    # regrid_hcop()
 
     # stack_pillar_spectra(subcube)
     # fit_multicube_live_interactive(*subcubes)

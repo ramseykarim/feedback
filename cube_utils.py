@@ -38,6 +38,15 @@ onesigmas = { # all values in K. These are the 1sigma noise levels, which contou
     'c18o10': 0.66, 'c18o10CONV': 0.40, # c18o10/conv
 }
 
+cubenames = {
+    'cii': '[C II]',
+    'hcn': 'HCN(1-0)', 'hcnCONV': 'HCN(1-0) (CII beam)',
+    'hcop': 'HCO+(1-0)', 'hcopCONV': 'HCO+(1-0) (CII beam)',
+    '12co10': '$^{12}$CO(1-0)', '12co10CONV': '$^{12}$CO(1-0) (CII beam)',
+    '13co10': "$^{13}$CO(1-0)", '13co10CONV': "$^{13}$CO(1-0) (CII beam)",
+    'c18o10': "C$^{18}$O(1-0) (smooth)", 'c18o10CONV': "C$^{18}$O(1-0) (CII beam, smooth)",
+    'n2hp': 'N$_2$H+(1-0)', 'cs': 'CS(2-1)',
+}
 
 
 def beam_area(theta_a, theta_b):

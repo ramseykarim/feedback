@@ -1137,10 +1137,41 @@ def irac8um_to_cii_figure():
     print()
 
 
+def simple_mom0_carma_molecules(line_name, pacs70_reproj=None):
+    """
+    April 21, 2022
+    Lee wanted to see integrated intensity maps of M16
+    """
+    fn_template = lambda x : f"carma/M16.ALL.{x}.sdi.cm.subpv.fits"
+    cube = cps2.cutout_subcube(data_filename=fn_template(line_name), length_scale_mult=None)
+    mom0 = cube.moment0().to(u.K*kms)
+    nchannels = cube.shape[0]
+    cube_dv = np.abs(np.diff(cube.spectral_axis[:2])[0].to(kms).to_value())
+    channel_noise = cube_utils.onesigmas[line_name]
+    moment_noise = cube_dv * channel_noise * np.sqrt(nchannels)
+    if pacs70_reproj is None:
+        pacs70_fn = catalog.utils.search_for_file("herschel/anonymous1603389167/1342218995/level2_5/HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz")
+        pacs70_img, pacs70_hdr = fits.getdata(pacs70_fn, header=True)
+        pacs70_reproj = reproject_interp((pacs70_img, pacs70_hdr), mom0.wcs, shape_out=mom0.shape, return_footprint=False)
+    fig = plt.figure(figsize=(8, 8))
+    ax = plt.subplot(111, projection=mom0.wcs)
+    im = ax.imshow(np.arcsinh(pacs70_reproj), origin='lower', cmap='Greys')
+    fig.colorbar(im, ax=ax)
+    levels = [i*moment_noise for i in range(3, 100, 10)]
+    linestyles = ['--'] + ['-']*(len(levels) - 1)
+    ax.contour(mom0.to_value(), colors=marcs_colors[0], linewidths=1.5, linestyles=linestyles, levels=levels)
+    ax.set_xlabel("RA")
+    ax.set_ylabel("Dec")
+    ax.set_title(cube_utils.cubenames[line_name] + " Integrated intensity contours on PACS 70um image")
+    plt.show()
+
+
 if __name__ == "__main__":
     # m16_channel_maps()
     # save_fits_thin_channel_maps()
-    single_parallel_pillar_pvs()
+    # single_parallel_pillar_pvs() # most recently uncommented (april 21, 2022)
+
+    simple_mom0_carma_molecules('hcop')
 
     # justify_background_figure()
     # background_samples_figure_molecular()
