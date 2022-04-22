@@ -904,6 +904,19 @@ def fit_molecular_and_cii_with_gaussians():
     Use the pillar1_emissionpeaks.hcopregrid.moreprecise.reg and p1_threads_pathsandpoints.reg regions for fitting
     Jan 20, 2022 about to try to use this as production quality figure
     The coding I did to smash two regions into this plot is some of my worst work yet
+
+    April 21, 2022: I want to rewrite this entire thing, it looks so bad
+    I want to use it for comparing 13co10 to hcop and cii all at once,
+    so I should convert the entire thing into a loop over some lines.
+    I will drop the constraint that the spectral axes have to match; not great,
+    but I'm not regridding 13co10, that's too much work for 1 or 2 plots.
+    I will use Point regions to select spectra.
+    I should just loop through each line and fit the template model to the
+    spectrum. I can make a few versions for different template models and stitch
+    them together in Google slides if I really want to.
+    I probably only need 1 comp. free, 2 comp. free, and 3 comp. fixed/tied std.
+    Also, should standardize the way I put in regions (commented filenames
+    are messy)
     """
     # reg_filename_short = "catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg" # order appears to be [HCO+, CII]
     # reg_filename_short = "catalogs/p1_threads_pathsandpoints.reg" # order appears to be North-E, North-W, South-E, South-W
