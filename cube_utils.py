@@ -31,11 +31,13 @@ the same noise values across all functions.
 """
 onesigmas = { # all values in K. These are the 1sigma noise levels, which contours will be based on
     'cii': 1.0, # CII (might be 1.2 but sampling that really dark area shows 1 and that seems good to me)
-    'hcn': 0.57, 'hcnCONV': 0.27, # HCN -- haven't checked yet, not gonna use it
+    'hcn': 0.55, 'hcnCONV': 0.26, # HCN: I finally checked it, it is very close to HCO+
     'hcop': 0.57, 'hcopCONV': 0.27, # HCO+/conv
     '12co10': 6.2, '12co10CONV': 2.0, # 12co10/conv
     '13co10': 2.6, '13co10CONV': 0.7, # 13co10/conv
     'c18o10': 0.66, 'c18o10CONV': 0.40, # c18o10/conv
+    'n2hp': 0.56, 'n2hpCONV': 0.24, # Finally checked these on April 25 and 26, 2022
+    'cs': 0.60, 'csCONV': 0.24, # Both cs and n2hp CONV are 0.24, it's not just copy-paste
 }
 
 cubenames = {
@@ -45,7 +47,22 @@ cubenames = {
     '12co10': '$^{12}$CO(1-0)', '12co10CONV': '$^{12}$CO(1-0) (CII beam)',
     '13co10': "$^{13}$CO(1-0)", '13co10CONV': "$^{13}$CO(1-0) (CII beam)",
     'c18o10': "C$^{18}$O(1-0) (smooth)", 'c18o10CONV': "C$^{18}$O(1-0) (CII beam, smooth)",
-    'n2hp': 'N$_2$H+(1-0)', 'cs': 'CS(2-1)',
+    'n2hp': 'N$_2$H+(1-0)', 'n2hpCONV': 'N$_2$H+(1-0) (CII beam)',
+    'cs': 'CS(2-1)', 'csCONV': 'CS(2-1) (CII beam)',
+}
+
+
+carma_template = lambda mol, conv : f"carma/M16.ALL.{mol}.sdi.cm.subpv" + ('.SOFIAbeam' if conv else '') + ".fits"
+cubefilenames = {
+    'cii': "sofia/M16_CII_U.fits",
+    'hcn': carma_template('hcn', False), 'hcnCONV': carma_template('hcn', True),
+    'hcop': carma_template('hcop', False), 'hcopCONV': carma_template('hcop', True),
+    'n2hp': carma_template('n2hp', False), 'n2hpCONV': carma_template('n2hp', True),
+    'cs': carma_template('cs', False), 'csCONV': carma_template('cs', True),
+    '12co10': "bima/M16_12CO1-0_7x4.fits", '12co10CONV': "bima/M16_12CO1-0_14x14.fits",
+    '13co10': "bima/M16.BIMA.13co1-0.fits", '13co10CONV': "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
+    'c18o10': "bima/M16.BIMA.c18o.cm.SMOOTH.fits", 'c18o10CONV': "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits",
+
 }
 
 

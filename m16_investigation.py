@@ -213,6 +213,7 @@ def convolve_carma_to_sofia():
     I want to see if they're visible at SOFIA ~14x14 resolution and compare to
     SOFIA.
     Reused September 21, 2021 for 13CO and C18O (1-0), roughly the same code
+    Reused April 26, 2022 to do N2H+ and CS
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     """
@@ -224,8 +225,8 @@ def convolve_carma_to_sofia():
     cube_cii = SpectralCube.read(fn)
     cube_cii._unit = u.K
 
-    # cube_mol = cube_utils.CubeData([f for f in filepaths if 'hcop' in f].pop())
-    cube_mol = cube_utils.CubeData("bima/M16.BIMA.c18o.cm.fits").convert_to_K()
+    cube_mol = cube_utils.CubeData([f for f in filepaths if 'n2hp' in f].pop())
+    # cube_mol = cube_utils.CubeData("bima/M16.BIMA.c18o.cm.fits").convert_to_K()
     write_path, original_mol_fn = os.path.split(cube_mol.full_path)
     write_fn = original_mol_fn.replace('.fits', '.SOFIAbeam.fits')
     print(write_path)
@@ -1762,6 +1763,8 @@ def get_noise_graph(data_filename=None):
     if data_filename is not None:
         if data_filename in data_filenames:
             data_filename = data_filenames[data_filename]
+        else:
+            data_filename = cube_utils.cubefilenames[data_filename]
     else:
         data_filename = data_filenames['cii']
     cube = cps2.cutout_subcube(data_filename=data_filename, length_scale_mult=None)
@@ -1895,14 +1898,16 @@ if __name__ == "__main__":
     #### For 12CO I used zcs=7 (or 5), css=5, lsm=None, rest same as above
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
-    reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
-    pillar_sample_spectra(None, show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    # pillar_sample_spectra(None, show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+
     # for i in [1]:
     #     for j in range(2):
     #         conv = bool(j)
     #         multiple_line_moment1s(moment=i, conv=conv) # this was the most recently uncommented thing on March 25, 2022
 
-    # get_noise_graph('c18o10SMOOTHCONV')
+    get_noise_graph('csCONV')
+    get_noise_graph('n2hpCONV')
 
     # convolve_carma_to_sofia()
     # identify_components_with_co()

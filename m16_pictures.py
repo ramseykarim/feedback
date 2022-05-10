@@ -1142,8 +1142,10 @@ def simple_mom0_carma_molecules(line_name, pacs70_reproj=None):
     April 21, 2022
     Lee wanted to see integrated intensity maps of M16
     """
-    fn_template = lambda x : f"carma/M16.ALL.{x}.sdi.cm.subpv.fits"
-    cube = cps2.cutout_subcube(data_filename=fn_template(line_name), length_scale_mult=None)
+    if line_name == 'cii':
+        cube = cps2.cutout_subcube(length_scale_mult=10)
+    else:
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], length_scale_mult=None)
     mom0 = cube.moment0().to(u.K*kms)
     nchannels = cube.shape[0]
     cube_dv = np.abs(np.diff(cube.spectral_axis[:2])[0].to(kms).to_value())
@@ -1155,15 +1157,209 @@ def simple_mom0_carma_molecules(line_name, pacs70_reproj=None):
         pacs70_reproj = reproject_interp((pacs70_img, pacs70_hdr), mom0.wcs, shape_out=mom0.shape, return_footprint=False)
     fig = plt.figure(figsize=(8, 8))
     ax = plt.subplot(111, projection=mom0.wcs)
-    im = ax.imshow(np.arcsinh(pacs70_reproj), origin='lower', cmap='Greys')
-    fig.colorbar(im, ax=ax)
-    levels = [i*moment_noise for i in range(3, 100, 10)]
+    im = ax.imshow(np.arcsinh(pacs70_reproj), origin='lower', cmap='Greys', vmin=0.6, vmax=1.6)
+    fig.colorbar(im, ax=ax, label='PACS 70 micron (arcsinh Jy/pixel)')
+    if line_name in ['hcop', 'hcn', 'cs', 'n2hp']:
+        levels = [(i**2)*moment_noise for i in range(1, 9, 1)] # carma
+    elif line_name in ['13co10', 'c18o10']:
+        levels = [(i)*moment_noise for i in range(1, 100, 2)] # 13 and 18 co
+    elif line_name == '12co10':
+        levels = [(i)*moment_noise for i in range(1, 100, 5)] # 12 co
+    elif line_name == 'cii':
+        levels = [i*moment_noise for i in range(10, 200, 6)]
+    else:
+        raise RuntimeError("Haven't hardcoded " + line_name + " yet")
     linestyles = ['--'] + ['-']*(len(levels) - 1)
-    ax.contour(mom0.to_value(), colors=marcs_colors[0], linewidths=1.5, linestyles=linestyles, levels=levels)
+    ax.contour(mom0.to_value(), colors=marcs_colors[0], linewidths=1, linestyles=linestyles, levels=levels)
     ax.set_xlabel("RA")
     ax.set_ylabel("Dec")
-    ax.set_title(cube_utils.cubenames[line_name] + " Integrated intensity contours on PACS 70um image")
+    ax.set_title("Integrated " + cube_utils.cubenames[line_name] + " contours on PACS70", fontsize=10)
+
+
+    patch = cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(mom0.wcs))
+    patch.set_alpha(0.9)
+    patch.set_facecolor('white')
+    patch.set_edgecolor('grey')
+    ax.add_artist(patch)
+
+    plt.savefig(f"/home/ramsey/Pictures/2022-04-25/{line_name}-moment0.pdf")
+
+
+def overlay_every_spectrum():
+    """
+    April 26, 2022
+    Quick look at overlaying every spectrum (which I am using above) just to see
+    where all the emission is. The spectra will be averaged across the field of
+    the pillars (length_scale_mult=10 or so)
+    """
+    line_names_list = ['hcop', 'hcn', 'cs', 'n2hp', '12co10', 'cii']
+    fig = plt.figure(figsize=(10, 7))
+    ax = plt.subplot(111)
+    for line_name in line_names_list:
+        if line_name == 'cii':
+            cube = cps2.cutout_subcube(length_scale_mult=10)
+        else:
+            cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], length_scale_mult=None) #.spectral_slab(18*kms, 27*kms)
+        cube_x = cube.spectral_axis.to_value()
+        mom0 = cube.moment0()
+        noise = np.sqrt(cube.shape[0]) * cube_utils.onesigmas[line_name] * np.abs(cube_x[1] - cube_x[0])
+        mask = mom0 > 3*noise*u.K*kms
+        spectrum = cube.with_mask(mask).mean(axis=(1, 2)).to_value()
+        # spectrum /= spectrum.max()
+        ax.plot(cube_x, spectrum, label=line_name)
+    ax.legend()
     plt.show()
+
+
+
+def advanced_carma_molecules():
+    """
+    April 26, 2022
+    Following simple_mom0_carma_molecules, Lee wanted to look deeper into the
+    linewidth of N2H+ and CS compared to HCN and HCO+
+    I will put spectra on top of each other and then make moment 0 images in the
+    range of the thinnest line, and then the complement.
+    Lee said it's fine to make moment images which only use the emission part of
+    the spectrum.
+    """
+    if False:
+        # these are through the brightest regions
+        reg_filename_short = "catalogs/pillar1_emissionpeaks.moreprecise.reg"
+    else:
+        # these are through a variety of regions and are definitely spaced apart by > 1 SOFIA beam
+        reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    selected_region = sky_regions[3]
+    line_names_list = ['hcop', '13co10', 'cs']
+    vel_lims = (18*kms, 27*kms)
+    fig = plt.figure(figsize=(8, 10))
+    grid_shape = (len(line_names_list), 2)
+    axes_spec = [plt.subplot2grid(grid_shape, (i, 0)) for i in range(len(line_names_list))]
+    axes_img = []
+    for i, line_name in enumerate(line_names_list):
+        original_cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], length_scale_mult=None)
+        cube = original_cube.spectral_slab(*vel_lims)
+        cube_x = cube.spectral_axis.to_value()
+        channel_noise = cube_utils.onesigmas[line_name]
+        mask = (cube > channel_noise*u.K) | (cube < -channel_noise*u.K)
+        mom0 = cube.with_mask(mask).moment0()
+        noise = np.sqrt(cube.shape[0]) * channel_noise * np.abs(cube_x[1] - cube_x[0])
+        ax_img = plt.subplot2grid(grid_shape, (i, 1), projection=mom0.wcs)
+        axes_img.append(ax_img)
+        ax_img.imshow(mom0.to_value(), origin='lower')
+        ax_img.contour(mom0.to_value(), levels=[noise*k for k in (5,)], linewidths=0.7, colors='r')
+        ax_img.set_title(line_name)
+        ### get spectrum from point
+        pix_coords = tuple(round(x) for x in selected_region.to_pixel(mom0.wcs).center.xy[::-1])
+        spectrum = original_cube[(slice(None), *pix_coords)].to_value()
+        ax_img.plot([pix_coords[1]], [pix_coords[0]], 'x', color='k')
+        axes_spec[i].plot(original_cube.spectral_axis.to_value(), spectrum)
+
+        for v in range(21, 29):
+            axes_spec[i].axvline(v, color='k', linewidth=0.7)
+        axes_spec[i].set_xlim((17, 30))
+
+    plt.show()
+
+
+def advanced_mom0_carma_molecules():
+    """
+    April 26, 2022
+    Follow up to the stuff above, actually doing the moment 0s now.
+    """
+    if False:
+        # these are through the brightest regions
+        reg_filename_short = "catalogs/pillar1_emissionpeaks.moreprecise.reg"
+    else:
+        # these are through a variety of regions and are definitely spaced apart by > 1 SOFIA beam
+        reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    selected_region = sky_regions[3]
+    line_names_list = ['hcn', 'cs']
+    fig = plt.figure(figsize=(12, 10))
+
+    if line_names_list[1] == 'cs':
+        vel_lims_inner = (23.1*kms, 26.7*kms)
+    elif line_names_list[1] == 'n2hp':
+        vel_lims_inner = (22.5*kms, 25.7*kms)
+    vel_lims_outer = (22.5*kms, 26.7*kms)
+
+    grid_shape = (2, 3)
+    ax_spec = plt.subplot2grid(grid_shape, (0, 0), colspan=3)
+    axes_img = [plt.subplot2grid(grid_shape, (1, k)) for k in range(3)]
+
+    spectra = []
+
+    zoom_reg, zoom_reg_idx = "catalogs/p1_IDgradients_thru_head.reg", 2
+    lsm = 1
+    cube_1, cube_2 = tuple(cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], length_scale_mult=lsm, reg_filename=zoom_reg, reg_index=zoom_reg_idx) for line_name in line_names_list)
+    subcube_1, subcube_2 = tuple(cube.spectral_slab(*vel_lims_inner) for cube in (cube_1, cube_2))
+
+    channel_noise_1, channel_noise_2 = tuple(cube_utils.onesigmas[line_name] for line_name in line_names_list)
+    mask_1 = (subcube_1 > channel_noise_1*u.K) | (subcube_1 < -channel_noise_1*u.K)
+    mask_2 = (subcube_2 > channel_noise_2*u.K) | (subcube_2 < -channel_noise_2*u.K)
+    mom0_1 = subcube_1.with_mask(mask_1).moment0()
+    mom0_2 = subcube_2.with_mask(mask_2).moment0()
+    mom0_list = [mom0_1, mom0_2]
+
+    cube_x_1 = cube_1.spectral_axis.to_value()
+    noise_1 = np.sqrt(cube_1.shape[0]) * channel_noise_1 * np.abs(cube_x_1[1] - cube_x_1[0])
+
+    axes_img[0].imshow(mom0_1.to_value(), origin='lower')
+    axes_img[1].imshow(mom0_2.to_value(), origin='lower')
+
+    noise_cutoff_coeff = 5
+    noise_cutoff = noise_cutoff_coeff*noise_1
+
+    bright_mask = mom0_1.to_value() > noise_cutoff
+
+    axes_img[0].set_title(f"{line_names_list[0]} Inner (blue range)")
+    axes_img[1].set_title(f"{line_names_list[1]} Inner (blue range)")
+    axes_img[2].set_title(f"{line_names_list[0]} Outer (red range)")
+
+    for i, cube in enumerate((cube_1, cube_2)):
+        ### get spectrum from point
+        spectrum = cube.with_mask(bright_mask).mean(axis=(1, 2)).to_value()
+        ax_spec.plot(cube.spectral_axis.to_value(), spectrum/spectrum.max(), label=line_names_list[i])
+
+
+    outer_lim_lo = (vel_lims_outer[0], vel_lims_inner[0])
+    outer_lim_hi = (vel_lims_inner[1], vel_lims_outer[1])
+
+    for v in range(21, 29):
+        ax_spec.axvline(v, color='k', linewidth=0.7, alpha=0.4)
+    ax_spec.axvspan(vel_lims_inner[0].to_value(), vel_lims_inner[1].to_value(), alpha=0.2, color='b', label=f"Inner: {make_vel_stub(vel_lims_inner)}")
+    ax_spec.set_xlim((17, 30))
+
+
+    outer_mom0_result = mom0_1 * 0
+    if outer_lim_lo[0] < outer_lim_lo[1]:
+        print("doing lower outer")
+        ax_spec.axvspan(outer_lim_lo[0].to_value(), outer_lim_lo[1].to_value(), alpha=0.2, color='r', label=f"Outer: {make_vel_stub(outer_lim_lo)}")
+        outer_subcube_lo = cube_1.spectral_slab(*outer_lim_lo)
+        outer_mask_lo = (outer_subcube_lo > channel_noise_1*u.K) | (outer_subcube_lo < -channel_noise_1*u.K)
+        outer_mom0_lo = outer_subcube_lo.with_mask(outer_mask_lo).moment0()
+        outer_mom0_result += outer_mom0_lo
+    if outer_lim_hi[0] < outer_lim_hi[1]:
+        print("doing upper outer")
+        ax_spec.axvspan(outer_lim_hi[0].to_value(), outer_lim_hi[1].to_value(), alpha=0.2, color='r', label=f"Outer: {make_vel_stub(outer_lim_hi)}")
+        outer_subcube_hi = cube_1.spectral_slab(*outer_lim_hi)
+        outer_mask_hi = (outer_subcube_hi > channel_noise_1*u.K) | (outer_subcube_hi < -channel_noise_1*u.K)
+        outer_mom0_hi = outer_subcube_hi.with_mask(outer_mask_hi).moment0()
+        outer_mom0_result += outer_mom0_hi
+
+    axes_img[2].imshow(outer_mom0_result.to_value(), origin='lower')
+
+    ax_spec.legend()
+    ax_spec.set_title(f"Spectra from within red contours ({cube_utils.cubenames[line_names_list[0]]} inner range moment0 > {noise_cutoff_coeff} $\sigma$)")
+
+    for idx in (0, 1):
+        axes_img[idx].contour(mom0_1.to_value(), levels=[noise_cutoff,], linewidths=0.7, colors='r')
+
+    plt.savefig(f"/home/ramsey/Pictures/2022-04-26/mom0_{line_names_list[0]}-{line_names_list[1]}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"test image, zoom is lsm={lsm} {zoom_reg} #{zoom_reg_idx}",
+            file=__file__, func="advanced_mom0_carma_molecules"))
+    # plt.show()
 
 
 if __name__ == "__main__":
@@ -1171,7 +1367,8 @@ if __name__ == "__main__":
     # save_fits_thin_channel_maps()
     # single_parallel_pillar_pvs() # most recently uncommented (april 21, 2022)
 
-    simple_mom0_carma_molecules('hcop')
+    # simple_mom0_carma_molecules('cii')
+    advanced_mom0_carma_molecules()
 
     # justify_background_figure()
     # background_samples_figure_molecular()

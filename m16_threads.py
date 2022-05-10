@@ -892,23 +892,26 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.SOFIAbeam.fits"))
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
-    cube_filenames = ["sofia/M16_CII_U.fits",
-        *get_both_mol("hcn"), *get_both_mol("hcop"),
-        "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits",
-        "bima/M16.BIMA.13co1-0.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
-        "bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
-    names = ['CII',
-        'HCN', 'HCN (CII beam)',
-        'HCO+', 'HCO+ (CII beam)',
-        '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)',
-        "$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)",
-        "C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
-    short_names = ['cii',
-        'hcn', 'hcnCONV',
-        'hcop', 'hcopCONV',
-        '12co10', '12co10CONV',
-        '13co10', '13co10CONV',
-        'c18o10', 'c18o10CONV']
+    short_names = list(cube_utils.cubefilenames.keys())
+    cube_filenames = [cube_utils.cubefilenames[k] for k in short_names]
+    names = [cube_utils.cubenames[k] for k in short_names]
+    # cube_filenames = ["sofia/M16_CII_U.fits",
+    #     *get_both_mol("hcn"), *get_both_mol("hcop"),
+    #     "bima/M16_12CO1-0_7x4.fits", "bima/M16_12CO1-0_14x14.fits",
+    #     "bima/M16.BIMA.13co1-0.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
+    #     "bima/M16.BIMA.c18o.cm.SMOOTH.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits"]
+    # names = ['CII',
+    #     'HCN', 'HCN (CII beam)',
+    #     'HCO+', 'HCO+ (CII beam)',
+    #     '$^{12}$CO(1-0)', '$^{12}$CO(1-0) (CII beam)',
+    #     "$^{13}$CO(1-0)", "$^{13}$CO(1-0) (CII beam)",
+    #     "C$^{18}$O(1-0) (smooth)", "C$^{18}$O(1-0) (CII beam, smooth)"]
+    # short_names = ['cii',
+    #     'hcn', 'hcnCONV',
+    #     'hcop', 'hcopCONV',
+    #     '12co10', '12co10CONV',
+    #     '13co10', '13co10CONV',
+    #     'c18o10', 'c18o10CONV']
 
 
     if idx_for_img is None:
@@ -1074,8 +1077,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
                 noise_1sig_moment = noise_1sig_channel * cube_dv * np.sqrt(nchannels)
                 levels = make_contour_levels(noise_1sig_moment)
                 # Linestyles: make the first one dashed, everything else solid
-                linestyles = ['--'] + ['-']*(len(levels) - 1)
-                ax.contour(all_imgs[j], colors=colors[color_idx], levels=levels, linestyles=linestyles, linewidths=0.75)
+                linestyles = ['-'] + ['-']*(len(levels) - 1) # I need to deal with the dashes/negative contours
+                ax.contour(all_imgs[j], colors=colors[color_idx], levels=levels, linestyles=linestyles, linewidths=0.5, alpha=0.9)
                 if i == 0:
                     # (colors[color_idx] if not (colors[color_idx] in ('k', 'black') and ) else ...)
                     if (colors[color_idx] in ('k', 'black')) and (idx_for_img is not None) and (cmap in ('magma', 'inferno', 'cividis')):
@@ -1095,7 +1098,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
 
             beam_x = text_x + 0.06 # use 0.04 unless it's super zoomed in
             beam_y = text_y
-            if i == 0 and (j == idx_for_img): # just for this run; otherwise, just do i == 0
+            if i == 0: # just for this run; otherwise, just do i == 0
                 # Plot the beam on the first image
                 patch = cubes[j].beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_x, beam_y]), misc_utils.get_pixel_scale(img1_raw.wcs))
                 patch.set_alpha(0.5)
@@ -1123,8 +1126,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         insetcax.tick_params(axis='y', colors=default_text_color)
         insetcax.yaxis.set_ticks_position('left')
     plt.subplots_adjust(hspace=0, wspace=0)
-    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15, 2022-02-22, 2022-03-24
-    fig.savefig(f"/home/ramsey/Pictures/2022-03-29/contouroverlay_{unique_label}_channelmaps_{level_scaling.upper()}.png",
+    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15, 2022-02-22, 2022-03-24, 2022-03-29
+    fig.savefig(f"/home/ramsey/Pictures/2022-05-10/contouroverlay_{unique_label}_channelmaps_{level_scaling.upper()}.png",
         metadata=catalog.utils.create_png_metadata(title=f'contours {contour_levels_multipliers} xsigma',
             file=__file__, func='channel_maps_again'))
     # plt.show()
@@ -1750,6 +1753,11 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
             sl.header['CTYPE2'] = 'VRAD' # thanks to the note in m16_pictures.single_parallel_pillar_pvs
             sl_list_nativegrid.append(sl)
 
+            ##########DEBUG
+    #         print(WCS(sl.header).pixel_to_world_values([0], [0]))
+    #         print(WCS(sl.header).world_to_pixel_values([0], [26000]))
+    # return
+
     # identify cii slices
     cii_sl_list = sl_list_nativegrid[0:2]
 
@@ -1771,6 +1779,8 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
             # reproject CII to each slice; cannot guarantee that they have same WCS
             # cii_sl_list has two elements, one for each PV path. j indexes the PV paths.
             cii_reproj = reproject_interp((cii_sl_list[j].data, cii_sl_list[j].header), sl.header, return_footprint=False)
+            # Save this for later
+            sl_wcs = WCS(sl.header)
             # Create levels that are tied to noise
 
             zeroth_contour_sigma = 3
@@ -1829,6 +1839,9 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
                 ax.text(text_x, 0.06, msg, transform=ax.transAxes, color='w', fontsize=10)
             if molecule == '12co10':
                 ax.invert_yaxis()
+            # Make some velocity grid lines for easier visual identification of gradients
+            for v in range(23, 28):
+                ax.axhline(sl_wcs.world_to_pixel_values(0, v*1000)[1], color='grey', alpha=0.8)
 
     img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
     w = WCS(hdr)
@@ -1873,8 +1886,8 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
     contour_stub = '' if contour == 'cii' else '-molecularcontours'
     # plt.show()
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
-    # 2021-01-12, 2022-01-25, 2022-02-01
-    fig.savefig(f"/home/ramsey/Pictures/2022-02-27/pv_{pillar_stub}_{selected_set}{clip_stub}{contour_stub}{smooth_stub}.png",
+    # 2021-01-12, 2022-01-25, 2022-02-01, 2022-02-27
+    fig.savefig(f"/home/ramsey/Pictures/2022-04-28/pv_{pillar_stub}_{selected_set}{clip_stub}{contour_stub}{smooth_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, 0th contour = {zeroth_contour_sigma}sig, steps of {contour_sigma_step}sig",
             file=__file__, func='pv'))
 
@@ -1889,7 +1902,7 @@ if __name__ == "__main__":
     fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
     # fig_params = dict(grid_shape=(3, 5), figsize=(25, 13)) # just for the zoomed in version
     ###
-    args = channel_maps_again('12co10', 'hcop', **vel_lims, **fig_params, idx_for_img=0, level_scaling='linear', check_levels=False, length_scale_mult=None)
+    args = channel_maps_again('cii', 'n2hp', **vel_lims, **fig_params, idx_for_img=0, level_scaling='linear', check_levels=False, length_scale_mult=None)
 
     # highlight_threads_moment0()
 

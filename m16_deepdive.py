@@ -883,7 +883,7 @@ def make_quick_image():
     plt.show()
 
 
-def fit_molecular_and_cii_with_gaussians():
+def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     """
     Created October 27 2021, 25 minutes before my meeting
     Let's do this
@@ -917,185 +917,250 @@ def fit_molecular_and_cii_with_gaussians():
     I probably only need 1 comp. free, 2 comp. free, and 3 comp. fixed/tied std.
     Also, should standardize the way I put in regions (commented filenames
     are messy)
+    April 22, 2022: This is so much better!
     """
     # reg_filename_short = "catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg" # order appears to be [HCO+, CII]
     # reg_filename_short = "catalogs/p1_threads_pathsandpoints.reg" # order appears to be North-E, North-W, South-E, South-W
     # reg_filename_short = "catalogs/pillar1_pointsofinterest.reg" # order is wide profile, blue tail, north of west thread, bluest component, top of western thread (where IRAC4 peaks), above western thread (where IRAC4 is dark)
     # reg_filename_short = "catalogs/pillar1_peak_degeneracyboundary.reg" # order is 3 component peak, 2 component peak
-    reg_filename_short = "catalogs/pillar1_pointsofinterest_v2.reg" # using the first and second, which is wide profile and 3c peak (E of center)
+    reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    # print("There are ", len(sky_regions), " regions")
     # now supporting multiple selected_regions
-    selected_region = list(sky_regions[:2])
-    if isinstance(selected_region, list):
-        pixel_name = "-and-".join([reg.meta['label'].replace(" ", '-') for reg in selected_region])
+    # selected_region_list = [sky_regions[0]]
+    # selected_region_list = [sky_regions[x-1] for x in [3, 6, 4, 7]] # threads (3, 4 works good, 6, 7 are noisier)
+    selected_region_list = [sky_regions[x-1] for x in [1, 2, 8, 5]] # head
+    # selected_region_list = [sky_regions[x-1] for x in [4, 8, 5]] # Wthread
+    if len(selected_region_list) > 1:
+        pixel_name = "-and-".join([reg.meta['label'].replace(" ", '-') for reg in selected_region_list])
     else:
-        pixel_name = selected_region.meta['label'].replace(" ", '-')
-    # TODO left off here using this to show that the 3c-fixed HCO+ fit makes a little bit of sense with CII if you do the rgb theory
+        pixel_name = selected_region_list[0].meta['label'].replace(" ", '-')
 
-    # cii_cube = cube_utils.CubeData("sofia/M16_CII_pillar1_BGsubtracted.fits").data
-    cii_cube = cps2.cutout_subcube(length_scale_mult=4.0)
-    cii_cube = cii_cube - cps2.get_cii_background()[:, np.newaxis, np.newaxis]
-    regrid = True # Just in case I want to switch back to regular resolution? doesn't hurt
-    fn = f"carma/M16.ALL.hcop.sdi.cm.subpv{'.SOFIAbeam.regrid' if regrid else ''}.fits"
-    hcop_cube = cube_utils.CubeData(fn).convert_to_K().data.with_spectral_unit(kms)
-    hcop_flat_wcs = hcop_cube[0, :, :].wcs
+    spectrum_ylims = {
+        'hcopCONV': (-1, 15), '13co10CONV': (-2, 17),
+        'cii': (-3, 40), 'hcn': (-2, 15),
+        'hcnCONV': (-1, 15), 'n2hpCONV': (-1, 4),
+        'csCONV': (-1, 8),
+        '12co10': (-10, 130), 'hcop': (-2, 15),
+        '13co10': (-4, 20), 'cs': (-2, 8),
+        '12co10CONV': (-5, 120)
+    }
 
-    if isinstance(selected_region, list):
-        selected_pixel = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in selected_region]
-    else:
-        selected_pixel = tuple(round(x) for x in selected_region.to_pixel(hcop_flat_wcs).center.xy[::-1])
+    vel_lims = (24, 27)
 
+    img_vmin = { # these are all for 1 km/s moment, so multiply by km/s width of moment
+        'hcopCONV': 0, '13co10CONV': 0,
+        'cii': 10., 'hcn': 1./3,
+        'hcnCONV': 0, 'n2hpCONV': None,
+        'csCONV': 0,
+        '12co10': 10, 'hcop': 1./3,
+        '13co10': 1, 'cs': 0,
+        '12co10CONV': 10.,
+    }
 
-    # selected_region = 1
-    # selected_pixel = (31, 28) # 31, 28 is good for exploring that blue tail thing on Eastern thread
-    # pixel_name = "_DEBUGPIXEL_01_"
-
-    # pixel_coords = [tuple(round(x) for x in reg.to_pixel(hcop_flat_wcs).center.xy[::-1]) for reg in sky_regions] # converted to (i, j) tuples
-    # selected_pixel = pixel_coords[0]
-
-    # Start with one pixel, just fit that first
-    assert regrid
-    if isinstance(selected_region, list):
-        cii_spectrum = [cii_cube[(slice(None), *px_coords)].to_value() for px_coords in selected_pixel]
-        hcop_spectrum = [hcop_cube[(slice(None), *px_coords)].to_value() for px_coords in selected_pixel]
-    else:
-        cii_spectrum = cii_cube[(slice(None), *selected_pixel)].to_value()
-        hcop_spectrum = hcop_cube[(slice(None), *selected_pixel)].to_value()
-    cii_x = cii_cube.spectral_axis.to_value()
-    hcop_x = hcop_cube.spectral_axis.to_value()
-    # Set up plots
-    fig = plt.figure(figsize=(15, 10))
-    if isinstance(selected_region, list):
-        ax_cii_img = plt.subplot2grid((2, 3), (0, 2))
-        ax_hcop_img = plt.subplot2grid((2, 3), (1, 2))
-        ax_cii_spec = [plt.subplot2grid((2, 3), (0, 0)), plt.subplot2grid((2, 3), (0, 1))]
-        ax_hcop_spec = [plt.subplot2grid((2, 3), (1, 0)), plt.subplot2grid((2, 3), (1, 1))]
-    else:
-        ax_cii_img = plt.subplot2grid((2, 3), (0, 0))
-        ax_hcop_img = plt.subplot2grid((2, 3), (1, 0))
-        ax_cii_spec = plt.subplot2grid((2, 3), (0, 1), colspan=2)
-        ax_hcop_spec = plt.subplot2grid((2, 3), (1, 1), colspan=2)
-    # Plot images
-    vel_lims = (23, 26)
-    ax_cii_img.imshow(cii_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower', cmap='plasma')
-    ax_hcop_img.imshow(hcop_cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower', cmap='plasma')
-
-    if isinstance(selected_region, list):
-        # [cps2.plot_box(ax_cii_img, *((x-0.5, x+0.5) for x in px_coords), (0, 0)) for px_coords in selected_pixel]
-        # [cps2.plot_box(ax_hcop_img, *((x-0.5, x+0.5) for x in px_coords), (0, 0)) for px_coords in selected_pixel]
-        pad = 1.5
-        for ax in [ax_cii_img, ax_hcop_img]:
-            for idx, (y, x) in enumerate(selected_pixel):
-                ax.plot([x], [y], 'o', markersize=5, color='k')
-                dx = pad if idx else -pad
-                dy = pad
-                ax.text(x+dx, y+dy, str(idx+1), color='k', fontsize=12, ha='center', va='center')
-    else:
-        cps2.plot_box(ax_cii_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
-        cps2.plot_box(ax_hcop_img, *((x-0.5, x+0.5) for x in selected_pixel), (0, 0))
-
-    # Do noise stuff
-    noise_cii = 1 # 1 K has been my estimate for a while
-    noise_hcop = 0.12 # estimated from the cube, lower than the original 0.5 due to smoothing to CII beam and rebinning to CII channels
-    if isinstance(selected_region, list):
-        [cps2.plot_noise_and_vlims(ax, noise_cii, vel_lims) for ax in ax_cii_spec]
-        [cps2.plot_noise_and_vlims(ax, noise_hcop, vel_lims) for ax in ax_hcop_spec]
-        for ax in (ax_cii_spec + ax_hcop_spec):
-            ax.set_xlim(15, 30)
-    else:
-        cps2.plot_noise_and_vlims(ax_cii_spec, noise_cii, vel_lims)
-        cps2.plot_noise_and_vlims(ax_hcop_spec, noise_hcop, vel_lims)
-        for ax in [ax_cii_spec, ax_hcop_spec]:
-            ax.set_xlim(20, 30)
-
-    # Set up Gaussian model, start with one component
-    # Decide which things are fixed
-    fixedstd = True
+    # Decide which things are fixed in the models
+    fixedstd = False
     tiestd = True
     untieciistd = False
-    fixed_cii_std = True
+    fixed_cii_std = False
     fixedmean = True
-    stddev_hcop = 0.55
-    g0 = cps2.models.Gaussian1D(amplitude=10, mean=23.5, stddev=stddev_hcop,
+
+
+    # Process list of line names
+    if lines is None:
+        line_names_list = ['12co10', 'cs', 'cii',]
+        print("Setting line_names_list to default of ", line_names_list)
+    else:
+        line_names_list = lines
+
+    if 'cii' in line_names_list:
+        cii_index = line_names_list.index('cii')
+        assert cii_index == len(line_names_list)-1 # always last, so i have the template fit ready first
+        cii_background_spectrum = cps2.get_cii_background().to_value()
+        template_line = 'hcopCONV' # The line to use to fix CII line ceners
+        # template_line = 'cs' # The line to use to fix CII line ceners
+        try:
+            template_index = line_names_list.index(template_line)
+        except ValueError:
+            assert not fixedmean
+            template_index = None
+    else:
+        cii_index = None
+        template_index = None
+
+
+    # Set up all Axes
+    fig = plt.figure(figsize=(18, 10))
+    n_lines = len(line_names_list)
+    n_regions = len(selected_region_list)
+    grid_shape = (n_lines, n_regions + 1)
+    axes_spec = [[plt.subplot2grid(grid_shape, (i, j)) for j in range(n_regions)] for i in range(n_lines)]
+    axes_img = [plt.subplot2grid(grid_shape, (i, grid_shape[1]-1)) for i in range(n_lines)]
+
+    # Set up initial model for fitting
+    stddev_hcop = 0.47
+    g0 = cps2.models.Gaussian1D(amplitude=7, mean=25., stddev=stddev_hcop,
         bounds={'amplitude': (0, None), 'mean': (20, 30)})
-    g0.mean = 24
-    g1 = g0.copy()
-    g1.mean = 25
-    g2 = g0.copy()
-    g2.mean = 26
-    g = g0 + g1 + g2
-    # Now do the fitting
+    if n_components > 1:
+        g1 = g0.copy()
+        if n_components > 2:
+            g2 = g0.copy()
+            g0.mean = 23.5
+            g1.mean = 24.5
+            g2.mean = 25.5
+            g = g0 + g1 + g2
+        else:
+            g0.mean = 24
+            g1.mean = 25
+            g = g0 + g1
+    else:
+        g = g0
+    # Apply the constraints
     fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
     if tiestd:
         cps2.tie_std_models(g)
     if fixedstd:
         cps2.fix_std(g)
-    ndim_hcop = len(get_fittable_param_names(g))
+    # Number of dimensions of least constrained fit
+    ndim = len(get_fittable_param_names(g))
 
-    def fit_and_plot(g, spec_hcop, spec_cii, spec_ax_hcop, spec_ax_cii):
-        """
-        Helper function to help when there's two regions
-        """
-        g_fit_hcop = fitter(g, hcop_x, spec_hcop, weights=np.full(spec_hcop.size, 1.0/noise_hcop))
-        if fixedmean:
-            g = g_fit_hcop.copy()
-            # g.mean_0 = 23.5
-            # g.mean_1 = 25.50
-            cps2.fix_mean(g)
-        if untieciistd:
-            cps2.tie_std_models(g, untie=True)
+    """
+    model_list will have len==len(line_names_list), and each element will
+    have len==len(selected_region_list)
+    """
+    model_list = []
+
+    for line_idx, line_name in enumerate(line_names_list):
+        # Extract spectra at each region
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], length_scale_mult=4)
+        if line_name.replace('CONV', '') in ('hcn', 'n2hp', '13co10'):
+            # Get rid of satellite lines and negatives
+            full_cube = cube
+            cube = cube.spectral_slab(17*kms, 27.5*kms)
+        elif line_name.replace('CONV', '') in ('12co10',):
+            # Get rid of the redshifted feature
+            full_cube = cube
+            cube = cube.spectral_slab(17*kms, 27*kms)
         else:
-            cps2.tie_std_models(g)
-        if not fixed_cii_std:
-            cps2.unfix_std(g)
-        else:
-            for m in cps2.iter_models(g):
-                m.stddev = 1.
-            cps2.fix_std(g)
-        ndim_cii = len(get_fittable_param_names(g))
-        g_fit_cii = fitter(g, cii_x, spec_cii, weights=np.full(spec_cii.size, 1.0/noise_cii))
-        # Plot the fits
-        cps2.plot_everything_about_models(spec_ax_cii, cii_x, spec_cii, g_fit_cii, noise=noise_cii, dof=(cii_x.size - ndim_cii))
-        cps2.plot_everything_about_models(spec_ax_hcop, hcop_x, spec_hcop, g_fit_hcop, noise=noise_hcop, dof=(hcop_x.size - ndim_hcop))
+            full_cube = None
+        cube_x = cube.spectral_axis.to_value()
+        # PLOT IMAGE!!!
+        vmin = None if img_vmin[line_name] is None else img_vmin[line_name]*(vel_lims[1] - vel_lims[0])
+        im = axes_img[line_idx].imshow(cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower', cmap='Greys', vmin=vmin)
+        fig.colorbar(im, ax=axes_img[line_idx])
+        # PLOT BEAM!!!
+        patch = cube.beam.ellipse_to_plot(*(axes_img[line_idx].transAxes + axes_img[line_idx].transData.inverted()).transform([0.9, 0.06]), misc_utils.get_pixel_scale(cube[0, :, :].wcs))
+        patch.set_alpha(0.9)
+        patch.set_facecolor('grey')
+        patch.set_edgecolor('grey')
+        axes_img[line_idx].add_artist(patch)
 
-    if isinstance(selected_region, list):
-        for i in range(2):
-            fit_and_plot(g.copy(), hcop_spectrum[i], cii_spectrum[i], ax_hcop_spec[i], ax_cii_spec[i])
-    else:
-        fit_and_plot(g, hcop_spectrum, cii_spectrum, ax_hcop_spec, ax_cii_spec)
+        channel_noise = cube_utils.onesigmas[line_name]
 
-    if isinstance(selected_region, list):
-        for ax in ax_hcop_spec + ax_cii_spec + [ax_cii_img, ax_hcop_img]:
-            ax.xaxis.set_ticks_position('both')
-            ax.yaxis.set_ticks_position('both')
-            ax.xaxis.set_tick_params(direction='in', which='both')
-            ax.yaxis.set_tick_params(direction='in', which='both')
-        for line_name, ax in zip(['CII', 'HCO+'], [ax_cii_img, ax_hcop_img]):
-            ax.xaxis.set_ticklabels([])
-            ax.yaxis.set_ticklabels([])
-            ax.text(0.9, 0.9, f'{line_name}', fontsize=15, ha='center', va='center', transform=ax.transAxes)
-        for ax in ax_cii_spec:
-            ax.xaxis.set_ticklabels([])
-        for ax in [ax_cii_spec[1], ax_hcop_spec[1]]:
-            ax.yaxis.set_ticklabels([])
-        for idx, ax in enumerate(ax_cii_spec):
-            ax.text(0.9, 0.9, f'CII\n{idx+1}', fontsize=15, ha='center', va='center', transform=ax.transAxes)
-            ax.set_ylim([-3, 30])
-        for idx, ax in enumerate(ax_hcop_spec):
-            ax.text(0.9, 0.9, f'HCO+\n{idx+1}', fontsize=15, ha='center', va='center', transform=ax.transAxes)
-            ax.set_ylim([-1, 15])
-        plt.tight_layout()
-        plt.subplots_adjust(hspace=0, wspace=0)
+        models_for_this_line = []
+
+        for reg_idx, reg in enumerate(selected_region_list):
+            # Get spectra
+            pix_coords = tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1])
+            spectrum = cube[(slice(None), *pix_coords)].to_value()
+            if line_idx == cii_index:
+                spectrum = spectrum - cii_background_spectrum
+            # If there is a "full" spectrum (if I trimmed off some velocity range), get it so I can plot it
+            if full_cube is not None:
+                full_spectrum = full_cube[(slice(None), *pix_coords)].to_value()
+                if line_idx == cii_index:
+                    full_spectrum -= cii_background_spectrum
+            else:
+                full_spectrum = None
+
+            # Plot markers
+            #### Don't plot a mark, just use the number as the marker
+            #### axes_img[line_idx].plot([pix_coords[1]], [pix_coords[0]], 'o', markersize=5, color='k')
+            if len(selected_region_list) > 1:
+                # Label region, if more than one
+                pad = 1.5
+                # dx = pad if reg_idx else -pad
+                # dy = pad
+                dx, dy = 0, 0
+                axes_img[line_idx].text(pix_coords[1]+dx, pix_coords[0]+dy, str(reg_idx + 1), color='k', fontsize=12, ha='center', va='center')
+
+            # Plot noise stuff on spectrum Axes
+            cps2.plot_noise_and_vlims(axes_spec[line_idx][reg_idx], channel_noise, vel_lims)
+
+            # Fit!
+            # First, do the special stuff for CII
+            if line_idx == cii_index:
+                if fixedmean:
+                    g_init = model_list[template_index][reg_idx].copy()
+                    cps2.fix_mean(g_init)
+                cps2.tie_std_models(g_init, untie=untieciistd)
+                if not fixed_cii_std:
+                    cps2.unfix_std(g_init)
+                else:
+                    for m in cps2.iter_models(g_init):
+                        m.stddev = 1.
+                    cps2.fix_std(g_init)
+                ndim = len(get_fittable_param_names(g_init))
+            else:
+                g_init = g.copy()
+            # Now actually fit!
+            g_fit = fitter(g_init, cube_x, spectrum, weights=np.full(spectrum.size, 1.0/channel_noise))
+
+            # Plot fit
+            if full_spectrum is not None:
+                axes_spec[line_idx][reg_idx].plot(full_cube.spectral_axis.to_value(), full_spectrum, color='grey', alpha=0.5)
+            cps2.plot_everything_about_models(axes_spec[line_idx][reg_idx], cube_x, spectrum, g_fit, noise=channel_noise, dof=(cube_x.size - ndim))
+
+            models_for_this_line.append(g_fit)
+        model_list.append(models_for_this_line)
+
+    # Adjust axes things
+    for ax in sum(axes_spec, []) + axes_img:
+        ax.xaxis.set_ticks_position('both')
+        ax.yaxis.set_ticks_position('both')
+        ax.xaxis.set_tick_params(direction='in', which='both')
+        ax.yaxis.set_tick_params(direction='in', which='both')
+    for ax in sum(axes_spec, []):
+        ax.set_xlim([17, 30])
+        for v in range(22, 28):
+            ax.axvline(v, color='gray', alpha=0.2)
+    for line_name, ax in zip(line_names_list, axes_img):
+        # ax.xaxis.set_ticklabels([])
+        # ax.yaxis.set_ticklabels([])
+        ax.text(0.95, 0.9, cube_utils.cubenames[line_name], fontsize=15, ha='right', va='center', transform=ax.transAxes)
+    for ax in sum(axes_spec[::-1][1:], []):
+        # Get rid of x ticks above the bottom row
+        ax.xaxis.set_ticklabels([])
+    for ax in sum(tuple(zip(*axes_spec))[1:], ()):
+        # Get rid of y ticks to the right of the leftmost column
+        ax.yaxis.set_ticklabels([])
+    for line_name, axes in zip(line_names_list, axes_spec):
+        for reg_idx, ax in enumerate(axes):
+            # Only label region number if there are multiple regions
+            index_stub = f"\n{reg_idx+1}" if len(selected_region_list) > 1 else ""
+            # Label each spectrum plot
+            ax.text(0.8, 0.9, f'{cube_utils.cubenames[line_name].replace(" (CII beam)", "")}{index_stub}', fontsize=15, ha='center', va='center', transform=ax.transAxes)
+            ax.set_ylim(spectrum_ylims[line_name])
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0, wspace=0)
 
     fixedstd_stub = f"_fixedstd{stddev_hcop:04.2f}" if fixedstd else ''
     tiestd_stub = f"_hcopUNtiedstd" if not tiestd else ''
+
     untieciistd_stub = f"_ciiUNtiedstd" if untieciistd else ''
     fixedciistd_stub = "_ciifixedstd" if fixed_cii_std else ''
-    fixedmean_stub = f"_fixedciimean" if fixedmean else '_fittingciimean'
+    if cii_index is not None:
+        fixedmean_stub = f"_fixedciimean" if fixedmean else '_fittingciimean'
+    else:
+        fixedmean_stub = ''
+    lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
-    fig.savefig(f"/home/ramsey/Pictures/2022-01-20-work/fit_{g.n_submodels}_hcop_cii_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.png",
-        metadata=catalog.utils.create_png_metadata(title=f'regions from {reg_filename_short}',
-            file=__file__, func='fit_molecular_and_cii_with_gaussians'))
+    # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28
+    # fig.savefig(f"/home/ramsey/Pictures/2022-04-28/threads/fit_{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.png",
+    #     metadata=catalog.utils.create_png_metadata(title=f'regions from {reg_filename_short}',
+    #         file=__file__, func='fit_molecular_and_cii_with_gaussians'))
+    fig.savefig(f"/home/ramsey/Pictures/2022-05-03/head/tiedstd/fit_{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.pdf")
+
     # plt.show()
 
 
@@ -1861,6 +1926,17 @@ def correlations_between_carma_molecule_intensities(molX, molY, integrated=False
     plt.show()
 
 
+def fit_n2hp_peak():
+    """
+    May 5, 2022
+    Fit the saved N2H+ peak data. Use the line at like -8 km/s
+    """
+    filename_stub = "carma/n2hp_P1_peak_spectrum.dat"
+    filename = catalog.utils.search_for_file(filename_stub)
+    data = np.genfromtxt(filename)
+    return data
+
+
 
 if __name__ == "__main__":
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
@@ -1877,12 +1953,16 @@ if __name__ == "__main__":
     #     fit_molecular_components_with_gaussians('peak'+s)
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
-    # fit_molecular_and_cii_with_gaussians()
+    # for i in range(1, 4):
+    # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', 'hcopCONV', 'cii'])
+    # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'])
+
+    data = fit_n2hp_peak()
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
     # make_3d_fit_viz_in_2d(3, line='hcop', version=2) # working on this april 19, 2022
-    correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
+    # correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
     # test_fitting_uncertainties_with_emcee(which_line='cii')
     # investigate_emcee_result('cii')
