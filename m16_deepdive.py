@@ -38,6 +38,9 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
 from astropy.table import Table, QTable
 
+import pandas as pd
+from io import StringIO
+
 from photutils import centroids
 
 # Lord forgive me
@@ -1926,6 +1929,112 @@ def correlations_between_carma_molecule_intensities(molX, molY, integrated=False
     plt.show()
 
 
+def generate_n2hp_frequency_axis(debug=False):
+    """
+    Per the text file in Marc's April 28 email, the correlator setup for the
+    original N2H+ cube (the 0.08 km/s resolution version)
+    Refer to window 1 (first column)
+
+    rest frequency     :  93.173505  93.174000  89.188518  88.631847  87.407000  87.284000
+    starting channel   :          1        320        639        958       1277       1596
+    number of channels :        319        319        319        319        319        319
+    starting frequency :  93.168192  92.679145  89.183598  88.626982  87.402256  87.279268
+    frequency interval :  -0.000024  -0.000024  -0.000024  -0.000024  -0.000024  -0.000024
+    band width         :  -0.007788  -0.007788  -0.007788  -0.007788  -0.007788  -0.007788
+    starting velocity  :     12.511   1587.662     11.953     11.871     11.687     11.668
+    ending velocity    :     37.491   1612.643     38.050     38.131     38.315     38.334
+    velocity interval  :      0.079      0.079      0.082      0.083      0.084      0.084
+
+    rest frequency     :  97.980968  97.980968  89.188518  88.631847  87.407000  87.284000
+    starting channel   :       1915       2234       2553       2872       3191       3510
+    number of channels :        319        319        319        319        319        319
+    starting frequency :  97.477474  97.966521 101.462068 102.018684 103.243410 103.366398
+    frequency interval :   0.000024   0.000024   0.000024   0.000024   0.000024   0.000024
+    band width         :   0.007788   0.007788   0.007788   0.007788   0.007788   0.007788
+    starting velocity  :   1535.979     39.620 -41260.724 -45285.534 -54321.847 -55243.292
+    ending velocity    :   1512.225     15.865 -41286.821 -45311.794 -54348.475 -55269.958
+    velocity interval  :     -0.075     -0.075     -0.082     -0.083     -0.084     -0.084
+    """
+    # Correlator setup (Marc's text file)
+    rest_freq_window_1 = 93.173505
+    n_channels = 319
+    starting_frequency = 93.168192
+    frequency_interval = -0.000024
+    band_width = -0.007788
+    starting_velocity = 12.511
+    ending_velocity = 37.491
+    velocity_interval = 0.079
+    # Derive the axis
+    frequency_array = [starting_frequency + i*frequency_interval for i in range(n_channels)] * u.GHz
+    if debug:
+        velocity_array = frequency_array.to(u.km/u.s, equivalencies=u.doppler_radio(93.1721*u.GHz))
+        print("band_width/frequency_interval = ", band_width/frequency_interval)
+        print("calculated starting, ending velocities: ", end='')
+        print(velocity_array[0], ', ', velocity_array[-1])
+        print("calculated velocity range: ", velocity_array[-1] - velocity_array[0])
+        print("velocity range from starting_velocity, ending_velocity: ", ending_velocity-starting_velocity)
+        print(np.diff(velocity_array.to_value()).mean())
+    else:
+        return frequency_array
+
+
+def generate_n2hp_line_table():
+    """
+    May 11, 2022
+    Get the Aij, weights, frequencies, stuff like that for all these lines
+    N2H+ transition data from https://home.strw.leidenuniv.nl/~moldata/datafiles/n2h+_hfs.dat
+    The "rest frequency" line for window 1 is the J=1-0, F1=2-1, F=2-1
+    The line at -9 km/s from that line is J=1-0, F1=0-1, F=1-2
+    """
+    # Line data (LAMDA)
+    line_columns = "TRANS + U + L + A(s^-1) + FREQ(GHz) + E_u/k(K)".split(" + ")
+    raw_line_data = """
+     1     4     2  3.896E-05          93.17161030     4.47
+     2     5     2  6.040E-06          93.17190510     4.47
+     3     5     3  3.293E-05          93.17190510     4.47
+     4     6     2  4.652E-06          93.17204230     4.47
+     5     6     1  1.983E-05          93.17204240     4.47
+     6     6     3  1.448E-05          93.17204240     4.47
+     7     7     2  3.293E-05          93.17346770     4.47
+     8     7     3  6.040E-06          93.17346770     4.47
+     9     8     3  3.896E-05          93.17376420     4.47
+    10     9     1  1.219E-05          93.17395870     4.47
+    11     9     2  2.525E-05          93.17395870     4.47
+    12     9     3  1.533E-06          93.17395870     4.47
+    13    10     1  6.944E-06          93.17625430     4.47
+    14    10     2  9.068E-06          93.17625430     4.47
+    15    10     3  2.296E-05          93.17625430     4.47
+    """
+    line_table = pd.read_table(StringIO(raw_line_data), sep='\s+', header=None, names=line_columns, index_col=0)
+    state_columns = "LEVEL + ENERGIES(cm^-1) + WEIGHT + J_F1_F".split(" + ")
+    raw_state_data = """
+    1     0.000000000   1.0   0_1_0
+    2     0.000000000   3.0   0_1_1
+    3     0.000000000   5.0   0_1_2
+    4     3.107870389   1.0   1_1_0
+    5     3.107880222   5.0   1_1_2
+    6     3.107884799   3.0   1_1_1
+    7     3.107932345   5.0   1_2_2
+    8     3.107942235   7.0   1_2_3
+    9     3.107948723   3.0   1_2_1
+   10     3.108025296   3.0   1_0_1
+    """
+    state_table = pd.read_table(StringIO(raw_state_data), sep='\s+', header=None, names=state_columns, index_col=0)
+    def jf1f_tuple_to_string(u, l):
+        # Convert pair of J_F1_F identifiers to "J=x-y, F1=x-y, F=x-y" form
+        quantum_numbers = ('J', 'F1', 'F')
+        return ', '.join([f"{x}={ux}-{lx}" for ux, lx, x in zip(u.split('_'), l.split('_'), quantum_numbers)])
+    # Make two weight columns using the U and L columns to index the state_table
+    line_table['g_u'] = state_table.loc[line_table['U'], 'WEIGHT'].values
+    line_table['g_l'] = state_table.loc[line_table['L'], 'WEIGHT'].values
+    # Do this again but more complicated, get the J_F1_F entries and combine them into a human-readable string
+    get_state_info = lambda line_col_name: state_table.loc[line_table[line_col_name], 'J_F1_F'].values
+    line_table['JF1F'] = [jf1f_tuple_to_string(*x) for x in zip(get_state_info('U'), get_state_info('L'))]
+    line_table.drop(columns=['U', 'L'], inplace=True)
+    del state_table
+    return line_table
+
+
 def fit_n2hp_peak():
     """
     May 5, 2022
@@ -1934,8 +2043,32 @@ def fit_n2hp_peak():
     filename_stub = "carma/n2hp_P1_peak_spectrum.dat"
     filename = catalog.utils.search_for_file(filename_stub)
     data = np.genfromtxt(filename)
-    return data
+    v_axis = data[:, 0] * u.m / u.s
+    i_axis = data[:, 1] * u.Jy/u.beam
+    freq_axis = generate_n2hp_frequency_axis()
 
+    line_table = generate_n2hp_line_table()
+    A_list, freq_list = line_table['A(s^-1)'].values, line_table['FREQ(GHz)'].values
+    rest_freq = line_table.loc[7, 'FREQ(GHz)']
+    shifted_freq = freq_axis[np.argmax(i_axis)].to_value()
+    print(shifted_freq)
+
+    ax1 = plt.subplot(211)
+    plt.plot(freq_axis.to(u.GHz), i_axis)
+    plt.gca().invert_xaxis()
+    print(v_axis.shape, freq_axis.shape)
+    ax2 = plt.subplot(212)
+    plt.plot(np.array(freq_list) + (shifted_freq - rest_freq), np.array(A_list)*1e5, 'x', markersize=10)
+    plt.plot([shifted_freq], [line_table.loc[7, 'A(s^-1)']*1e5], marker='o', mec='k', mfc=None)
+    ax2.set_xlim(ax1.get_xlim())
+
+    ax2.set_xlabel("Frequency, decreasing (GHz)")
+    ax2.set_ylabel("$A_{ij}$ ($10^{-5} s^{-1}$)")
+    ax1.set_ylabel("Observed brightness (Jy/beam)")
+
+    ax1.xaxis.set_ticklabels([])
+    plt.subplots_adjust(hspace=0)
+    plt.show()
 
 
 if __name__ == "__main__":
@@ -1957,7 +2090,7 @@ if __name__ == "__main__":
     # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', 'hcopCONV', 'cii'])
     # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'])
 
-    data = fit_n2hp_peak()
+    fit_n2hp_peak()
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
