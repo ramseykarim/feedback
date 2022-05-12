@@ -37,6 +37,7 @@ from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
 from astropy.table import Table, QTable
+from astropy import constants as const
 
 import pandas as pd
 from io import StringIO
@@ -2035,10 +2036,10 @@ def generate_n2hp_line_table():
     return line_table
 
 
-def fit_n2hp_peak():
+def plot_n2hp_lines_and_spectrum():
     """
-    May 5, 2022
-    Fit the saved N2H+ peak data. Use the line at like -8 km/s
+    May 5-12, 2022
+    Mostly testing for the fitting
     """
     filename_stub = "carma/n2hp_P1_peak_spectrum.dat"
     filename = catalog.utils.search_for_file(filename_stub)
@@ -2051,7 +2052,10 @@ def fit_n2hp_peak():
     A_list, freq_list = line_table['A(s^-1)'].values, line_table['FREQ(GHz)'].values
     rest_freq = line_table.loc[7, 'FREQ(GHz)']
     shifted_freq = freq_axis[np.argmax(i_axis)].to_value()
-    print(shifted_freq)
+    new_rest_line = line_table.loc[line_table['JF1F'] == 'J=1-0, F1=0-1, F=1-2']
+    new_rest_freq = new_rest_line['FREQ(GHz)']
+    print(new_rest_line)
+
 
     ax1 = plt.subplot(211)
     plt.plot(freq_axis.to(u.GHz), i_axis)
@@ -2059,7 +2063,8 @@ def fit_n2hp_peak():
     print(v_axis.shape, freq_axis.shape)
     ax2 = plt.subplot(212)
     plt.plot(np.array(freq_list) + (shifted_freq - rest_freq), np.array(A_list)*1e5, 'x', markersize=10)
-    plt.plot([shifted_freq], [line_table.loc[7, 'A(s^-1)']*1e5], marker='o', mec='k', mfc=None)
+    plt.plot([shifted_freq], [line_table.loc[7, 'A(s^-1)']*1e5], marker='o', mec='k', mfc='b')
+    plt.plot([new_rest_freq + shifted_freq - rest_freq], [new_rest_line['A(s^-1)']*1e5], marker='o', mec='k', mfc='orange')
     ax2.set_xlim(ax1.get_xlim())
 
     ax2.set_xlabel("Frequency, decreasing (GHz)")
@@ -2069,6 +2074,58 @@ def fit_n2hp_peak():
     ax1.xaxis.set_ticklabels([])
     plt.subplots_adjust(hspace=0)
     plt.show()
+
+
+def fit_n2hp_peak():
+    """
+    May 5-12, 2022
+    Fit the saved N2H+ peak data. Use the line at like -9 km/s
+    """
+    filename_stub = "carma/n2hp_P1_peak_spectrum.dat"
+    filename = catalog.utils.search_for_file(filename_stub)
+    data = np.genfromtxt(filename)
+    v_axis = data[:, 0] * u.m / u.s
+    i_axis = data[:, 1] * u.Jy/u.beam
+    freq_axis = generate_n2hp_frequency_axis()
+
+    line_table = generate_n2hp_line_table()
+    A_list, freq_list = line_table['A(s^-1)'].values, line_table['FREQ(GHz)'].values
+    rest_freq = line_table.loc[7, 'FREQ(GHz)'] * u.GHz
+    new_rest_line = line_table.loc[line_table['JF1F'] == 'J=1-0, F1=0-1, F=1-2'].iloc[0]
+    new_rest_freq = new_rest_line['FREQ(GHz)'] * u.GHz
+
+    """
+    Use the difference in frequency between the two lines to find a velocity offset
+    This is an alternative to going from velocity to frequency and back to velocity (more room for error there)
+    This way, I can just trust the velocity axis that exists and use only the difference between the known frequencies
+
+    Calculate the difference in velocity using two different rest frequencies:
+    Doppler shift (radio) is V(f) = c(f0 - f)/f0
+    If V1(f) is the original velocity corresponding to frequency f, given a
+    line at rest frequency f1, and V2(f) is that for another line at f2:
+    Delta V = V2(f) - V1(f) = c[ (f2-f)/f2 - (f1-f)/f1 ]
+    c * Delta V = [ f1(f2 - f) - f2(f1 - f) ] / f1f2
+    = [(f1f2 - f1f2) - f1f + f2f]/f1f2
+    = f(f2 - f1)/f1f2
+    If f1 ~ f2 ~ f, then
+    (V2 - V1)/c = (f2 - f1)/f1 = (f2 - f1)/f2
+    """
+    if False:
+        # Some debug to show that the approximation is always good to within 2%
+        x = const.c*freq_axis*(new_rest_freq - rest_freq)/(new_rest_freq*rest_freq)
+        full_new_vaxis = v_axis + x
+        y = const.c*(new_rest_freq - rest_freq)/rest_freq
+        print(y)
+        approx_new_vaxis = v_axis + y
+        diff_axis = ((full_new_vaxis - approx_new_vaxis)/np.abs(v_axis[1] - v_axis[0])).decompose()
+
+    delta_V = const.c * (new_rest_freq - rest_freq)/rest_freq
+    new_v_axis = v_axis + delta_V
+    plt.plot(new_v_axis, i_axis)
+    plt.show()
+
+
+
 
 
 if __name__ == "__main__":
