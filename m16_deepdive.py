@@ -1968,13 +1968,13 @@ def generate_n2hp_frequency_axis(debug=False):
     # Derive the axis
     frequency_array = [starting_frequency + i*frequency_interval for i in range(n_channels)] * u.GHz
     if debug:
-        velocity_array = frequency_array.to(u.km/u.s, equivalencies=u.doppler_radio(93.1721*u.GHz))
+        velocity_array = frequency_array.to(u.km/u.s, equivalencies=u.doppler_radio(rest_freq_window_1*u.GHz)) # 93.1721 is closest
         print("band_width/frequency_interval = ", band_width/frequency_interval)
         print("calculated starting, ending velocities: ", end='')
         print(velocity_array[0], ', ', velocity_array[-1])
         print("calculated velocity range: ", velocity_array[-1] - velocity_array[0])
         print("velocity range from starting_velocity, ending_velocity: ", ending_velocity-starting_velocity)
-        print(np.diff(velocity_array.to_value()).mean())
+        print("calculated velocity interval", np.diff(velocity_array.to_value()).mean())
     else:
         return frequency_array
 
@@ -2125,6 +2125,31 @@ def fit_n2hp_peak():
     plt.show()
 
 
+def save_n2hp_full_spectra(reg_filename_short, index=None):
+    """
+    May 13, 2022 (Friday the 13th!)
+    Save spectra from the large N2H+ cube as .txt.gz file.
+    This way I can load and fit them quickly
+    """
+    reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    ### must be run on jupiter or another UMD network computer
+    cube_filename = "/n/aurora1/feedback/m16/M16.ALL.n2hp.fullres.sdi.fits"
+    cube = cps2.cutout_subcube(data_filename=cube_filename, length_scale_mult=None)
+    if index is None:
+        index_list = list(range(len(sky_regions)))
+    else:
+        index_list = [index]
+    for i in index_list:
+        sky_reg = sky_regions[i]
+        reg_name = sky_reg.meta['label'].replace(' ', '-')
+        pix_coords = tuple(round(x) for x in sky_reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1])
+        spectrum = cube[(slice(None), *pix_coords)].to(u.K).to_value()
+        spectral_axis = cube.spectral_axis.to(kms).to_value()
+        savename = "n2hp_spectrum_" + reg_filename_short.replace('.reg', '') + f"_{i}.txt.gz"
+        savename = os.path.join(catalog.utils.m16_data_path+"carma", savename)
+        np.savetxt(savename, np.array([spectral_axis, spectrum]))
+        print("saved "+savename)
 
 
 
@@ -2147,7 +2172,8 @@ if __name__ == "__main__":
     # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', 'hcopCONV', 'cii'])
     # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'])
 
-    fit_n2hp_peak()
+    generate_n2hp_frequency_axis(debug=True)
+    # fit_n2hp_peak()
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
