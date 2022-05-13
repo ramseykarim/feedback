@@ -2125,13 +2125,14 @@ def fit_n2hp_peak():
     plt.show()
 
 
-def save_n2hp_full_spectra(reg_filename_short, index=None):
+def save_n2hp_full_spectra(reg_filename_short=None, index=None):
     """
     May 13, 2022 (Friday the 13th!)
     Save spectra from the large N2H+ cube as .txt.gz file.
     This way I can load and fit them quickly
     """
-    reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    if reg_filename_short is None:
+        reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     ### must be run on jupiter or another UMD network computer
     cube_filename = "/n/aurora1/feedback/m16/M16.ALL.n2hp.fullres.sdi.fits"
@@ -2176,8 +2177,9 @@ if __name__ == "__main__":
     # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', 'hcopCONV', 'cii'])
     # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'])
 
-    generate_n2hp_frequency_axis(debug=True)
+    # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak()
+    save_n2hp_full_spectra()
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
