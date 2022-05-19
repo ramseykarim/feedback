@@ -887,7 +887,7 @@ def make_quick_image():
     plt.show()
 
 
-def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
+def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1):
     """
     Created October 27 2021, 25 minutes before my meeting
     Let's do this
@@ -922,19 +922,38 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     Also, should standardize the way I put in regions (commented filenames
     are messy)
     April 22, 2022: This is so much better!
+
+    May 19, 2022 (astro commencement is today I think)
+    I am going to try to make this do Pillar 2 as well.
+    I have regions in catalogs/pillar2_pointsofinterest.reg (point regions)
     """
     # reg_filename_short = "catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg" # order appears to be [HCO+, CII]
     # reg_filename_short = "catalogs/p1_threads_pathsandpoints.reg" # order appears to be North-E, North-W, South-E, South-W
     # reg_filename_short = "catalogs/pillar1_pointsofinterest.reg" # order is wide profile, blue tail, north of west thread, bluest component, top of western thread (where IRAC4 peaks), above western thread (where IRAC4 is dark)
     # reg_filename_short = "catalogs/pillar1_peak_degeneracyboundary.reg" # order is 3 component peak, 2 component peak
-    reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    if pillar == 1:
+        reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    elif pillar == 2:
+        reg_filename_short = "catalogs/pillar2_pointsofinterest.reg"
     sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     # print("There are ", len(sky_regions), " regions")
     # now supporting multiple selected_regions
-    # selected_region_list = [sky_regions[0]]
-    # selected_region_list = [sky_regions[x-1] for x in [3, 6, 4, 7]] # threads (3, 4 works good, 6, 7 are noisier)
-    selected_region_list = [sky_regions[x-1] for x in [1, 2, 8, 5]] # head
-    # selected_region_list = [sky_regions[x-1] for x in [4, 8, 5]] # Wthread
+    if pillar == 1:
+        # selected_region_list = [sky_regions[0]]
+        # selected_region_list = [sky_regions[x-1] for x in [3, 6, 4, 7]] # threads (3, 4 works good, 6, 7 are noisier)
+        selected_region_list = [sky_regions[x-1] for x in [1, 2, 8, 5]] # head
+        # selected_region_list = [sky_regions[x-1] for x in [4, 8, 5]] # Wthread
+    elif pillar == 2:
+        """
+        Order is
+        1: N, 2: E-mid-N, 3: W-mid-N
+        4: E-mid-S, 5: W-mid-S
+        6: E-W, 7: W-S, 8: S
+        9: ALT-North, 10: ALT-South
+        """
+        # selected_region_list = [sky_regions[x-1] for x in [1, 2, 3]]
+        # selected_region_list = [sky_regions[x-1] for x in [4, 5, 6, 7]]
+        selected_region_list = [sky_regions[x-1] for x in [8, 9, 10]]
     if len(selected_region_list) > 1:
         pixel_name = "-and-".join([reg.meta['label'].replace(" ", '-') for reg in selected_region_list])
     else:
@@ -950,7 +969,10 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         '12co10CONV': (-5, 120)
     }
 
-    vel_lims = (24, 27)
+    if pillar == 1:
+        vel_lims = (24, 27)
+    elif pillar == 2:
+        vel_lims = (21, 24)
 
     img_vmin = { # these are all for 1 km/s moment, so multiply by km/s width of moment
         'hcopCONV': 0, '13co10CONV': 0,
@@ -1002,20 +1024,27 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     axes_img = [plt.subplot2grid(grid_shape, (i, grid_shape[1]-1)) for i in range(n_lines)]
 
     # Set up initial model for fitting
+    if pillar == 1:
+        default_mean = 25.
+        mean_bounds = (20, 30)
+    elif pillar == 2:
+        default_mean = 22.
+        mean_bounds = (18, 24)
+
     stddev_hcop = 0.47
-    g0 = cps2.models.Gaussian1D(amplitude=7, mean=25., stddev=stddev_hcop,
-        bounds={'amplitude': (0, None), 'mean': (20, 30)})
+    g0 = cps2.models.Gaussian1D(amplitude=7, mean=default_mean, stddev=stddev_hcop,
+        bounds={'amplitude': (0, None), 'mean': mean_bounds})
     if n_components > 1:
         g1 = g0.copy()
         if n_components > 2:
             g2 = g0.copy()
-            g0.mean = 23.5
-            g1.mean = 24.5
-            g2.mean = 25.5
+            g0.mean = default_mean - 1.5
+            g1.mean = default_mean - 0.5
+            g2.mean = default_mean + 0.5
             g = g0 + g1 + g2
         else:
-            g0.mean = 24
-            g1.mean = 25
+            g0.mean = default_mean - 1
+            g1.mean = default_mean
             g = g0 + g1
     else:
         g = g0
@@ -1033,10 +1062,14 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     have len==len(selected_region_list)
     """
     model_list = []
+    if pillar == 1:
+        cutout_args = dict(length_scale_mult=4)
+    elif pillar == 2:
+        cutout_args = dict(length_scale_mult=3, reg_filename='catalogs/pillar2_across.reg', reg_index=2)
 
     for line_idx, line_name in enumerate(line_names_list):
         # Extract spectra at each region
-        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], length_scale_mult=4)
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], **cutout_args)
         if line_name.replace('CONV', '') in ('hcn', 'n2hp', '13co10'):
             # Get rid of satellite lines and negatives
             full_cube = cube
@@ -1086,7 +1119,7 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
                 # dx = pad if reg_idx else -pad
                 # dy = pad
                 dx, dy = 0, 0
-                axes_img[line_idx].text(pix_coords[1]+dx, pix_coords[0]+dy, str(reg_idx + 1), color='k', fontsize=12, ha='center', va='center')
+                axes_img[line_idx].text(pix_coords[1]+dx, pix_coords[0]+dy, str(reg_idx + 1), color='r', fontsize=12, ha='center', va='center')
 
             # Plot noise stuff on spectrum Axes
             cps2.plot_noise_and_vlims(axes_spec[line_idx][reg_idx], channel_noise, vel_lims)
@@ -1126,7 +1159,11 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         ax.yaxis.set_tick_params(direction='in', which='both')
     for ax in sum(axes_spec, []):
         ax.set_xlim([17, 30])
-        for v in range(22, 28):
+        if pillar == 1:
+            velocity_gridline_range = (22, 28)
+        elif pillar == 2:
+            velocity_gridline_range = (18, 24)
+        for v in range(*velocity_gridline_range):
             ax.axvline(v, color='gray', alpha=0.2)
     for line_name, ax in zip(line_names_list, axes_img):
         # ax.xaxis.set_ticklabels([])
@@ -1148,6 +1185,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     plt.tight_layout()
     plt.subplots_adjust(hspace=0, wspace=0)
 
+    pillar_stub = "" if pillar == 1 else f"p{pillar}_"
+
     fixedstd_stub = f"_fixedstd{stddev_hcop:04.2f}" if fixedstd else ''
     tiestd_stub = f"_hcopUNtiedstd" if not tiestd else ''
 
@@ -1159,11 +1198,11 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         fixedmean_stub = ''
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
-    # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28
+    # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03
     # fig.savefig(f"/home/ramsey/Pictures/2022-04-28/threads/fit_{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.png",
     #     metadata=catalog.utils.create_png_metadata(title=f'regions from {reg_filename_short}',
     #         file=__file__, func='fit_molecular_and_cii_with_gaussians'))
-    fig.savefig(f"/home/ramsey/Pictures/2022-05-03/head/tiedstd/fit_{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.pdf")
+    fig.savefig(f"/home/ramsey/Pictures/2022-05-19/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.pdf")
 
     # plt.show()
 
@@ -2076,16 +2115,16 @@ def plot_n2hp_lines_and_spectrum():
     plt.show()
 
 
-def fit_n2hp_peak():
+def fit_n2hp_peak(i=5):
     """
     May 5-12, 2022
     Fit the saved N2H+ peak data. Use the line at like -9 km/s
     """
-    filename_stub = "carma/n2hp_P1_peak_spectrum.dat"
+    filename_stub = f"carma/n2hp_fullres/n2hp_spectrum_pillar1_pointsofinterest_v3_{i-1}.txt.gz"
     filename = catalog.utils.search_for_file(filename_stub)
-    data = np.genfromtxt(filename)
-    v_axis = data[:, 0] * u.m / u.s
-    i_axis = data[:, 1] * u.Jy/u.beam
+    data = np.loadtxt(filename)
+    v_axis = data[0, :] * u.m / u.s
+    i_axis = data[1, :] * u.Jy/u.beam
     freq_axis = generate_n2hp_frequency_axis()
 
     line_table = generate_n2hp_line_table()
@@ -2121,8 +2160,29 @@ def fit_n2hp_peak():
 
     delta_V = const.c * (new_rest_freq - rest_freq)/rest_freq
     new_v_axis = v_axis + delta_V
-    plt.plot(new_v_axis, i_axis)
+
+    mask = new_v_axis < 30*u.km/u.s
+    trimmed_v_axis = new_v_axis[mask].to(u.km/u.s)
+    trimmed_i_axis = i_axis[mask]
+
+    # plt.plot(v_axis, i_axis)
+    # plt.show()
+    # return
+
+    # plt.plot(new_v_axis, i_axis); plt.title(f"{i}"); plt.show()
+    g0 = cps2.models.Gaussian1D(amplitude=3, mean=25., stddev=0.45,
+        bounds={'amplitude': (0, None), 'mean': (20, 30)})
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    ndim = len(get_fittable_param_names(g0))
+    g_fit = fitter(g0, trimmed_v_axis, trimmed_i_axis, weights=np.full(trimmed_i_axis.size, 1.0/cube_utils.onesigmas['n2hp']))
+
+    fig = plt.figure(figsize=(12, 8))
+    # ax_img = plt.subplot(121)
+    ax_spec = plt.subplot(111)
+    cps2.plot_noise_and_vlims(ax_spec, cube_utils.onesigmas['n2hp'], None)
+    cps2.plot_everything_about_models(ax_spec, trimmed_v_axis, trimmed_i_axis, g_fit, noise=cube_utils.onesigmas['n2hp'], dof=(trimmed_i_axis.size - ndim))
     plt.show()
+
 
 
 def save_n2hp_full_spectra(reg_filename_short=None, index=None):
@@ -2174,12 +2234,12 @@ if __name__ == "__main__":
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
     # for i in range(1, 4):
-    # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', 'hcopCONV', 'cii'])
-    # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'])
+    fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=2)
+    fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=2)
 
     # generate_n2hp_frequency_axis(debug=True)
-    # fit_n2hp_peak()
-    save_n2hp_full_spectra()
+    # fit_n2hp_peak(5)
+    # save_n2hp_full_spectra()
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
