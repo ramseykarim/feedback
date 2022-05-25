@@ -2217,8 +2217,86 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
         print("saved "+savename)
 
 
+def test_optical_molecular_pillar_2_thing():
+    """
+    May 24, 2022
+    Just a test
+    """
+    vel_lims_wrongshape = (21, 22)
+    vel_lims_rightshape = (22, 23)
+    full_vel_lims = (19, 25)
+    lines = ['hcop', 'cs', 'n2hp']
+    for line in lines:
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line], length_scale_mult=None)
+        if line == 'n2hp':
+            ...
+        else:
+            for j, vel_lims in enumerate((vel_lims_rightshape, vel_lims_wrongshape)):
+                stub = ['shape', 'complement'][j]
+                vel_lims_q = (v*kms for v in vel_lims)
+                mom0 = cube.spectral_slab(*vel_lims_q).moment0()
+                mom0.write(f"/home/ramsey/Downloads/{line}_{stub}.fits")
+    print("done")
+
+
+def integrate_13_and_18_co_for_column_density():
+    """
+    May 25, 2022
+    Following Mangum and Shirley 2015 (really nice paper)
+    Integrate 13co and c18o between 19-27.3 km/s (27.3 to avoid the other cloud)
+    and save that for the column density calculation
+    """
+    lines = ['13co10', 'c18o10']
+    vel_lims = [v*kms for v in (19, 27.3)]
+    for line in lines:
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line], length_scale_mult=None)
+        subcube = cube.spectral_slab(*vel_lims)
+        mom0 = subcube.moment0().to(u.K*kms)
+        # Noise calculation
+        channel_noise = cube_utils.onesigmas[line]
+        cube_dv = np.abs(np.diff(cube.spectral_axis[:2]))[0].to(kms).to_value()
+        nchannels = subcube.shape[0]
+        noise = channel_noise * cube_dv * np.sqrt(nchannels)
+        # Save and keep noise as comment
+        savename = os.path.join(cps2.cube_info['dir'], f"{line}_19-27.3_integrated.fits")
+        header = mom0.header.copy()
+        start_flag = "<error>"
+        end_flag = "</error>"
+        header['COMMENT'] = f'{start_flag}{noise:.3f} K km s-1{end_flag}'
+        header['HISTORY'] = 'Ramsey wrote this on May 25, 2022 using code in'
+        header['HISTORY'] = 'm16_deepdive.integrate_13_and_18_co_for_column_density'
+        hdu = fits.PrimaryHDU(data=mom0.array, header=header)
+        hdu.writeto(savename)
+
+
+def extract_noise_from_hdr(hdr):
+    """
+    May 25, 2022
+    Following the function above, extract noise as I put it in the header
+    :param hdr: FITS Header that I wrote using the function:
+        m16_deepdive.integrate_13_and_18_co_for_column_density()
+    """
+    start_flag = "<error>"
+    end_flag = "</error>"
+    start_n = str(hdr['COMMENT']).find(start_flag)
+    end_n = str(hdr['COMMENT']).find(end_flag)
+    noise = str(hdr['COMMENT'])[start_n + len(start_flag):end_n]
+    return u.Quantity(noise)
+
+
+def get_excitation_temperature_12co():
+    """
+    May ??, 2022: TODO
+    I think this will be just like the peak temperature function I already wrote at some point.
+    then just slap channel errors on it and can propagate them from there
+    """
+    ...
+
+
 
 if __name__ == "__main__":
+    integrate_13_and_18_co_for_column_density()
+
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
     # Sigmas = [1, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05]
@@ -2234,8 +2312,9 @@ if __name__ == "__main__":
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
     # for i in range(1, 4):
-    fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=2)
-    fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=2)
+
+    # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=2)
+    # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=2)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
