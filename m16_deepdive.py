@@ -2286,16 +2286,87 @@ def extract_noise_from_hdr(hdr):
 
 def get_excitation_temperature_12co():
     """
-    May ??, 2022: TODO
+    May 30, 2022
     I think this will be just like the peak temperature function I already wrote at some point.
     then just slap channel errors on it and can propagate them from there
+    Yeah so I did peak temperature in m16_investigation.peak_temperature(),
+    and for that I just did a max() within a spectral_slab
     """
-    ...
+    line = '12co10'
+    vel_lims = [v*kms for v in (19, 27.3)]
+    cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line], length_scale_mult=None)
+    subcube = cube.spectral_slab(*vel_lims)
+    peak_temperature = subcube.max(axis=0).to(u.K)
+    channel_noise = cube_utils.onesigmas[line]
+    savename = os.path.join(cps2.cube_info['dir'], f"{line}_19-27.3_peak.fits")
+    header = peak_temperature.header.copy()
+    start_flag = "<error>"
+    end_flag = "</error>"
+    header['COMMENT'] = f"{start_flag}{channel_noise} K{end_flag}"
+    header['HISTORY'] = "Ramsey wrote this on May 30 using code in"
+    header['HISTORY'] = "m16_deepdive.get_excitation_temperature_12co"
+    hdu = fits.PrimaryHDU(data=peak_temperature.array, header=header)
+    hdu.writeto(savename)
+
+
+def calculate_co_column_density():
+    """
+    May 30, 2022
+    Putting this all together and trying to calculate 13CO column density
+    I could extend this to C18O later, but I'll start with the easier one
+    N(13CO) = 4pi epsilon0 *
+        (3 kB / 8pi^3 nu S mu^2) *
+        (Qrot / g) *
+        (exp(Eu / kTex)) *
+        integrated intensity
+    where
+        S = Ju / (2Ju + 1)
+        g = 2Ju + 1
+        Qrot = (kTex / hB0) + 1/3
+    and constants
+        Eu = 5.28880 K
+        B0 = 55101.01 MHz
+        mu = 0.11046 Debye
+        nu = 110.20135400 GHz
+        Ju = 1
+    """
+    # Build up all the constants
+    # Already defined in astropy.constants
+    # const.k_B, const.eps0, const.h
+    #
+    B0 = 55101.01 * u.MHz
+    Eu = 5.28880 * u.K
+    mu = 0.11046 * u.Debye
+    nu = 110.20135400 * u.GHz
+    Ju = 1.
+    g = 2.*Ju + 1
+    S = Ju/g
+    # Prefactors (after cancelling a factor of 4pi from top and bottom)
+    prefactor_numerator = const.eps0 * 3 * const.k_B
+    prefactor_denominator = 2 * np.pi**2 * nu * S * mu**2
+    # Load in Tex and integrated intensity
+    Tex_unitless, Texhdr = fits.getdata(catalog.utils.search_for_file("bima/12co10_19-27.3_peak.fits"), header=True)
+    # Tex more often used as kTex (and put units)
+    Tex = Tex_unitless*u.K
+    integrated_intensity_unitless, intT_hdr = fits.getdata(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"), header=True)
+    integrated_intensity = integrated_intensity_unitless*u.K*kms
+    # Rotational partition function
+    Qrot = (const.k_B * Tex / (const.h * B0)).decompose() + (1./3.)
+    # exponential term
+    exp_term = np.exp(Eu / Tex)
+    # All together
+    N13CO = ((prefactor_numerator/prefactor_denominator) * (Qrot/g) * exp_term * integrated_intensity).to(u.cm**-2)
+    plt.imshow(N13CO.to_value(), origin='lower')
+    plt.show()
+
+
+
+
 
 
 
 if __name__ == "__main__":
-    integrate_13_and_18_co_for_column_density()
+    calculate_co_column_density()
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
