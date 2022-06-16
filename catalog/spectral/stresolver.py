@@ -154,7 +154,11 @@ class STResolver:
                         # OB star; add the original and adjacent possibilities
                         # Adjacent list contains original, so we will have 2 copies of original
                         # This is intentional, to weight towards original type
-                        full_possibilities_list.extend(parse_sptype.st_adjacent(st_tuple))
+                        try:
+                            full_possibilities_list.extend(parse_sptype.st_adjacent(st_tuple))
+                        except:
+                            print(st_tuple)
+                            raise RuntimeError
                         full_possibilities_list.append(st_tuple)
                     else:
                         # Nonstandard type; just throw it in, it won't matter
@@ -622,7 +626,8 @@ class STResolver:
         :param st_tuple: standard tuple format of spectral type
         :returns: boolean, True if main sequence
         """
-        return st_tuple[0] in parse_sptype.standard_types
+        # return st_tuple[0] in parse_sptype.standard_types
+        return parse_sptype.is_valid_star(parse_sptype.st_to_number(st_tuple))
 
     @staticmethod
     def isWR(st_tuple):

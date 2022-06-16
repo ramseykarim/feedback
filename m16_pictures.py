@@ -1362,13 +1362,53 @@ def advanced_mom0_carma_molecules():
     # plt.show()
 
 
+def hh216_co32():
+    """
+    June 14, 2022
+    Follow up John Bally's interest in HH216 in the FEEDBACK meeting this morning
+    I couldn't find a direct obvious counterpart to the HH in any CARMA map,
+    and it's outside the FOV of the BIMA data, but I did notice a feature at
+    around 34 km/s in APEX 12CO 3-2.
+    Marc suggested I make a channel map from 32 to 36 or so to see where that
+    feature goes
+    I think my plan here is to make a channel map in that interval, make another
+    one between 17-30 (pillars) and contour that one over the image of 32-36.
+    I have regions highlighting HH 216 in catalogs/hh216.reg (a line and a circle)
+    """
+    cube = SpectralCube.read(catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits"))
+    # cube = cube[:, 50:100, 70:120]
+    pillar_vlims = (17*kms, 30*kms)
+    mom0_pillars = cube.spectral_slab(*pillar_vlims).moment0().to(u.K*kms)
+    feature_vlims = (32*kms, 36*kms)
+    mom0_feature = cube.spectral_slab(*feature_vlims).moment0().to(u.K*kms)
+
+    fig = plt.figure(figsize=(12, 10))
+    ax = plt.subplot(111, projection=mom0_feature.wcs)
+    im = ax.imshow(mom0_feature.to_value())
+    fig.colorbar(im, ax=ax, label="$^{12}$CO (3$-$2) integrated intensity (K km/s)")
+    ax.contour(mom0_pillars.to_value(), levels=np.arange(15, 245, 45), linewidths=1, colors='r', alpha=0.5)
+    ax.set_title("$^{12}$CO (3$-$2) moment 0 highlighting high velocity feature towards HH 216")
+    ax.text(0.05, 0.95, "Image: "+make_vel_stub(feature_vlims), transform=ax.transAxes, ha='left', va='top', color='white')
+    ax.text(0.05, 0.9, "Contours: "+make_vel_stub(pillar_vlims), transform=ax.transAxes, ha='left', va='top', color='white')
+
+    reg_list = regions.Regions.read(catalog.utils.search_for_file('catalogs/hh216.reg'))
+    for reg in reg_list:
+        reg.visual['width'] = 1
+        reg.to_pixel(mom0_feature.wcs).plot(ax=ax, color='k', alpha=0.8)
+
+    fig.savefig("/home/ramsey/Pictures/2022-06-14/hh216_co32_channel_large.png",
+        metadata=catalog.utils.create_png_metadata(title='17,30 pillars 32,36 feature, contours range 15,245,45',
+            file=__file__, func="hh216_co32"), dpi=150)
+
+
 if __name__ == "__main__":
     # m16_channel_maps()
     # save_fits_thin_channel_maps()
     # single_parallel_pillar_pvs() # most recently uncommented (april 21, 2022)
 
     # simple_mom0_carma_molecules('cii')
-    advanced_mom0_carma_molecules()
+    # advanced_mom0_carma_molecules()
+    hh216_co32()
 
     # justify_background_figure()
     # background_samples_figure_molecular()
