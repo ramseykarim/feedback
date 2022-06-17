@@ -887,7 +887,7 @@ def make_quick_image():
     plt.show()
 
 
-def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
+def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, select=0):
     """
     Created October 27 2021, 25 minutes before my meeting
     Let's do this
@@ -922,19 +922,56 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     Also, should standardize the way I put in regions (commented filenames
     are messy)
     April 22, 2022: This is so much better!
+
+    May 19, 2022 (astro commencement is today I think)
+    I am going to try to make this do Pillar 2 as well.
+    I have regions in catalogs/pillar2_pointsofinterest.reg (point regions)
+
+    June 3, 2022 (Guangwei's defense yesterday)
+    I will update for P3 now too. I made 4 points in
+    catalogs/pillar3_pointsofinterest.reg (point regions)
     """
     # reg_filename_short = "catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg" # order appears to be [HCO+, CII]
     # reg_filename_short = "catalogs/p1_threads_pathsandpoints.reg" # order appears to be North-E, North-W, South-E, South-W
     # reg_filename_short = "catalogs/pillar1_pointsofinterest.reg" # order is wide profile, blue tail, north of west thread, bluest component, top of western thread (where IRAC4 peaks), above western thread (where IRAC4 is dark)
     # reg_filename_short = "catalogs/pillar1_peak_degeneracyboundary.reg" # order is 3 component peak, 2 component peak
-    reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    if pillar == 1:
+        reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    elif pillar == 2:
+        reg_filename_short = "catalogs/pillar2_pointsofinterest.reg"
+    elif pillar == 3:
+        reg_filename_short = "catalogs/pillar3_pointsofinterest.reg"
     sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     # print("There are ", len(sky_regions), " regions")
     # now supporting multiple selected_regions
-    # selected_region_list = [sky_regions[0]]
-    # selected_region_list = [sky_regions[x-1] for x in [3, 6, 4, 7]] # threads (3, 4 works good, 6, 7 are noisier)
-    selected_region_list = [sky_regions[x-1] for x in [1, 2, 8, 5]] # head
-    # selected_region_list = [sky_regions[x-1] for x in [4, 8, 5]] # Wthread
+    if pillar == 1:
+        # selected_region_list = [sky_regions[0]]
+        if select == 0:
+            selected_region_list = [sky_regions[x-1] for x in [3, 6, 4, 7]] # threads (3, 4 works good, 6, 7 are noisier)
+        elif select == 1:
+            selected_region_list = [sky_regions[x-1] for x in [1, 2, 8, 5]] # head
+        elif select == 2:
+            selected_region_list = [sky_regions[x-1] for x in [4, 8, 5]] # Wthread
+    elif pillar == 2:
+        """
+        Order is
+        1: N, 2: E-mid-N, 3: W-mid-N
+        4: E-mid-S, 5: W-mid-S
+        6: E-W, 7: W-S, 8: S
+        9: ALT-North, 10: ALT-South
+        """
+        if select == 0:
+            selected_region_list = [sky_regions[x-1] for x in [1, 2, 3]]
+        elif select == 1:
+            selected_region_list = [sky_regions[x-1] for x in [4, 5, 6, 7]]
+        elif select == 2:
+            selected_region_list = [sky_regions[x-1] for x in [8, 9, 10]]
+    elif pillar == 3:
+        """
+        Order is N, S, E, Center
+        I probably want N Center E S
+        """
+        selected_region_list = [sky_regions[x-1] for x in [1, 4, 3, 2]]
     if len(selected_region_list) > 1:
         pixel_name = "-and-".join([reg.meta['label'].replace(" ", '-') for reg in selected_region_list])
     else:
@@ -950,11 +987,16 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         '12co10CONV': (-5, 120)
     }
 
-    vel_lims = (24, 27)
+    if pillar == 1:
+        vel_lims = (24, 27)
+    elif pillar == 2:
+        vel_lims = (21, 24)
+    elif pillar == 3:
+        vel_lims = (21, 24)
 
     img_vmin = { # these are all for 1 km/s moment, so multiply by km/s width of moment
         'hcopCONV': 0, '13co10CONV': 0,
-        'cii': 10., 'hcn': 1./3,
+        'cii': 10. if pillar!=3 else 5., 'hcn': 1./3,
         'hcnCONV': 0, 'n2hpCONV': None,
         'csCONV': 0,
         '12co10': 10, 'hcop': 1./3,
@@ -962,12 +1004,18 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         '12co10CONV': 10.,
     }
 
+    img_vmax = { # same deal as above. Only used for pillar 3!!!!!!!!
+        'hcopCONV': 2, '13co10CONV': None,
+        'hcnCONV': 2, '12co10CONV': 75./3,
+        'cii':55./3
+    }
+
     # Decide which things are fixed in the models
     fixedstd = False
     tiestd = True
     untieciistd = False
     fixed_cii_std = False
-    fixedmean = True
+    fixedmean = False
 
 
     # Process list of line names
@@ -1002,20 +1050,30 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     axes_img = [plt.subplot2grid(grid_shape, (i, grid_shape[1]-1)) for i in range(n_lines)]
 
     # Set up initial model for fitting
+    if pillar == 1:
+        default_mean = 25.
+        mean_bounds = (20, 30)
+    elif pillar == 2:
+        default_mean = 22.
+        mean_bounds = (18, 24)
+    elif pillar == 3:
+        default_mean = 22.
+        mean_bounds = (18, 24)
+
     stddev_hcop = 0.47
-    g0 = cps2.models.Gaussian1D(amplitude=7, mean=25., stddev=stddev_hcop,
-        bounds={'amplitude': (0, None), 'mean': (20, 30)})
+    g0 = cps2.models.Gaussian1D(amplitude=7, mean=default_mean, stddev=stddev_hcop,
+        bounds={'amplitude': (0, None), 'mean': mean_bounds})
     if n_components > 1:
         g1 = g0.copy()
         if n_components > 2:
             g2 = g0.copy()
-            g0.mean = 23.5
-            g1.mean = 24.5
-            g2.mean = 25.5
+            g0.mean = default_mean - 1.5
+            g1.mean = default_mean - 0.5
+            g2.mean = default_mean + 0.5
             g = g0 + g1 + g2
         else:
-            g0.mean = 24
-            g1.mean = 25
+            g0.mean = default_mean - 1
+            g1.mean = default_mean
             g = g0 + g1
     else:
         g = g0
@@ -1033,10 +1091,16 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     have len==len(selected_region_list)
     """
     model_list = []
+    if pillar == 1:
+        cutout_args = dict(length_scale_mult=4)
+    elif pillar == 2:
+        cutout_args = dict(length_scale_mult=3, reg_filename='catalogs/pillar2_across.reg', reg_index=2)
+    elif pillar == 3:
+        cutout_args = dict(length_scale_mult=1.3, reg_filename='catalogs/parallelpillars_2.reg', reg_index=5)
 
     for line_idx, line_name in enumerate(line_names_list):
         # Extract spectra at each region
-        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], length_scale_mult=4)
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], **cutout_args)
         if line_name.replace('CONV', '') in ('hcn', 'n2hp', '13co10'):
             # Get rid of satellite lines and negatives
             full_cube = cube
@@ -1050,7 +1114,11 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         cube_x = cube.spectral_axis.to_value()
         # PLOT IMAGE!!!
         vmin = None if img_vmin[line_name] is None else img_vmin[line_name]*(vel_lims[1] - vel_lims[0])
-        im = axes_img[line_idx].imshow(cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower', cmap='Greys', vmin=vmin)
+        if pillar == 3:
+            vmax = None if ((line_name not in img_vmax) or (img_vmax[line_name] is None)) else img_vmax[line_name]*(vel_lims[1]-vel_lims[0])
+        else:
+            vmax = None
+        im = axes_img[line_idx].imshow(cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower', cmap='Blues', vmin=vmin, vmax=vmax)
         fig.colorbar(im, ax=axes_img[line_idx])
         # PLOT BEAM!!!
         patch = cube.beam.ellipse_to_plot(*(axes_img[line_idx].transAxes + axes_img[line_idx].transData.inverted()).transform([0.9, 0.06]), misc_utils.get_pixel_scale(cube[0, :, :].wcs))
@@ -1086,7 +1154,7 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
                 # dx = pad if reg_idx else -pad
                 # dy = pad
                 dx, dy = 0, 0
-                axes_img[line_idx].text(pix_coords[1]+dx, pix_coords[0]+dy, str(reg_idx + 1), color='k', fontsize=12, ha='center', va='center')
+                axes_img[line_idx].text(pix_coords[1]+dx, pix_coords[0]+dy, str(reg_idx + 1), color='r', fontsize=12, ha='center', va='center')
 
             # Plot noise stuff on spectrum Axes
             cps2.plot_noise_and_vlims(axes_spec[line_idx][reg_idx], channel_noise, vel_lims)
@@ -1097,6 +1165,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
                 if fixedmean:
                     g_init = model_list[template_index][reg_idx].copy()
                     cps2.fix_mean(g_init)
+                else:
+                    g_init = g.copy()
                 cps2.tie_std_models(g_init, untie=untieciistd)
                 if not fixed_cii_std:
                     cps2.unfix_std(g_init)
@@ -1126,7 +1196,13 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         ax.yaxis.set_tick_params(direction='in', which='both')
     for ax in sum(axes_spec, []):
         ax.set_xlim([17, 30])
-        for v in range(22, 28):
+        if pillar == 1:
+            velocity_gridline_range = (22, 28)
+        elif pillar == 2:
+            velocity_gridline_range = (18, 24)
+        elif pillar == 3:
+            velocity_gridline_range = (18, 24)
+        for v in range(*velocity_gridline_range):
             ax.axvline(v, color='gray', alpha=0.2)
     for line_name, ax in zip(line_names_list, axes_img):
         # ax.xaxis.set_ticklabels([])
@@ -1148,6 +1224,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
     plt.tight_layout()
     plt.subplots_adjust(hspace=0, wspace=0)
 
+    pillar_stub = "" if pillar == 1 else f"p{pillar}_"
+
     fixedstd_stub = f"_fixedstd{stddev_hcop:04.2f}" if fixedstd else ''
     tiestd_stub = f"_hcopUNtiedstd" if not tiestd else ''
 
@@ -1159,11 +1237,12 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None):
         fixedmean_stub = ''
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
-    # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28
+    # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03, 2022-05-19,
+    # 2022-06-03,
     # fig.savefig(f"/home/ramsey/Pictures/2022-04-28/threads/fit_{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.png",
     #     metadata=catalog.utils.create_png_metadata(title=f'regions from {reg_filename_short}',
     #         file=__file__, func='fit_molecular_and_cii_with_gaussians'))
-    fig.savefig(f"/home/ramsey/Pictures/2022-05-03/head/tiedstd/fit_{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.pdf")
+    fig.savefig(f"/home/ramsey/Pictures/2022-06-07/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.pdf")
 
     # plt.show()
 
@@ -2076,16 +2155,16 @@ def plot_n2hp_lines_and_spectrum():
     plt.show()
 
 
-def fit_n2hp_peak():
+def fit_n2hp_peak(i=5):
     """
     May 5-12, 2022
     Fit the saved N2H+ peak data. Use the line at like -9 km/s
     """
-    filename_stub = "carma/n2hp_P1_peak_spectrum.dat"
+    filename_stub = f"carma/n2hp_fullres/n2hp_spectrum_pillar1_pointsofinterest_v3_{i-1}.txt.gz"
     filename = catalog.utils.search_for_file(filename_stub)
-    data = np.genfromtxt(filename)
-    v_axis = data[:, 0] * u.m / u.s
-    i_axis = data[:, 1] * u.Jy/u.beam
+    data = np.loadtxt(filename)
+    v_axis = data[0, :] * u.m / u.s
+    i_axis = data[1, :] * u.Jy/u.beam
     freq_axis = generate_n2hp_frequency_axis()
 
     line_table = generate_n2hp_line_table()
@@ -2121,8 +2200,29 @@ def fit_n2hp_peak():
 
     delta_V = const.c * (new_rest_freq - rest_freq)/rest_freq
     new_v_axis = v_axis + delta_V
-    plt.plot(new_v_axis, i_axis)
+
+    mask = new_v_axis < 30*u.km/u.s
+    trimmed_v_axis = new_v_axis[mask].to(u.km/u.s)
+    trimmed_i_axis = i_axis[mask]
+
+    # plt.plot(v_axis, i_axis)
+    # plt.show()
+    # return
+
+    # plt.plot(new_v_axis, i_axis); plt.title(f"{i}"); plt.show()
+    g0 = cps2.models.Gaussian1D(amplitude=3, mean=25., stddev=0.45,
+        bounds={'amplitude': (0, None), 'mean': (20, 30)})
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    ndim = len(get_fittable_param_names(g0))
+    g_fit = fitter(g0, trimmed_v_axis, trimmed_i_axis, weights=np.full(trimmed_i_axis.size, 1.0/cube_utils.onesigmas['n2hp']))
+
+    fig = plt.figure(figsize=(12, 8))
+    # ax_img = plt.subplot(121)
+    ax_spec = plt.subplot(111)
+    cps2.plot_noise_and_vlims(ax_spec, cube_utils.onesigmas['n2hp'], None)
+    cps2.plot_everything_about_models(ax_spec, trimmed_v_axis, trimmed_i_axis, g_fit, noise=cube_utils.onesigmas['n2hp'], dof=(trimmed_i_axis.size - ndim))
     plt.show()
+
 
 
 def save_n2hp_full_spectra(reg_filename_short=None, index=None):
@@ -2157,8 +2257,224 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
         print("saved "+savename)
 
 
+def test_optical_molecular_pillar_2_thing():
+    """
+    May 24, 2022
+    Just a test
+    """
+    vel_lims_wrongshape = (21, 22)
+    vel_lims_rightshape = (22, 23)
+    full_vel_lims = (19, 25)
+    lines = ['hcop', 'cs', 'n2hp']
+    for line in lines:
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line], length_scale_mult=None)
+        if line == 'n2hp':
+            ...
+        else:
+            for j, vel_lims in enumerate((vel_lims_rightshape, vel_lims_wrongshape)):
+                stub = ['shape', 'complement'][j]
+                vel_lims_q = (v*kms for v in vel_lims)
+                mom0 = cube.spectral_slab(*vel_lims_q).moment0()
+                mom0.write(f"/home/ramsey/Downloads/{line}_{stub}.fits")
+    print("done")
+
+
+def integrate_13_and_18_co_for_column_density():
+    """
+    May 25, 2022
+    Following Mangum and Shirley 2015 (really nice paper)
+    Integrate 13co and c18o between 19-27.3 km/s (27.3 to avoid the other cloud)
+    and save that for the column density calculation
+    """
+    lines = ['13co10', 'c18o10']
+    vel_lims = [v*kms for v in (19, 27.3)]
+    for line in lines:
+        cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line], length_scale_mult=None)
+        subcube = cube.spectral_slab(*vel_lims)
+        mom0 = subcube.moment0().to(u.K*kms)
+        # Noise calculation
+        channel_noise = cube_utils.onesigmas[line]
+        cube_dv = np.abs(np.diff(cube.spectral_axis[:2]))[0].to(kms).to_value()
+        nchannels = subcube.shape[0]
+        noise = channel_noise * cube_dv * np.sqrt(nchannels)
+        # Save and keep noise as comment
+        savename = os.path.join(cps2.cube_info['dir'], f"{line}_19-27.3_integrated.fits")
+        header = mom0.header.copy()
+        start_flag = "<error>"
+        end_flag = "</error>"
+        header['COMMENT'] = f'{start_flag}{noise:.3f} K km s-1{end_flag}'
+        header['HISTORY'] = 'Ramsey wrote this on May 25, 2022 using code in'
+        header['HISTORY'] = 'm16_deepdive.integrate_13_and_18_co_for_column_density'
+        hdu = fits.PrimaryHDU(data=mom0.array, header=header)
+        hdu.writeto(savename)
+
+
+def extract_noise_from_hdr(hdr):
+    """
+    May 25, 2022
+    Following the function above, extract noise as I put it in the header
+    :param hdr: FITS Header that I wrote using the function:
+        m16_deepdive.integrate_13_and_18_co_for_column_density()
+    """
+    start_flag = "<error>"
+    end_flag = "</error>"
+    start_n = str(hdr['COMMENT']).find(start_flag)
+    end_n = str(hdr['COMMENT']).find(end_flag)
+    noise = str(hdr['COMMENT'])[start_n + len(start_flag):end_n]
+    return u.Quantity(noise)
+
+
+def get_excitation_temperature_12co():
+    """
+    May 30, 2022
+    I think this will be just like the peak temperature function I already wrote at some point.
+    then just slap channel errors on it and can propagate them from there
+    Yeah so I did peak temperature in m16_investigation.peak_temperature(),
+    and for that I just did a max() within a spectral_slab
+    """
+    line = '12co10'
+    vel_lims = [v*kms for v in (19, 27.3)]
+    cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line], length_scale_mult=None)
+    subcube = cube.spectral_slab(*vel_lims)
+    peak_temperature = subcube.max(axis=0).to(u.K)
+    channel_noise = cube_utils.onesigmas[line]
+    savename = os.path.join(cps2.cube_info['dir'], f"{line}_19-27.3_peak.fits")
+    header = peak_temperature.header.copy()
+    start_flag = "<error>"
+    end_flag = "</error>"
+    header['COMMENT'] = f"{start_flag}{channel_noise} K{end_flag}"
+    header['HISTORY'] = "Ramsey wrote this on May 30 using code in"
+    header['HISTORY'] = "m16_deepdive.get_excitation_temperature_12co"
+    hdu = fits.PrimaryHDU(data=peak_temperature.array, header=header)
+    hdu.writeto(savename)
+
+
+def calculate_co_column_density():
+    """
+    May 30, 2022
+    Putting this all together and trying to calculate 13CO column density
+    I could extend this to C18O later, but I'll start with the easier one
+    N(13CO) = 4pi epsilon0 *
+        (3 kB / 8pi^3 nu S mu^2) *
+        (Qrot / g) *
+        (exp(Eu / kTex)) *
+        integrated intensity
+    where
+        S = Ju / (2Ju + 1)
+        g = 2Ju + 1
+        Qrot = (kTex / hB0) + 1/3
+    and constants
+        Eu = 5.28880 K
+        B0 = 55101.01 MHz
+        mu = 0.11046 Debye
+        nu = 110.20135400 GHz
+        Ju = 1
+    """
+    # Build up all the constants
+    # Already defined in astropy.constants
+    # const.k_B, const.eps0, const.h
+    #
+    B0 = 55101.01 * u.MHz
+    Eu = 5.28880 * u.K
+    mu = 0.11046 * u.Debye
+    nu = 110.20135400 * u.GHz
+    Ju = 1.
+    g = 2.*Ju + 1
+    S = Ju/g
+    # Prefactors (after cancelling a factor of 4pi from top and bottom)
+    prefactor_numerator = const.eps0 * 3 * const.k_B
+    prefactor_denominator = 2 * np.pi**2 * nu * S * mu**2
+    # Load in Tex and integrated intensity
+    Tex_unitless, Texhdr = fits.getdata(catalog.utils.search_for_file("bima/12co10_19-27.3_peak.fits"), header=True)
+    err_Tex = u.Quantity(extract_noise_from_hdr(Texhdr))
+    # Tex more often used as kTex (and put units)
+    Tex = Tex_unitless*u.K
+    integrated_intensity_unitless, intT_hdr = fits.getdata(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"), header=True)
+    err_intT = u.Quantity(extract_noise_from_hdr(intT_hdr))
+    integrated_intensity = integrated_intensity_unitless*u.K*kms
+    # Rotational partition function
+    Qrot = (const.k_B * Tex / (const.h * B0)).decompose() + (1./3.)
+    # exponential term
+    exp_term = np.exp(Eu / Tex)
+    # All together
+    N13CO = ((prefactor_numerator/prefactor_denominator) * (Qrot/g) * exp_term * integrated_intensity).to(u.cm**-2)
+    # Save
+    if False: # already saved
+        savedir = os.path.dirname(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"))
+        savename = os.path.join(savedir, "13co10_column_density.fits")
+        hdr = WCS(intT_hdr).to_header()
+        hdr['AUTHOR'] = "Ramsey Karim"
+        hdr['DATE'] = "May 31, 2022"
+        hdr['BUNIT'] = str(N13CO.unit)
+        hdr['CREATOR'] = "m16_deepdive.calculate_co_column_density"
+        hdu = fits.PrimaryHDU(data=N13CO.to_value(), header=hdr)
+        hdu.writeto(savename)
+
+    # Mask on 2*integrated intensity error
+    masking_by_error = True
+    if masking_by_error:
+        N13CO[integrated_intensity_unitless < 1.*err_intT.to_value()] = np.nan
+
+    ratio_12co_to_13co = 52
+    ratio_12co_to_H2 = 8.5e-5
+
+    NH2 = N13CO * ratio_12co_to_13co / ratio_12co_to_H2
+
+    if True:
+        crop = { # i, j
+            'p1a': ((378, 478), (227, 355)),
+            'p1b': ((260, 371), (117, 246)),
+            'p2_head': ((276, 343), (278, 388)),
+            'p3_head': ((196, 245), (329, 378)),
+            'blob': ((170, 293), (381, 487)),
+            'full': ((None, None), (None, None)),
+        }
+        selected_cutout = 'full'
+        cutout = (slice(*crop[selected_cutout][0]), slice(*crop[selected_cutout][1]))
+        NH2_cropped = NH2[cutout]
+        wcs_cropped = WCS(intT_hdr)[cutout]
+    else:
+        boxes_reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/p123_boxes.reg"))
+        boxes_reg_dict = {reg.meta['label']: reg for reg in boxes_reg_list}
+        selected_box = 'Pillar 3'
+        box_mask = boxes_reg_dict[selected_box].to_pixel(WCS(intT_hdr)).to_mask().to_image(NH2.shape)
+        NH2_cropped = NH2.copy()
+        NH2_cropped[(box_mask < 1)] = np.nan
+        if selected_box[-1] == '3':
+            NH2_cropped[178:235, 379:413] = np.nan
+        wcs_cropped = WCS(intT_hdr)
+
+    from .dust_mass import get_physical_area_pixel
+    H2_mass_permole = 2.016 * u.g / u.mol
+    H2_mass = (H2_mass_permole / const.N_A).decompose()
+
+
+    pixel_area = get_physical_area_pixel(NH2_cropped, wcs_cropped, 2e3)
+    total_mass = pixel_area * np.sum(NH2_cropped[np.isfinite(NH2_cropped)]) * H2_mass
+
+    print(f"mass in cutout: {total_mass.to(u.solMass):.3f}")
+
+    img = NH2_cropped.to_value()
+    vlims = dict(vmin=2e21, vmax=2e23)
+    # vlims = dict(vmin=21, vmax=23.5)
+    # vlims = dict()
+    plt.imshow(img, origin='lower', **vlims)
+    plt.colorbar()
+
+    # plt.contour(integrated_intensity_unitless, levels=[2*err_intT.to_value()], colors='r')
+    # plt.contour(Tex_unitless, levels=[2*err_Tex.to_value()], colors='k')
+
+    plt.show()
+
+
+
+
+
+
 
 if __name__ == "__main__":
+    # calculate_co_column_density()
+
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
     # Sigmas = [1, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05]
@@ -2173,13 +2489,13 @@ if __name__ == "__main__":
     #     fit_molecular_components_with_gaussians('peak'+s)
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
-    # for i in range(1, 4):
-    # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', 'hcopCONV', 'cii'])
-    # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'])
+
+    fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=3)
+    fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
 
     # generate_n2hp_frequency_axis(debug=True)
-    # fit_n2hp_peak()
-    save_n2hp_full_spectra()
+    # fit_n2hp_peak(5)
+    # save_n2hp_full_spectra()
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 

@@ -22,7 +22,7 @@ import re
 
 luminosity_classes = ('V', 'III', 'I')
 # search for: standard types, WR, Herbig Ae/Be (type of PMS), and pre main sequence
-nonstandard_types_re = '(W(N|C))|(HAeBe)|(PMS)|(C)'
+nonstandard_types_re = '(W(N|C))|(HAeBe)|(Ae)|(Be)|(PMS)|(C)'
 standard_types = "OBAFGKM"
 standard_types_re = f'[{standard_types}]'
 letter_re = f'({standard_types_re}|{nonstandard_types_re})'
@@ -32,7 +32,6 @@ number_re = '(\\d{1}(\\.\\d)?)'
 slashdash_re = '(/|-)'
 
 INVALID_STAR_FLAG = float('NaN')
-
 
 """
 ===============================================================================
@@ -307,6 +306,17 @@ def sanitize_tuple(spectral_type_tuple):
         spectral_type_tuple[2] = 'V'
         return tuple(spectral_type_tuple)
     return spectral_type_tuple
+
+
+def is_valid_star(spectral_type_number):
+    """
+    Check if a spectral type has been given the INVALID_STAR_FLAG
+    This function was added May 31, 2022
+    :param spectral_type_number: the number assigned to a main sequence star
+        by the function st_to_number. This number might be INVALID_STAR_FLAG
+    :return: True if valid (number is meaningful) or False if INVALID_STAR_FLAG
+    """
+    return spectral_type_number is not INVALID_STAR_FLAG
 
 
 def reduce_catalog_spectral_types(cat):

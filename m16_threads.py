@@ -162,8 +162,8 @@ def pv(selected_region=0, pillar=1):
     plt.subplots_adjust(left=0.05, right=0.95)
     # plt.show()
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
-    # 2021-01-12, 2022-01-25, 2022-02-01
-    fig.savefig(f"/home/ramsey/Pictures/2022-02-23/pv_{pillar_stub}_{selected_region}{smooth_stub}.png",
+    # 2021-01-12, 2022-01-25, 2022-02-01, 2022-02-23
+    fig.savefig(f"/home/ramsey/Pictures/2022-05-23/pv_{pillar_stub}_{selected_region}{smooth_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, 0th contour = 3sig, steps of 2sig",
             file=__file__, func='pv'))
 
@@ -1133,7 +1133,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     # plt.show()
 
 
-def m16_pv_again2(selected_set=0, line_stub='cii'):
+def m16_pv_again2(selected_set=0, line_stub='cii', pillar=1):
     """
     did not find anything interesting in those parallel cuts. try across??
 
@@ -1158,49 +1158,78 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     :param selected_set: this is either 0 or 1, "0" is first 3 (transverse), "1" is last 3 (vertical, threads)
         "2" will select only the East and West vertical paths (not the Center)
     :param line_stub: indicator of which atomic/molecular line to use. Must be in the list "line_stubs"
+    :param pillar: select pillar
     """
-    reg_filename_short = "catalogs/pillar1_threads_pv_v5_withboxes.reg"
+    if pillar == 1:
+        reg_filename_short = "catalogs/pillar1_threads_pv_v5_withboxes.reg"
+        vel_lims = (22*u.km/u.s, 28*u.km/u.s)
+    elif pillar == 2:
+        reg_filename_short = "catalogs/pillar2_across.reg"
+        vel_lims = (19*u.km/u.s, 25*u.km/u.s)
+    pillar_stub = f"p{pillar}"
     reg_filename = catalog.utils.search_for_file(reg_filename_short)
     path_list = pvdiagrams.path_from_ds9(reg_filename, None, width=None) # no width needed, just use the inherent beam dilation
 
     fig = plt.figure(figsize=(15, 7))
-    if selected_set == 0:
-        path_list = path_list[:3]
-        path_name = ['North', 'Center', 'South']
+    if pillar == 1:
+        if selected_set == 0:
+            path_list = path_list[:3]
+            path_name = ['North', 'Center', 'South']
+            direction_stub = "east to west"
+        elif selected_set == 1:
+            path_list = path_list[3:]
+            path_name = ['East', 'Center', 'West']
+            direction_stub = "south to north"
+        elif selected_set == 2:
+            path_list = [path_list[3], path_list[5]]
+            path_name = ['East', 'West']
+            direction_stub = "south to north"
+    elif pillar == 2:
+        path_name = ['N', 'Mid-N', 'Mid-S', 'S']
         direction_stub = "east to west"
-    elif selected_set == 1:
-        path_list = path_list[3:]
-        path_name = ['East', 'Center', 'West']
-        direction_stub = "south to north"
-    elif selected_set == 2:
-        path_list = [path_list[3], path_list[5]]
-        path_name = ['East', 'West']
-        direction_stub = "south to north"
     cmap = mpl_cm.get_cmap('viridis')
     colors = [mpl_colors.to_hex(cmap(x)) for x in np.linspace(0., 0.75, len(path_list))]
     colors = marcs_colors
     axes_sl = []
     handles = []
-    reg_index = 1
+    if pillar == 1:
+        reg_index = 1
+    elif pillar == 2:
+        # These aren't necessarily supposed to be the same number
+        # It's just coincidence that reg 2 works for pillar 2
+        reg_index = 2
     # data_filename=f"apex/M16_12CO3-2_truncated.fits",
     line_stubs = ['cii', 'hcop', 'hcn', 'nh2p', 'cs', '12co10']
     line_names = ['CII', 'HCO+', 'HCN', 'NH2+', 'CS', '$^{12}$CO (1$-$0)']
-    if line_stub == "cii":
-        line_fn = None
-        levels = np.arange(10, 401, 10) # 1 is 1sigma
-    elif line_stub == '12co10':
-        line_fn = "bima/M16_12CO1-0_7x4.Kkms.fits"
-        levels = np.arange(20, 401, 20) # 5 is 1sigma
-    else:
-        line_fn = f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SMOOTH.fits"
-        hcop_smooth_noise = 0.3
-        # hcop_noise = 0.55
-        if selected_set > 0:
-            levels = np.sinh(np.linspace(np.arcsinh(hcop_smooth_noise*3), np.arcsinh(61), 10))
+    if pillar == 1:
+        if line_stub == "cii":
+            line_fn = None
+            levels = np.arange(10, 401, 10) # 1 is 1sigma
+        elif line_stub == '12co10':
+            line_fn = "bima/M16_12CO1-0_7x4.Kkms.fits"
+            levels = np.arange(20, 401, 20) # 5 is 1sigma
         else:
+            line_fn = f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SMOOTH.fits"
+            hcop_smooth_noise = 0.3
+            # hcop_noise = 0.55
+            if selected_set > 0:
+                levels = np.sinh(np.linspace(np.arcsinh(hcop_smooth_noise*3), np.arcsinh(61), 10))
+            else:
+                levels = np.arange(hcop_smooth_noise*3, 61, hcop_smooth_noise*3)
+    if pillar == 2:
+        if line_stub == 'cii':
+            line_fn = None
+            cii_noise = cube_utils.onesigmas['cii']
+            levels = np.arange(cii_noise*5, 200, cii_noise*5)
+        elif line_stub == '12co10':
+            line_fn = "bima/M16_12CO1-0_7x4.Kkms.fits"
+            co10_noise = cube_utils.onesigmas['12co10']
+            levels = np.arange(co10_noise*3, 200, co10_noise*3)
+        else:
+            line_fn = f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SMOOTH.fits"
+            hcop_smooth_noise = cube_utils.onesigmas['hcopCONV']
             levels = np.arange(hcop_smooth_noise*3, 61, hcop_smooth_noise*3)
     line_name = line_names[line_stubs.index(line_stub)]
-    vel_lims = (22*u.km/u.s, 28*u.km/u.s)
     subcube = cps2.cutout_subcube(reg_filename=reg_filename, reg_index=reg_index, length_scale_mult=2, data_filename=line_fn).spectral_slab(*vel_lims)
     # if line_fn is not None and "SMOOTH" not in line_fn:
     # # if line_fn is None or "SMOOTH" not in line_fn:
@@ -1279,8 +1308,8 @@ def m16_pv_again2(selected_set=0, line_stub='cii'):
     ax_sl.plot([x_offset, x_offset + beam_size_mean], [0.1, 0.1], transform=beamtransform, color='k', marker='|', alpha=0.5)
     plt.subplots_adjust(left=0.05, right=0.95)
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pillar_series{selected_set}_{line_stub}_PVs.png")
-    # 2021-01-12, 2022-01-25,
-    fig.savefig(f"/home/ramsey/Pictures/2022-02-24/pillar_series{selected_set}_{line_stub}SMOOTH_3sig_PVs.png",
+    # 2021-01-12, 2022-01-25, 2022-02-24
+    fig.savefig(f"/home/ramsey/Pictures/2022-05-23/pillar_{pillar_stub}_series{selected_set}_{line_stub}SMOOTH_3sig_PVs.png",
         metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, contours are 0th=2sig arcsinh hcopSMOOTH",
             file=__file__, func='m16_pv_again2'))
     # plt.show()
@@ -1694,7 +1723,7 @@ def highlight_threads_moment0():
             file=__file__, func="highlight_threads_moment0"))
 
 
-def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='cii'):
+def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='cii', molecular_line='hcop', smooth=True):
     """
     February 23, 2022
     Copied m16_threads.pv() and I want to change the colors and some other stuff
@@ -1704,26 +1733,33 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
     structure in the molecular gas
     Selected regions default to (0, 1), which should work for both P1 and P2
     """
-    smooth = True
     if smooth:
         smooth_stub = ".SMOOTH"
     else:
         smooth_stub = ""
-    if selected_set == "across":
-        selected_regions = (0, 1)
-    elif selected_set == "across-wide":
-        selected_regions = (0, 2)
-    elif selected_set == "along":
-        selected_regions = (3, 5)
+
+    if pillar == 1:
+        if selected_set == "across":
+            selected_regions = (0, 1)
+        elif selected_set == "across-wide":
+            selected_regions = (0, 2)
+        elif selected_set == "along":
+            selected_regions = (3, 5)
+    elif pillar == 2:
+        if selected_set == 'N':
+            selected_regions = (0, 1)
+        elif selected_set == 'S':
+            selected_regions = (2, 3)
+
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, f"carma/M16.ALL.*subpv{smooth_stub}.fits"))
     filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, f"carma/M16.ALL.*subpv.SOFIAbeam{smooth_stub}.fits"))
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
     # get all the filenames at once
-    cube_filenames = ["sofia/M16_CII_U.fits", get_mol("hcop", filepaths), "bima/M16_12CO1-0_7x4.fits"]
+    cube_filenames = ["sofia/M16_CII_U.fits", get_mol(molecular_line, filepaths), "bima/M16_12CO1-0_7x4.fits"]
     colors = [marcs_colors[0], marcs_colors[1], marcs_colors[6],]
-    names = ['[CII]', 'HCO+(1-0)', '12CO(1-0)']
-    short_names = ['cii', 'hcop', '12co10']
+    short_names = ['cii', molecular_line, '12co10']
+    names = [cube_utils.cubenames[x] for x in short_names]
     # levels = [list(np.linspace(15, 40, 9))] + [list(np.linspace(2, 7, 7))]*2 + [list(np.linspace(25, 80, 8))]*2
     onesigma = [cube_utils.onesigmas[k] for k in short_names]
 
@@ -1733,7 +1769,7 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
         vel_limits = np.array([20, 28])*u.km/u.s # Pillar 1
     elif pillar == 2:
         reg_filename_short = "catalogs/pillar2_across.reg" # Pillar 2
-        vel_limits = np.array([18, 26])*u.km/u.s # Pillar 2
+        vel_limits = np.array([19, 25])*u.km/u.s # Pillar 2
     pillar_stub = f"p{pillar}"
     reg_filename = catalog.utils.search_for_file(reg_filename_short)
     pv_paths = []
@@ -1840,7 +1876,11 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
             if molecule == '12co10':
                 ax.invert_yaxis()
             # Make some velocity grid lines for easier visual identification of gradients
-            for v in range(23, 28):
+            if pillar == 1:
+                v_grid_range = (23, 28)
+            elif pillar == 2:
+                v_grid_range = (20, 25)
+            for v in range(*v_grid_range):
                 ax.axhline(sl_wcs.world_to_pixel_values(0, v*1000)[1], color='grey', alpha=0.8)
 
     img, hdr = fits.getdata(catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits"), header=True)
@@ -1884,33 +1924,35 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
     plt.subplots_adjust(left=0.05, right=0.95)
     clip_stub = "-clipped" if clipped else ''
     contour_stub = '' if contour == 'cii' else '-molecularcontours'
+    molecular_line_stub = '' if molecular_line == 'hcop' else f"-{molecular_line}"
     # plt.show()
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
-    # 2021-01-12, 2022-01-25, 2022-02-01, 2022-02-27
-    fig.savefig(f"/home/ramsey/Pictures/2022-04-28/pv_{pillar_stub}_{selected_set}{clip_stub}{contour_stub}{smooth_stub}.png",
+    # 2021-01-12, 2022-01-25, 2022-02-01, 2022-02-27, 2022-04-28
+    fig.savefig(f"/home/ramsey/Pictures/2022-05-23/pv_{pillar_stub}_{selected_set}{clip_stub}{molecular_line_stub}{contour_stub}{smooth_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, 0th contour = {zeroth_contour_sigma}sig, steps of {contour_sigma_step}sig",
-            file=__file__, func='pv'))
+            file=__file__, func='pv_again'))
 
 
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
     # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production at 4,4
-    vel_lims = dict(vel_start=20, vel_stop=27.5) # production at 3,5
+    # vel_lims = dict(vel_start=20, vel_stop=27.5) # production at 3,5
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
     ###
     # fig_params = dict(grid_shape=(4, 4), figsize=(25, 25))
-    fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
+    # fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
     # fig_params = dict(grid_shape=(3, 5), figsize=(25, 13)) # just for the zoomed in version
     ###
-    args = channel_maps_again('cii', 'n2hp', **vel_lims, **fig_params, idx_for_img=0, level_scaling='linear', check_levels=False, length_scale_mult=None)
+    # args = channel_maps_again('cii', 'n2hp', **vel_lims, **fig_params, idx_for_img=0, level_scaling='linear', check_levels=False, length_scale_mult=None)
 
     # highlight_threads_moment0()
 
-    # pv_again(selected_set='across-wide', clip_bright=True, contour='cii')
 
-    # pv_again(selected_set='along', clip_bright=True, contour='cii')
-    # pv_again(selected_set='along', clip_bright=True, contour='molecular')
-    # pv_again(selected_set='along', clip_bright=False)
+    # pv_again(selected_set='across-wide', clip_bright=True, contour='cii')
+    pv_again(selected_set='N', pillar=2, clip_bright=False, contour='molecular', smooth=False)
+    pv_again(selected_set='S', pillar=2, clip_bright=False, contour='molecular', smooth=False)
+    pv_again(selected_set='N', pillar=2, clip_bright=False, contour='molecular', smooth=False, molecular_line='cs')
+    pv_again(selected_set='S', pillar=2, clip_bright=False, contour='molecular', smooth=False, molecular_line='cs')
 
     # gain2(selected_set=2, line_stub='cii') #????
     # sample_spectra(0)

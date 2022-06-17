@@ -3,11 +3,17 @@ import pandas as pd
 import matplotlib.colors as colors
 
 import astropy.units as u
+from astropy.wcs import WCS
+from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astroquery.mast import Catalogs
 from astroquery.vizier import Vizier
 Vizier.ROW_LIMIT = -1 # Always get all the rows
 import regions
+
+import datetime
+
+import matplotlib.pyplot as plt
 
 from . import catalog
 
@@ -19,6 +25,7 @@ Query source catalog
 
 def m16_stars():
     """
+    (Retroactive guess at creation date): August 4 and October 17 2020
     This is to query Hillenbrand 1993 for M16 stars
     I query the Vizier table using astroquery
     Then I convert it to a pandas DataFrame
@@ -26,26 +33,31 @@ def m16_stars():
     Then I use matplotlib.colors.LogNorm to convert these to marker sizes
     Finally I use astropy regions to write out a DS9 regions file with sizes
         proportional to the FUV flux
+
+    May 31, 2022: time to make the G0 and ionizing flux maps (TODO)
+    Looks like I'm a lot further than I realized, I already made the catalog
     """
     hillenbrand = "J/AJ/106/1906"
     catalog_dict = Vizier.find_catalogs(hillenbrand)
     catalogs = Vizier.get_catalogs(catalog_dict[hillenbrand])
     sptype_catalog = catalogs[1] # returns 2 catalogs
-    del catalogs, catalog_list # save memory
+    del catalogs, catalog_dict # save memory
     catalog_df = sptype_catalog.to_pandas(index='ID')
     # Convet spectral type bytes to string
-    catalog_df['SpType'] = catalog_df['SpType'].apply(lambda x: x.decode("utf-8"))
+    # catalog_df['SpType'] = catalog_df['SpType'].apply(lambda x: x.decode("utf-8"))
     def extract_coordinate(row):
         """
         Helper function for using these byte things
         """
-        ra_str = row['RAJ2000'].decode("utf-8")
-        dec_str = row['DEJ2000'].decode("utf-8")
+        ra_str = row['RAJ2000'] #.decode("utf-8")
+        dec_str = row['DEJ2000'] #.decode("utf-8")
         return SkyCoord(f"{ra_str} {dec_str}", unit=(u.hourangle, u.deg), frame='fk5')
     catalog_df['SkyCoord'] = catalog_df.apply(extract_coordinate, axis=1)
-    catalog_df = catalog_df.drop(columns=["RAJ2000", "DEJ2000"])
-    catalog_df_OB = catalog_df[catalog_df['SpType'].apply(lambda s: ('O' in s) or ('B' in s))]
-    catalog_df_OB = catalog_df_OB[['SkyCoord', 'SpType']] # reduce to important columns
+    # catalog_df = catalog_df.drop(columns=["RAJ2000", "DEJ2000"])
+    catalog_df_OB = catalog_df[catalog_df['SpType'].apply(lambda s: ('O' in s) or ('B' in s))].copy()
+    catalog_df_OB['RA'] = catalog_df_OB['SkyCoord'].apply(lambda c: c.ra.deg).values
+    catalog_df_OB['DE'] = catalog_df_OB['SkyCoord'].apply(lambda c: c.dec.deg).values
+    catalog_df_OB = catalog_df_OB[['RA', 'DE', 'SkyCoord', 'SpType']] # reduce to important columns
 
     del catalog_df, sptype_catalog # save memory
     # Make the PoWR objects
@@ -57,33 +69,158 @@ def m16_stars():
     # Create CatalogResolver instance
     catr = catalog.spectral.stresolver.CatalogResolver(catalog_df_OB['SpType'].values,
         calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
+
+
+    # make and write FUV array
     fuv_flux_array = u.Quantity([x[0] for x in catr.get_array_FUV_flux()])
     fuv_flux_unit = fuv_flux_array.unit
     fuv_flux_array = np.array(fuv_flux_array.to_value())
     catalog_df_OB['log10FUV_flux_'+str(fuv_flux_unit).replace(' ', '')] = np.log10(fuv_flux_array)
 
-    catalog_df_OB.to_html(f"{catalog.utils.m16_data_path}catalogs/hillenbrand_stars.html")
-    print("Stopping here")
-    return
+    if False:
+        center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5')
+        filter_radius = 3.90751*u.arcmin
+        catalog_df_OB_write = filter_by_within_range(catalog_df_OB, center_coord, radius_arcmin=filter_radius)
+        catalog_df_OB_write = catalog_df_OB_write[catalog_df_OB_write['is_within_3.9_arcmin']]
+        catalog_df_OB_write = catalog_df_OB_write.sort_values(by=['log10FUV_flux_solLum'], ascending=False)
+        catalog_df_OB_write.to_csv(f"{catalog.utils.m16_data_path}catalogs/hillenbrand_stars_sorted_by_FUV.csv")
+        print("Stopping here")
+        return
 
-    # Use LogNorm to normalize
-    min_nonzero_flux = np.min(fuv_flux_array[fuv_flux_array > 0])
-    max_flux = np.max(fuv_flux_array)
-    norm = colors.Normalize(vmin=min_nonzero_flux, vmax=max_flux)
-    brightness_array = norm(fuv_flux_array)
 
-    # I want angular sizes between 0.1 - 1 arcmin
-    size_array = [x * u.arcmin for x in (brightness_array.data * 0.9 + 0.1)]
-    catalog_df_OB['markersize'] = size_array
-    visual_kwargs = regions.RegionVisual(color='white', linewidth=1)
-    region_list = []
-    for star in catalog_df_OB.itertuples():
-        if star.markersize < 0:
-            continue
-        circle = regions.CircleSkyRegion(center=star.SkyCoord, radius=star.markersize, visual=visual_kwargs)
-        region_list.append(circle)
-    regions.write_ds9(region_list, f"{catalog.utils.m16_data_path}catalogs/hillenbrand_stars.reg")
-    return None
+    # make some filters for the catalog so we can try different G0 maps
+    filter = 4
+    filter_stub = ""
+    if filter == 0:
+        # no filter
+        pass
+    if filter == 1 or filter == 4:
+        # filter out log10FUV_flux_solLum > 4.5
+        catalog_df_OB = catalog_df_OB[catalog_df_OB['log10FUV_flux_solLum'] < 4.5]
+        filter_stub += "_fuvlt4.5"
+    if filter == 2 or filter == 4:
+        # filter out > x arcmin from y
+        center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5')
+        filter_radius = 3.90751*u.arcmin
+        catalog_df_OB = filter_by_within_range(catalog_df_OB, center_coord, radius_arcmin=filter_radius)
+        catalog_df_OB = catalog_df_OB[catalog_df_OB['is_within_3.9_arcmin']]
+        filter_stub += "_gtxarcmin"
+    if filter == 3:
+        # filter for just the 2 O5 stars
+        catalog_df_OB = catalog_df_OB.loc[[175, 205]]
+        filter_stub += "_O5s"
+
+    print(catalog_df_OB)
+    catr = catalog.spectral.stresolver.CatalogResolver(catalog_df_OB['SpType'].values,
+        calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
+
+
+    if True:
+        # Write out G0 map using these stars
+        # almost all of this is copied directly from my example in the scoby-nb repo
+        m16_center_coord = SkyCoord("18:18:53.9552 -13:50:45.445", unit=(u.hourangle, u.deg), frame='fk5')
+        side_length_angle = 5*250*u.arcsec
+        side_length_pixels = 100
+        pixel_scale_deg = (side_length_angle / side_length_pixels).to(u.deg).to_value()
+        wcs_keywords = {
+            'NAXIS': (2, "Number of axes"),
+            'NAXIS1': (side_length_pixels, "X (j) axis length"), 'NAXIS2': (side_length_pixels, "Y (i) axis length"),
+            'RADESYS': 'FK5',
+            'CTYPE1': ('RA---TAN', "RA projection type"), 'CTYPE2': ('DEC--TAN', "DEC projection type"),
+
+            'CRPIX1': (side_length_pixels//2, "[pix] Image reference point"),
+            'CRPIX2': (side_length_pixels//2, "[pix] Image reference point"),
+
+            'CRVAL1': (m16_center_coord.ra.deg, "[deg] RA of reference point"),
+            'CRVAL2': (m16_center_coord.dec.deg, "[deg] DEC of reference point"),
+
+            'CDELT1': -1*pixel_scale_deg, # RA increases to the left, so CDELT1 is negative
+            'CDELT2': pixel_scale_deg,
+
+            'PA': (0, "[deg] Position angle of axis 2 (E of N)"),
+            'EQUINOX': (2000., "[yr] Equatorial coordinates definition"),
+        }
+        image_wcs = WCS(wcs_keywords)
+
+        los_distance = 2.*u.kpc
+        def inv_dist_func(coord):
+            return 1./(4*np.pi*catalog.utils.distance_from_point_pixelgrid(coord, image_wcs, los_distance)**2.)
+        inv_distance_arrays = u.Quantity(list(catalog_df_OB['SkyCoord'].apply(inv_dist_func).values))
+        print("Shape of inv dist arrays: ", inv_distance_arrays.shape)
+        def illumination_distance(flux_array):
+            return inv_distance_arrays*flux_array[:, np.newaxis, np.newaxis]
+        fuv_flux_map_val, fuv_flux_map_unc = catr.get_FUV_flux(map_function=illumination_distance)
+
+        radiation_field_1d = 1.6e-3 * u.erg / (u.cm**2 * u.s)
+        def fix_units(x):
+            return (x / radiation_field_1d).decompose()
+        fuv_flux_map_val = fix_units(fuv_flux_map_val)
+        fuv_flux_map_unc = tuple(fix_units(x) for x in fuv_flux_map_unc)
+
+        plt.subplot(221)
+        plt.imshow(fuv_flux_map_val.to_value(), origin='lower')
+        plt.colorbar()
+        plt.subplot(223)
+        plt.imshow(np.abs(fuv_flux_map_unc[0].to_value()), origin='lower')
+        plt.colorbar()
+        plt.subplot(224)
+        plt.imshow(fuv_flux_map_unc[1].to_value(), origin='lower')
+        plt.colorbar()
+        plt.show()
+
+        hdr = image_wcs.to_header()
+        hdr['AUTHOR'] = "Ramsey Karim"
+        hdr['CREATOR'] = "queries.m16_stars"
+        hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        hdr['BUNIT'] = 'Habing unit'
+        hdr['COMMENT'] = 'G0 map of M16 around pillars'
+        hdr['EXTNAME'] = 'median'
+        hdu1 = fits.ImageHDU(data=fuv_flux_map_val.to_value(), header=hdr.copy())
+        hdr['EXTNAME'] = 'err_lo'
+        hdu2 = fits.ImageHDU(data=np.abs(fuv_flux_map_unc[0].to_value()), header=hdr.copy())
+        hdr['EXTNAME'] = 'err_hi'
+        hdu3 = fits.ImageHDU(data=fuv_flux_map_unc[1].to_value(), header=hdr.copy())
+        hdul = fits.HDUList([fits.PrimaryHDU(), hdu1, hdu2, hdu3])
+        hdul.writeto(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/g0_hillenbrand_stars{filter_stub}.fits", overwrite=True)
+
+
+
+    if False:
+        # Use LogNorm to normalize
+        min_nonzero_flux = np.min(fuv_flux_array[fuv_flux_array > 0])
+        max_flux = np.max(fuv_flux_array)
+        norm = colors.Normalize(vmin=min_nonzero_flux, vmax=max_flux)
+        brightness_array = norm(fuv_flux_array)
+
+        # I want angular sizes between 0.1 - 1 arcmin
+        size_array = [x * u.arcmin for x in (brightness_array.data * 0.9 + 0.1)]
+        catalog_df_OB['markersize'] = size_array
+        visual_kwargs = regions.RegionVisual(color='white', linewidth=1)
+        region_list = []
+        for star in catalog_df_OB.itertuples():
+            if star.markersize < 0:
+                continue
+            circle = regions.CircleSkyRegion(center=star.SkyCoord, radius=star.markersize, visual=visual_kwargs)
+            region_list.append(circle)
+        regions.write_ds9(region_list, f"{catalog.utils.m16_data_path}catalogs/hillenbrand_stars.reg")
+        return None
+
+
+def filter_by_within_range(catalog_df, center_coord, radius_arcmin=6.):
+    """
+    Helper function copied out of g0_stars.py and modified lightly
+    Creates boolean column, true if object is within radius_arcmin
+        of the center of the cluster
+    center_coord must be SkyCoord
+    Returns the catalog, but modifies in place
+    Catalog must be able to be modified
+    """
+    if not isinstance(radius_arcmin, u.Quantity):
+        radius_arcmin = radius_arcmin * u.arcmin
+    def within_range(coord):
+        return coord.separation(center_coord) < radius_arcmin
+    catalog_df[f'is_within_{radius_arcmin.to(u.arcmin).to_value():.1f}_arcmin'] = catalog_df['SkyCoord'].apply(within_range)
+    return catalog_df
 
 
 def cygx_wright2015():
@@ -123,7 +260,9 @@ def cygx_wright2015():
     catalog_df['origin'] = 'W15'
     catalog_df.to_pickle(cygx_dir + "wright.pkl")
 
-args = cygx_wright2015()
+
+if __name__ == "__main__":
+    m16_stars()
 
 """
 Query atomic lines
