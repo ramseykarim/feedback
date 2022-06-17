@@ -2136,10 +2136,10 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
     sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     ### must be run on jupiter or another UMD network computer
     cube_filename = "/n/aurora1/feedback/m16/M16.ALL.n2hp.fullres.sdi.fits"
-    cube = cube_utils.SpectralCube(cube_filename)
+    cube = cube_utils.SpectralCube.read(cube_filename)
     path_name = catalog.utils.m16_data_path+"carma"
     hdr_savename = os.path.join(path_name, "n2hp_fullres.header")
-    cube.header.tofile(hdr_savename)
+    cube.header.tofile(hdr_savename, overwrite=True)
     ## save the header using tofile, load using fromfile
     if index is None:
         index_list = list(range(len(sky_regions)))
@@ -2151,7 +2151,7 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
         pix_coords = tuple(round(x) for x in sky_reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1])
         spectrum = cube[(slice(None), *pix_coords)]
         spectral_axis = cube.spectral_axis
-        savename = "n2hp_spectrum_" + reg_filename_short.replace('.reg', '') + f"_{i}.txt.gz"
+        savename = "n2hp_spectrum_" + reg_filename_short.replace('catalogs/', '').replace('.reg', '') + f"_{i}.txt.gz"
         savename = os.path.join(path_name, savename)
         np.savetxt(savename, np.array([spectral_axis.to_value(), spectrum.to_value()]), header=f"{spectral_axis.unit}, {spectrum.unit}")
         print("saved "+savename)
