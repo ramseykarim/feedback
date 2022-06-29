@@ -2236,10 +2236,10 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
     sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     ### must be run on jupiter or another UMD network computer
     cube_filename = "/n/aurora1/feedback/m16/M16.ALL.n2hp.fullres.sdi.fits"
-    cube = cube_utils.SpectralCube(cube_filename)
+    cube = cube_utils.SpectralCube.read(cube_filename)
     path_name = catalog.utils.m16_data_path+"carma"
     hdr_savename = os.path.join(path_name, "n2hp_fullres.header")
-    cube.header.tofile(hdr_savename)
+    cube.header.tofile(hdr_savename, overwrite=True)
     ## save the header using tofile, load using fromfile
     if index is None:
         index_list = list(range(len(sky_regions)))
@@ -2251,10 +2251,28 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
         pix_coords = tuple(round(x) for x in sky_reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1])
         spectrum = cube[(slice(None), *pix_coords)]
         spectral_axis = cube.spectral_axis
-        savename = "n2hp_spectrum_" + reg_filename_short.replace('.reg', '') + f"_{i}.txt.gz"
+        savename = "n2hp_spectrum_" + reg_filename_short.replace('catalogs/', '').replace('.reg', '') + f"_{i}.txt.gz"
         savename = os.path.join(path_name, savename)
         np.savetxt(savename, np.array([spectral_axis.to_value(), spectrum.to_value()]), header=f"{spectral_axis.unit}, {spectrum.unit}")
         print("saved "+savename)
+
+
+def save_hcop_and_cs_moment_imgs(line='hcop'):
+    """
+    June 17, 2022
+    Save a 32-36 km/s moment img from the fullres hcop and cs maps that Marc uploaded
+    Goal here is to look for whatever counterpart to HH 216. Found one in 12CO3-2 and
+    I think I see it in HCO+ in ds9. Couldn't ID it in CS in ds9, so I'll see moment0
+    Ultimate goal is to overlay these on the HST img in ds9 (reproject too intensive
+    in Python) to compare locations
+    """
+    data_path = "/n/aurora1/feedback/m16"
+    filename = f"M16.ALL.{line}.fullres.sdi.fits"
+    cube = cube_utils.SpectralCube.read(os.path.join(data_path, filename))
+    path_name = catalog.utils.m16_data_path+"carma"
+    savename = os.path.join(path_name, f"{line}.mom0.32-36.fits")
+    mom0 = cube.spectral_slab(32*kms, 36*kms).moment0()
+    mom0.write(savename)
 
 
 def test_optical_molecular_pillar_2_thing():
@@ -2490,12 +2508,14 @@ if __name__ == "__main__":
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
 
-    fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=3)
-    fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
+    # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=3)
+    # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
     # save_n2hp_full_spectra()
+    for line in ['hcn', 'cs', 'n2hp']:
+        save_hcop_and_cs_moment_imgs(line)
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
