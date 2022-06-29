@@ -188,8 +188,8 @@ def get_stars():
     # Star positions
     path_catalog = "/jupiter/rkarim/Research/Feedback/ancillary_data/catalogs/Ramsey/"
     if not os.path.isdir(path_catalog):
-        path_catalog = "/home/ramsey/Documents/Research/Feedback/ancillary_data/catalogs/Ramsey/"
-    fn_catalog = path_catalog + "OBradec.csv"
+        path_catalog = "/home/ramsey/Documents/Research/Feedback/rcw49_data/catalogs/Ramsey/"
+    fn_catalog = path_catalog + "old_catalogs/OBradec.csv"
     df_catalog = pd.read_csv(fn_catalog)
     ra_stars, dec_stars = df_catalog.RAdeg.values, df_catalog.DEdeg.values
     is_WR = df_catalog.SpectralType.apply(lambda x: "W" in x)
@@ -200,13 +200,13 @@ def get_stars():
 # CII data
 path_cii = "/n/aurora1/feedback/"
 if not os.path.isdir(path_cii):
-    path_cii = "/home/ramsey/Documents/Research/Feedback/ancillary_data/sofia/"
+    path_cii = "/home/ramsey/Documents/Research/Feedback/rcw49_data/sofia/"
 fn_cii = path_cii + "rcw49-cii.fits"
 
 # CO data
 path_co = "/jupiter/rkarim/Research/Feedback/ancillary_data/apex/"
 if not os.path.isdir(path_co):
-    path_co = "/home/ramsey/Documents/Research/Feedback/ancillary_data/apex/"
+    path_co = "/home/ramsey/Documents/Research/Feedback/rcw49_data/apex/apexCO/"
 fn_co = path_co + "RCW49_12CO.fits"
 
 sizemod = 2
@@ -243,18 +243,18 @@ delta_az = 1 # degrees
 
 mlab.view(azimuth=270, elevation=90, focalpoint=(0,0,0), distance=60)
 
-@mlab.animate(ui=False, delay=30)
-def anim():
-    f = mlab.gcf()
-    current_az = 270
-    img_num = 0
-    while current_az < 270 + 360:
-        mlab.view(azimuth=current_az, focalpoint=(0,0,0), elevation=85, distance=60)
-        current_az += delta_az
-        f.scene.render()
-        mlab.savefig(f"figures/vel3d/anim_CO_{img_num:04d}.png") # dpi~300
-        img_num += 1
-        yield
-# Saving "a" makes sense! The object needs to exist!!
-a = anim()
+# @mlab.animate(ui=False, delay=30)
+# def anim():
+#     f = mlab.gcf()
+#     current_az = 270
+#     img_num = 0
+#     while current_az < 270 + 360:
+#         mlab.view(azimuth=current_az, focalpoint=(0,0,0), elevation=85, distance=60)
+#         current_az += delta_az
+#         f.scene.render()
+#         mlab.savefig(f"figures/vel3d/anim_CO_{img_num:04d}.png") # dpi~300
+#         img_num += 1
+#         yield
+# # Saving "a" makes sense! The object needs to exist!!
+# a = anim()
 mlab.show()

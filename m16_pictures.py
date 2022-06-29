@@ -626,28 +626,35 @@ def save_fits_thin_channel_maps():
     Feb 22, 2022
     Repurposing for Arrowhead conference figure, to highlight threads
     and blue cap over HST (too big to reproject in Python)
+
+    June 28, 2022
+    Repurposing to highlight the "blue" and "red" features around the pillars
+    for the paper / my meeting tomorrow. On Marc's recommendation.
     """
     # fn = catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits")
     # fn = catalog.utils.search_for_file("sofia/M16_CII_U.fits")
-    cube = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
-        length_scale_mult=None)
+    cube = cps2.cutout_subcube(length_scale_mult=None)
+    # cube = cps2.cutout_subcube(data_filename="carma/M16.ALL.hcop.sdi.cm.subpv.fits",
+    #     length_scale_mult=None)
     # cube = SpectralCube.read(fn)
     # cube._unit = u.K
     # cube = cube.with_spectral_unit(kms)
     # vel_start, channel_width = 24.*kms, 1*kms
-    vel_lims_list = [(22, 23.5), (24, 24.5), (25.5, 26)] # same as m16_threads.highlight_threads_moment0
+    # vel_lims_list = [(22, 23.5), (24, 24.5), (25.5, 26)] # same as m16_threads.highlight_threads_moment0
+    # vel_lims_list = [(19, 22.5), (23, 27.5)] # to highlight the "2 groups" of structures
+    vel_lims_list = [(19, 21.5), (22, 23.5), (24, 27.5)] # to highlight the velocity shifts between the groups
     for i in range(3):
         # vel_limits = (vel_start + i*channel_width, vel_start + (i+1)*channel_width)
         vel_limits = tuple(v*kms for v in vel_lims_list[i])
         mom0 = cube.spectral_slab(*vel_limits).moment0()
         hdr = mom0.wcs.to_header()
-        # hdr['DATE'] = "May 3, 2021"
-        hdr['DATE'] = "Feb 22, 2022"
+        # hdr['DATE'] = "May 3, 2021", "Feb 22, 2022", "June 28, 2022"
+        hdr['DATE'] = "June 29, 2022"
         hdr['CREATOR'] = "Ramsey Karim via m16_pictures.save_fits_thin_channel_maps"
         hdr['OBJECT'] = "M16"
-        hdr['COMMENT'] = f"HCO+ moment 0 image {make_vel_stub(vel_limits)}"
+        hdr['COMMENT'] = f"CII moment 0 image {make_vel_stub(vel_limits)}"
         hdu = fits.PrimaryHDU(data=mom0.data, header=hdr)
-        hdu.writeto(f"{catalog.utils.m16_data_path}carma/hcop_thin_channel_{i}.fits")
+        hdu.writeto(f"{catalog.utils.m16_data_path}sofia/integrated3_{i}.fits")
     print("done")
 
 
@@ -1403,12 +1410,12 @@ def hh216_co32():
 
 if __name__ == "__main__":
     # m16_channel_maps()
-    # save_fits_thin_channel_maps()
+    save_fits_thin_channel_maps()
     # single_parallel_pillar_pvs() # most recently uncommented (april 21, 2022)
 
     # simple_mom0_carma_molecules('cii')
     # advanced_mom0_carma_molecules()
-    hh216_co32()
+    # hh216_co32()
 
     # justify_background_figure()
     # background_samples_figure_molecular()
