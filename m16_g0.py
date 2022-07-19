@@ -1,3 +1,9 @@
+"""
+For exploring the stars and radiation field of M16 / NGC 6611
+
+Created: June 16, 2022
+"""
+__author__ = "Ramsey Karim"
 
 # All imports dumped from the last file, m16_investigation
 import numpy as np
@@ -44,6 +50,8 @@ Cutout2D = pvdiagrams.Cutout2D
 from . import cube_pixel_spectra as cps1
 from . import cube_pixel_spectra_2 as cps2
 
+from . import queries as vizier_queries
+
 mpl_cm = pvdiagrams.mpl_cm
 mpl_colors = pvdiagrams.mpl_colors
 mpl_transforms = pvdiagrams.mpl_transforms
@@ -88,8 +96,8 @@ def compare_O5s_to_morestars():
     """
 
     # g0_bright_map_name = f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/g0_hillenbrand_stars_O5s.fits"
-    g0_bright_map_name = f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/g0_hillenbrand_stars_fuvgt5.0_gtxarcmin.fits"
-    g0_4arcmin_map_name = f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/g0_hillenbrand_stars_gtxarcmin.fits"
+    g0_bright_map_name = f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/g0_hillenbrand_stars_fuvgt5.0_ltxarcmin.fits"
+    g0_4arcmin_map_name = f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/g0_hillenbrand_stars_ltxarcmin.fits"
 
 
     g0_maps, hdrs = list(zip(*[fits.getdata(x, header=True) for x in [g0_bright_map_name, g0_4arcmin_map_name]]))
@@ -154,5 +162,25 @@ def estimate_los_distance_required_for_star_to_not_matter():
         metadata=catalog.utils.create_png_metadata(title='assuming 401: 1\', 351: 0.6\', 367: 0.3\'',
             file=__file__, func='estimate_los_distance_required_for_star_to_not_matter'))
 
+
+
+def estimate_pushing_around_gas_with_stars():
+    """
+    July 6, 2022
+    Do we have the momentum to move the threads over the lifespan of the pillars?
+    Depends on: momentum transfer from stars, pillar mass, pillar and star lifespans
+    """
+    # Make sure the right thing is returned from m16_stars (change the True/False flags to arguments)
+    star_info_dict = vizier_queries.m16_stars()
+    thread_masses = [7, 2] * u.solMass # East, West
+    thread_collecting_area_fractions = np.array([2594., 11272.]) # 1/these. Assume threads are cylinders, did (pi r^2) / (4pi R^2)
+    thread_velocity = 1*kms # order of magnitude
+    mvflux = star_info_dict['mvflux'][0]
+    timescale = (thread_masses*thread_velocity / mvflux).decompose() * thread_collecting_area_fractions
+    print()
+    print("TIMESCALE TO PUSH")
+    print(timescale.to(u.Myr))
+
+
 if __name__ == "__main__":
-    estimate_los_distance_required_for_star_to_not_matter()
+    estimate_pushing_around_gas_with_stars()

@@ -2438,7 +2438,7 @@ def calculate_co_column_density():
 
     NH2 = N13CO * ratio_12co_to_13co / ratio_12co_to_H2
 
-    if True:
+    if False:
         crop = { # i, j
             'p1a': ((378, 478), (227, 355)),
             'p1b': ((260, 371), (117, 246)),
@@ -2447,18 +2447,23 @@ def calculate_co_column_density():
             'blob': ((170, 293), (381, 487)),
             'full': ((None, None), (None, None)),
         }
-        selected_cutout = 'full'
+        selected_cutout = 'p1a'
         cutout = (slice(*crop[selected_cutout][0]), slice(*crop[selected_cutout][1]))
         NH2_cropped = NH2[cutout]
         wcs_cropped = WCS(intT_hdr)[cutout]
     else:
-        boxes_reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/p123_boxes.reg"))
+        selected_box_type = 'threads' # or pillars
+        if selected_box_type == 'pillars':
+            boxes_reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/p123_boxes.reg"))
+            selected_box = 'Pillar 1'
+        elif selected_box_type == 'threads':
+            boxes_reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/thread_boxes.reg"))
+            selected_box = 'western'
         boxes_reg_dict = {reg.meta['label']: reg for reg in boxes_reg_list}
-        selected_box = 'Pillar 3'
         box_mask = boxes_reg_dict[selected_box].to_pixel(WCS(intT_hdr)).to_mask().to_image(NH2.shape)
         NH2_cropped = NH2.copy()
         NH2_cropped[(box_mask < 1)] = np.nan
-        if selected_box[-1] == '3':
+        if selected_box_type == 'pillars' and selected_box[-1] == '3':
             NH2_cropped[178:235, 379:413] = np.nan
         wcs_cropped = WCS(intT_hdr)
 
@@ -2491,7 +2496,7 @@ def calculate_co_column_density():
 
 
 if __name__ == "__main__":
-    # calculate_co_column_density()
+    calculate_co_column_density()
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
@@ -2514,8 +2519,8 @@ if __name__ == "__main__":
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
     # save_n2hp_full_spectra()
-    for line in ['hcn', 'cs', 'n2hp']:
-        save_hcop_and_cs_moment_imgs(line)
+    # for line in ['hcn', 'cs', 'n2hp']:
+    #     save_hcop_and_cs_moment_imgs(line)
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 

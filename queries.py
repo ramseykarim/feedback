@@ -17,8 +17,14 @@ import matplotlib.pyplot as plt
 
 from . import catalog
 
+from .g0_stars import print_val_err
+
 """
 Query source catalog
+Created: Unknown, at least by late 2020
+
+As of June 2022, this is where I'm doing a lot of the M16 radiation field
+calculation. Good organization? probably not. works for now? yes
 """
 # This was for RCW 49
 # catalog_data = Catalogs.query_object("10:24:17.509 -57:45:29.28", radius="0.0122628 deg", catalog="HSC")
@@ -60,6 +66,7 @@ def m16_stars():
     catalog_df_OB = catalog_df_OB[['RA', 'DE', 'SkyCoord', 'SpType']] # reduce to important columns
 
     del catalog_df, sptype_catalog # save memory
+    catalog.spectral.stresolver.UNCERTAINTY = False  # toggle the half-type/sampling
     # Make the PoWR objects
     powr_tables = {x: catalog.spectral.powr.PoWRGrid(x) for x in ('OB', 'WNL-H50', 'WNL', 'WNE')}
     # Make the Martins tables object
@@ -89,33 +96,41 @@ def m16_stars():
 
 
     # make some filters for the catalog so we can try different G0 maps
-    filter = 4
+    filter = 5
     filter_stub = ""
     if filter == 0:
         # no filter
         pass
     if filter == 1 or filter == 4:
-        # filter out log10FUV_flux_solLum > 4.5
-        catalog_df_OB = catalog_df_OB[catalog_df_OB['log10FUV_flux_solLum'] < 4.5]
+        # filter log10FUV_flux_solLum > 4.5 (8 stars) or 5.0 (4 stars)
+        catalog_df_OB = catalog_df_OB[catalog_df_OB['log10FUV_flux_solLum'] > 5.0]
         filter_stub += "_fuvlt4.5"
     if filter == 2 or filter == 4:
-        # filter out > x arcmin from y
+        # filter < x arcmin from y
         center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5')
         filter_radius = 3.90751*u.arcmin
         catalog_df_OB = filter_by_within_range(catalog_df_OB, center_coord, radius_arcmin=filter_radius)
         catalog_df_OB = catalog_df_OB[catalog_df_OB['is_within_3.9_arcmin']]
-        filter_stub += "_gtxarcmin"
+        filter_stub += "_ltxarcmin"
     if filter == 3:
         # filter for just the 2 O5 stars
         catalog_df_OB = catalog_df_OB.loc[[175, 205]]
         filter_stub += "_O5s"
+    if filter == 5:
+        # 175, 205, 222, 246
+        catalog_df_OB = catalog_df_OB.loc[[246]]
+        filter_stub += '_justone'
 
     print(catalog_df_OB)
     catr = catalog.spectral.stresolver.CatalogResolver(catalog_df_OB['SpType'].values,
         calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
 
-
     if True:
+        print(catr)
+        for s in catr.star_list:
+            print(s.spectral_types)
+
+    if False:
         # Write out G0 map using these stars
         # almost all of this is copied directly from my example in the scoby-nb repo
         m16_center_coord = SkyCoord("18:18:53.9552 -13:50:45.445", unit=(u.hourangle, u.deg), frame='fk5')
@@ -204,6 +219,37 @@ def m16_stars():
             region_list.append(circle)
         regions.write_ds9(region_list, f"{catalog.utils.m16_data_path}catalogs/hillenbrand_stars.reg")
         return None
+
+    if True:
+        """
+        July 6, 2022
+        Copied from g0_stars.py (RCW 49)
+        I'm gonna estimate the momentum transfer to the gas / threads
+        """
+        print(catr)
+        mdot_med, mdot_err = catr.get_mass_loss_rate()
+        mvflux_med, mvflux_err = catr.get_momentum_flux()
+        ke_med, ke_err = catr.get_mechanical_luminosity()
+        fuv_tot_med, fuv_tot_err = catr.get_FUV_flux()
+        ionizing_tot_med, ionizing_tot_err = catr.get_ionizing_flux()
+        print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
+        print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
+        print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.s))}")
+        print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
+        print(f"IONIZING PHOTON FLUX: {print_val_err(ionizing_tot_med, ionizing_tot_err)}") # units should be 1/time
+        mass_med, mass_err = catr.get_stellar_mass()
+        lum_med, lum_err = catr.get_bolometric_luminosity()
+        print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")
+        print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
+        print(f"MECH/FUV LUM: {(ke_med/fuv_tot_med).decompose():.1E}; MECH/total LUM: {(ke_med/lum_med).decompose():.1E}")
+
+        result_dict = {
+            'mdot': (mdot_med, mdot_err), 'mvflux': (mvflux_med, mvflux_err),
+            'ke': (ke_med, ke_err), 'fuv_tot': (fuv_tot_med, fuv_tot_err),
+            'ionizing_tot': (ionizing_tot_med, ionizing_tot_err),
+            'mass': (mass_med, mass_err), 'lum': (lum_med, lum_err),
+        }
+        return result_dict
 
 
 def filter_by_within_range(catalog_df, center_coord, radius_arcmin=6.):

@@ -889,7 +889,7 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0, vel_lims=None,
 
 
 
-def pillar_sample_spectra(reg_idx, reg_filename_short="catalogs/pillar_samples.reg", show_positions=False):
+def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_samples.reg", show_positions=False):
     """
     June 1, 2021
     In prep for the meeting with Nicola tomorrow, I want to look at spectra of CO 1-0, 3-2, 6-5, and CII towards the head of P1
@@ -901,6 +901,10 @@ def pillar_sample_spectra(reg_idx, reg_filename_short="catalogs/pillar_samples.r
     modifying it again on March 30, 2022 (for paper). I want to make sure it's
     only using 14'' resolution spectra and is just using single pixels and not
     averaging over another circle (complicating the beam)
+
+    July 19, 2022: I seem to have not finished making this on March 30, 2022.
+    I will finish it now and I want to use the grid layout from identify_components_with_co()
+    to compare the relative intensities of different lines at different locations
     """
     reg_list_raw = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_list = []
@@ -911,26 +915,10 @@ def pillar_sample_spectra(reg_idx, reg_filename_short="catalogs/pillar_samples.r
         else:
             reg_list.append(reg)
 
-    # for reg in reg_list:
-    #     print(reg.meta['text'])
-    # return
-
-    ### APEX beam set
-    # cube_filenames = ["sofia/M16_CII_U_APEXbeam.fits",
-    #     "apex/M16_12CO3-2_truncated_cutout.fits", "apex/M16_13CO3-2_truncated_cutout.fits",
-    #     "bima/M16_12CO1-0_APEXbeam.fits", "apex/M16_CO6-5_APEXbeam.fits"]
-    # line_names = ['CII', '12CO(3-2)', '13CO(3-2)',
-    #     '12CO(1-0) * 0.5', '12CO(6-5)']
-    ### SOFIA beam set
-    cube_filenames = ["sofia/M16_CII_U.fits",
-        "bima/M16_12CO1-0_14x14.fits", "bima/M16.BIMA.13co1-0.SOFIAbeam.fits", "bima/M16.BIMA.c18o.cm.SOFIAbeam.fits",
-        "carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits", "carma/M16.ALL.hcn.sdi.cm.subpv.SOFIAbeam.fits",]
     short_names = ['cii',
         '12co10CONV', '13co10CONV', 'c18o10CONV',
-        'hcopCONV', 'hcnCONV',]
-    line_names = ['[C II]',
-        '$^{12}$CO(1$-$0)', '$^{13}$CO(1$-$0)', 'C$^{18}$O(1$-$0)',
-        'HCO+(1$-$0)', 'HCN(1$-$0)']
+        'hcopCONV', 'csCONV',]
+    line_names = [cube_utils.cubenames[line_stub] for line_stub in short_names]
     # multiplier = [1, 1, 1, 0.5, 1]
     multiplier = [1, 1, 4, 15, 4, 4]
 
@@ -939,7 +927,57 @@ def pillar_sample_spectra(reg_idx, reg_filename_short="catalogs/pillar_samples.r
     # reference_filename = catalog.utils.search_for_file("apex/M16_12CO6-5_mom0.fits") # smaller test reference file
     # reference_name = "12CO(6-5)"
 
-    fig = plt.figure(figsize=(15, 7)) # originally (18, 10)
+
+    preset_region_selections = {
+        'p1': slice(0, 7), 'p2': slice(7, 11), 'p3': slice(11, 14),
+        'shared base': 14, 'peaks': (2, 3, 6, 14, 8, 10, 11, 13)
+    }
+    if selected_region in preset_region_selections:
+        selected_region_name = selected_region
+        selected_region = preset_region_selections[selected_region]
+    else:
+        selected_region_name = selected_region
+
+    single_img = isinstance(selected_region, int)
+    if single_img:
+        fig = plt.figure(figsize=(15, 7)) # originally (18, 10)
+        grid_shape = (1, 4)
+        ref_ax_position = (0, 0)
+    else:
+        fig = plt.figure(figsize=(15, 12))
+        grid_shape = (3, 3)
+        ref_ax_position = (0, 2)
+
+
+    # Get the region
+    # selected_region = 0
+    if not isinstance(selected_region, int):
+        # select 8 regions somehow
+        if isinstance(selected_region, slice):
+            reg_list = reg_list[reg]
+        elif selected_region == 'all':
+            reg_list = reg_list[:8]
+        elif isinstance(selected_region, tuple):
+            reg_list = [reg_list[x] for x in selected_region]
+        else:
+            raise RuntimeError("Region index selected_region can't be ", selected_region)
+        assert len(reg_list) <= 8
+        ax_spec_list = []
+        for i in range(3):
+            for j in range(3):
+                if (i == ref_ax_position[0]) and (j == ref_ax_position[1]):
+                    pass # create it later
+                else:
+                    ax_spec_list.append(plt.subplot2grid(grid_shape, (i, j)))
+    else:
+        reg_list = [reg_list[selected_region]]
+        ax_spec = plt.subplot2grid(grid_shape, (0, 1), colspan=3, rowspan=1)
+        ax_spec_list = [ax_spec]
+
+
+
+
+
 
     ref_img, ref_hdr = fits.getdata(reference_filename, header=True)
     ref_wcs = WCS(ref_hdr)
@@ -948,10 +986,11 @@ def pillar_sample_spectra(reg_idx, reg_filename_short="catalogs/pillar_samples.r
         ax_img = plt.subplot2grid((1, 1), (0, 0), projection=ref_wcs)
     else:
         # grid, make room for spectra
-        ax_img = plt.subplot2grid((1, 5), (0, 0), projection=ref_wcs)
+        ax_img = plt.subplot2grid(grid_shape, ref_ax_position, projection=ref_wcs)
     im = ax_img.imshow(ref_img, origin='lower', cmap='Greys_r', vmin=0.1, vmax=0.6)
-    fig.colorbar(im, ax=ax_img)
-    ax_img.set_title(reference_name)
+    if single_img:
+        fig.colorbar(im, ax=ax_img)
+        ax_img.set_title(reference_name)
 
 
     if show_positions:
@@ -968,74 +1007,94 @@ def pillar_sample_spectra(reg_idx, reg_filename_short="catalogs/pillar_samples.r
         # Exit the function
         return
 
-    # Get the region
-    # reg_idx = 0
-    reg = reg_list[reg_idx]
-
     # Velocity limits and text
-    if reg_idx < 6:
-        pillar_vel_limits = (22.5*kms, 27.5*kms)
-    # elif reg_idx == : # not sure what this was from
-    #     pillar_vel_limits = (20*kms, 27.5*kms)
-    else:
-        pillar_vel_limits = (19*kms, 24*kms)
-    pillar_vel_stub = make_vel_stub(pillar_vel_limits)
+    # if selected_region < 6:
+    #     pillar_vel_limits = (22.5*kms, 27.5*kms)
+    # # elif selected_region == : # not sure what this was from
+    # #     pillar_vel_limits = (20*kms, 27.5*kms)
+    # else:
+    #     pillar_vel_limits = (19*kms, 24*kms)
+    # pillar_vel_stub = make_vel_stub(pillar_vel_limits)
 
-    ax_spec = plt.subplot2grid((1, 5), (0, 1), colspan=4, rowspan=1)
     def add_spectrum(cube, spec_ax, reg, idx, cii=False):
         # holdover from cii_systematic_emission_2() where there were multiple img/spec axes
+        # spec_ax is the matplotlib Axis for the spectra
         pixreg = reg.to_pixel(cube[0, :, :].wcs)
         j, i = [int(round(c)) for c in pixreg.center.xy]
         spectrum = cube[:, i, j]
-        if False: #reg_idx < 4: # currently causing bug (March 2, 2022)
-            mean_vel = np.nanmean(subcube.spectral_slab(*pillar_vel_limits).moment1().to_value())
-            mean_stub = f" [Mean: {mean_vel:.2f}]"
-        else:
-            mean_stub = ""
+        #### this was to try to evaluate small shifts in the  mean line velocity
+        # if False: #selected_region < 4: # currently causing bug (March 2, 2022)
+        #     mean_vel = np.nanmean(subcube.spectral_slab(*pillar_vel_limits).moment1().to_value())
+        #     mean_stub = f" [Mean: {mean_vel:.2f}]"
+        # else:
+        #     mean_stub = ""
         multiplier_stub = '' if multiplier[idx] == 1 else f' $\\times${multiplier[idx]}'
-        p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub}{mean_stub}",
+        p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub}",
             linestyle='-' if not cii else '--')
         if cii:
             bg_spectrum = cps2.get_cii_background()
             spectrum = spectrum - bg_spectrum
-            p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub}{mean_stub} (BG sub)",
+            p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub} (BG sub)",
                 linestyle='-', color=p[0].get_c())
-        # if False:#reg_idx < 4:
+        # if False:#selected_region < 4:
         #     spec_ax.axvline(mean_vel, color=p[0].get_c(), alpha=0.6)
         return p
-    for i, c_fn in enumerate(cube_filenames):
-        cube = cube_utils.CubeData(c_fn)
+    for line_idx, line_stub in enumerate(short_names):
+        cube = cube_utils.CubeData(cube_utils.cubefilenames[line_stub])
         cube.convert_to_K()
         cube.data = cube.data.with_spectral_unit(kms)
-        add_spectrum(cube.data, ax_spec, reg, i, cii=(i==0))
-    pixreg = reg.to_pixel(ref_wcs)
-    pix_center = pixreg.center.xy
-    pix_radius = pixreg.radius
-    # ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{idx}", color='r', fontsize=11, ha='center', va='bottom')
-    # if reg_idx < 4:
-    #     ax_spec.text(0.7, 0.6, "Mean velocity taken from\nwithin shaded velocity range", color='k', fontsize=11, ha='left', va='bottom', transform=ax_spec.transAxes)
-    pixreg.plot(ax=ax_img, color='r')
-    ax_img.plot(pix_center[0], pix_center[1], color='r', marker='x')
+        for reg_idx, reg in enumerate(reg_list):
+            add_spectrum(cube.data, ax_spec_list[reg_idx], reg, line_idx, cii=(line_idx==0))
 
 
-    # spec_ylim = (-1, 50) # CII
+    spec_ylim = (-10, 80) # CII
     # spec_ylim = (-3, 25) # 12CO(3-2)
     # spec_ylim = (-1, 10) # 13CO(3-2)
     # spec_xlim = (15, 40) # OLD, Marc suggested to widen it
     spec_xlim = (15, 45)
-    ax_spec.legend()
-    # ax_spec.set_ylim(spec_ylim)
-    ax_spec.set_xlim(spec_xlim)
-    ax_spec.axvspan(*(pvl.to_value() for pvl in pillar_vel_limits), color='grey', alpha=0.05)
-    ax_spec.axhline(0, color='k', alpha=0.2)
 
-    ax_spec.set_xlabel("velocity (km/s)")
-    ax_spec.set_ylabel("Line intensity (K)")
-    ax_spec.set_title("Line spectra (14\" beam) averaged over selected position")
+    for reg_idx, reg in enumerate(reg_list):
+        pixreg = reg.to_pixel(ref_wcs)
+        pix_center = pixreg.center.xy
+        pix_radius = pixreg.radius
+        # if reg_idx < 4:
+        #     ax_spec.text(0.7, 0.6, "Mean velocity taken from\nwithin shaded velocity range", color='k', fontsize=11, ha='left', va='bottom', transform=ax_spec.transAxes)
+        # pixreg.plot(ax=ax_img, color='r')
+        if single_img:
+            ax_img.plot(pix_center[0], pix_center[1], color='r', marker='+')
+        else:
+            ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{reg_idx+1}", color='r', fontsize=11, ha='center', va='center')
+
+        ax_spec = ax_spec_list[reg_idx]
+        if single_img or reg_idx == 7:
+            ax_spec.legend(loc='upper right', fontsize=9)
+        ax_spec.set_ylim(spec_ylim)
+        ax_spec.set_xlim(spec_xlim)
+        ax_spec.xaxis.set_ticks_position('both')
+        ax_spec.yaxis.set_ticks_position('both')
+        ax_spec.xaxis.set_tick_params(direction='in', which='both')
+        ax_spec.yaxis.set_tick_params(direction='in', which='both')
+        # ax_spec.axvspan(*(pvl.to_value() for pvl in pillar_vel_limits), color='grey', alpha=0.05)
+        ax_spec.axhline(0, color='k', alpha=0.2)
+        ax_spec.text(0.1, 0.9, str(reg_idx+1), color='k', fontsize=14, ha='center', va='center', transform=ax_spec.transAxes)
+        if not single_img and (reg_idx+1 not in [1, 3, 6]):
+            ax_spec.yaxis.set_ticklabels([])
+        else:
+            ax_spec.set_ylabel("Line intensity (K)")
+        if not single_img and reg_idx+1 not in [6, 7, 8]:
+            ax_spec.xaxis.set_ticklabels([])
+        else:
+            ax_spec.set_xlabel("velocity (km/s)")
+        # ax_spec.set_title("Line spectra (14\" beam) averaged over selected position")
     # plt.show()
-    # 2021-06-03 (jupiter), 2022-03-02 (laptop)
-    fig.savefig(f"/home/ramsey/Pictures/2022-03-30/pillar_samples_{reg_idx}.png",
-        metadata=catalog.utils.create_png_metadata(title=f"region {reg_idx} from {reg_filename_short}",
+    plt.tight_layout()
+    if single_img:
+        plt.subplots_adjust(left=0.05, right=0.95, wspace=0.4)
+    else:
+        plt.subplots_adjust(hspace=0, wspace=0)
+    # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!)
+    fig.savefig(f"/home/ramsey/Pictures/2022-07-19/pillar_samples_{selected_region_name}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"region {selected_region} from {reg_filename_short}",
             file=__file__, func='pillar_sample_spectra'))
 
 
@@ -1899,19 +1958,14 @@ if __name__ == "__main__":
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
     # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
-    # pillar_sample_spectra(None, show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    reg_fn_short = "catalogs/pillar_samples_v2.reg"
+    pillar_sample_spectra('peaks', show_positions=False, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
 
     # for i in [1]:
     #     for j in range(2):
     #         conv = bool(j)
     #         multiple_line_moment1s(moment=i, conv=conv) # this was the most recently uncommented thing on March 25, 2022
 
-    get_noise_graph('csCONV')
-    get_noise_graph('n2hpCONV')
-
-    # convolve_carma_to_sofia()
-    # identify_components_with_co()
-    # co_moment_image()
 
     ### showing the colors
     # plt.subplot(111)
