@@ -2,6 +2,10 @@
 Created: August 24, 2021
 Putting the relevant parts of PDR_Example_Model_Plotting-RamseyCopy.ipynb
 in here as a script that can be run and modified quickly.
+
+August 15, 2022:
+I will make spaghetti plots, and I will build a measurement-creating function
+in m16_deepdive.prepare_pdrt_tables_3
 """
 __author__ = "Ramsey Karim"
 

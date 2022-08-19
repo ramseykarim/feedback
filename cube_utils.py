@@ -28,6 +28,7 @@ The contour levels can now be tied to the noise (which I also figured out for ea
 On feb 22 2022 I moved this from m16_investigation.overlaid_contours_for_offset
 to here so that I can have just one main copy and make sure I'm always using
 the same noise values across all functions.
+I will always use "CONV" to mean CII beam. If I mean APEX CO 3-2, I'll just say APEX and it will always mean the 20'' beam
 """
 onesigmas = { # all values in K. These are the 1sigma noise levels, which contours will be based on
     'cii': 1.0, # CII (might be 1.2 but sampling that really dark area shows 1 and that seems good to me)
@@ -36,6 +37,8 @@ onesigmas = { # all values in K. These are the 1sigma noise levels, which contou
     '12co10': 6.2, '12co10CONV': 2.0, # 12co10/conv
     '13co10': 2.6, '13co10CONV': 0.7, # 13co10/conv
     'c18o10': 0.66, 'c18o10CONV': 0.40, # c18o10/conv
+    'co65': 1.65, 'co65CONV': 1, # checked August 11 and 18, 2022
+    '12co32': 1, '13co32': 1, # checked August 18, 2022
     'n2hp': 0.56, 'n2hpCONV': 0.24, # Finally checked these on April 25 and 26, 2022
     'cs': 0.60, 'csCONV': 0.24, # Both cs and n2hp CONV are 0.24, it's not just copy-paste
 }
@@ -47,6 +50,8 @@ cubenames = {
     '12co10': '$^{12}$CO(1-0)', '12co10CONV': '$^{12}$CO(1-0) (CII beam)',
     '13co10': "$^{13}$CO(1-0)", '13co10CONV': "$^{13}$CO(1-0) (CII beam)",
     'c18o10': "C$^{18}$O(1-0) (smooth)", 'c18o10CONV': "C$^{18}$O(1-0) (CII beam, smooth)",
+    'co65': "$^{12}$CO(6-5)", 'co65': "$^{12}$CO(6-5)  (CII beam)",
+    '12co32': "$^{12}$CO(3-2)", '13co32': "$^{13}$CO(3-2)",
     'n2hp': 'N$_2$H+(1-0)', 'n2hpCONV': 'N$_2$H+(1-0) (CII beam)',
     'cs': 'CS(2-1)', 'csCONV': 'CS(2-1) (CII beam)',
 }
@@ -62,6 +67,8 @@ cubefilenames = {
     '12co10': "bima/M16_12CO1-0_7x4.fits", '12co10CONV': "bima/M16_12CO1-0_14x14.fits",
     '13co10': "bima/M16.BIMA.13co1-0.fits", '13co10CONV': "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
     'c18o10': "bima/M16.BIMA.c18o.cm.SMOOTH.fits", 'c18o10CONV': "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits",
+    'co65': "apex/M16_CO6-5.fits", 'co65CONV': "apex/M16_CO6-5.SOFIAbeam.fits",
+    '12co32': "apex/M16_12CO3-2_truncated.fits", '13co32': "apex/M16_13CO3-2_truncated.fits", # spectra trimmed to approx. CII limits
 
 }
 

@@ -399,11 +399,14 @@ def save_smoothed_carma():
     I guess I created this July 12, 2021
     Reusing it September 21, 2021 to do it again with the SOFIAbeam versions
     and again (same day) for c18o (1-0)
+    Reusing it July 22, 2022 for CS, CS.SOFIAbeam
     """
-    raise RuntimeError("Already ran this on September 21, 2021")
-    line_stub = "hcop"
-    line_fn = catalog.utils.search_for_file(f"carma/M16.ALL.{line_stub}.sdi.cm.subpv.SOFIAbeam.fits")
-    line_fn = catalog.utils.search_for_file("bima/M16.BIMA.c18o.cm.SOFIAbeam.fits")
+    raise RuntimeError("Already ran this on September 21, 2021; July 22, 2022")
+    line_stub = "cs"
+    beam_stub = ".SOFIAbeam" if False else ""
+    line_fn = catalog.utils.search_for_file(f"carma/M16.ALL.{line_stub}.sdi.cm.subpv{beam_stub}.fits")
+    # line_fn = catalog.utils.search_for_file("bima/M16.BIMA.c18o.cm.SOFIAbeam.fits")
+    print(f"Smoothing spectal from file {line_fn}")
     save_fn = line_fn.replace('.fits', '.SMOOTH.fits')
     subcube = cps2.cutout_subcube(length_scale_mult=None, data_filename=line_fn)
     subcube = cps2.smooth(subcube)

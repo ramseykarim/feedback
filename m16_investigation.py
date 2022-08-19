@@ -214,6 +214,7 @@ def convolve_carma_to_sofia():
     SOFIA.
     Reused September 21, 2021 for 13CO and C18O (1-0), roughly the same code
     Reused April 26, 2022 to do N2H+ and CS
+    Reused August 18, 2022 to do CO6-5 (the 6-5 to 3-2 beam was in m16_pictures.compare_32_65_10)
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     """
@@ -225,8 +226,9 @@ def convolve_carma_to_sofia():
     cube_cii = SpectralCube.read(fn)
     cube_cii._unit = u.K
 
-    cube_mol = cube_utils.CubeData([f for f in filepaths if 'n2hp' in f].pop())
+    # cube_mol = cube_utils.CubeData([f for f in filepaths if 'n2hp' in f].pop())
     # cube_mol = cube_utils.CubeData("bima/M16.BIMA.c18o.cm.fits").convert_to_K()
+    cube_mol = cube_utils.CubeData("apex/M16_CO6-5.fits").convert_to_K()
     write_path, original_mol_fn = os.path.split(cube_mol.full_path)
     write_fn = original_mol_fn.replace('.fits', '.SOFIAbeam.fits')
     print(write_path)
@@ -1807,7 +1809,9 @@ def get_noise_graph(data_filename=None):
     and histogram of the standard deviation of the image
     :param data_filename: the short path name for a cube. The cube will be
         loaded through cps2.cutout_subcube so it will be in K km/s.
-        Can also be the "short name" for a cube, I'll have a dict here
+        Can also be the "short name" for a cube, I'll have a dict here.
+        If it's a short name that's not in the dict I put here, then I'll check
+        cube_utils.cubefilenames (many of these are duplicates)
     """
     data_filenames = {'cii': 'sofia/M16_CII_U.fits',
         '12co10': 'bima/M16_12CO1-0_7x4.Kkms.fits', '12co10CONV': 'bima/M16_12CO1-0_14x14.Kkms.fits',
@@ -1817,6 +1821,10 @@ def get_noise_graph(data_filename=None):
         'hcop': 'carma/M16.ALL.hcop.sdi.cm.subpv.fits', 'hcopSMOOTH': 'carma/M16.ALL.hcop.sdi.cm.subpv.SMOOTH.fits',
         'hcopSOFIAbeam': 'carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.fits', 'hcopSMOOTHSOFIAbeam': 'carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.SMOOTH.fits',
         'hcopregrid': 'carma/M16.ALL.hcop.sdi.cm.subpv.SOFIAbeam.regrid.fits',
+        # I put the long spectrum versions here cause that stuff is good for noise estimation (2022-08-18)
+        # These take significantly longer (less than a couple minutes, but not a couple seconds like the others)
+        # But the result for 12CO actually changes by a lot (factor of 2)
+        '12co32': "apex/M16_12CO3-2_ref.fits", '13co32': "apex/M16_13CO3-2_ref.fits",
     }
     short_name = data_filename
     if data_filename is not None:
@@ -1831,7 +1839,13 @@ def get_noise_graph(data_filename=None):
     median_moment = np.median(moment0[np.isfinite(moment0) & (moment0>0)])
     print(median_moment)
     mask = np.isfinite(moment0) & (moment0 < median_moment) & (moment0 > 0)
-    std = cube.std(axis=0)
+    try:
+        std = cube.std(axis=0)
+    except ValueError as e:
+        # Probably cube too large, Only been an issue for full CO32 maps, but gives much better error estimate to do it this way (2022-08-18)
+        print("[get_noise_graph] Error encountered: ", e)
+        print("[get_noise_graph] Retrying with how=ray")
+        std = cube.std(axis=0, how='ray')
     std_unit = std.unit
     print(std.unit)
     std = std.to_value()
@@ -1847,7 +1861,8 @@ def get_noise_graph(data_filename=None):
     ax_hist = plt.subplot(122)
     ax_hist.hist(std[mask].ravel(), bins=32, range=(std_lo, std_hi))
     ax_hist.set_title(f"Masked STD histogram. median: {np.median(std[mask]):.2f} {std_unit}")
-    fig.savefig(f"/home/ramsey/Pictures/2022-01-31/{short_name}_NOISE.png",
+    # 2022-01-31, 2022-08-11,
+    fig.savefig(f"/home/ramsey/Pictures/2022-08-18/{short_name}_NOISE.png",
         metadata=catalog.utils.create_png_metadata(title='noise',
             file=__file__, func='get_noise_graph'))
 
@@ -1957,9 +1972,13 @@ if __name__ == "__main__":
     #### For 12CO I used zcs=7 (or 5), css=5, lsm=None, rest same as above
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
+    # convolve_carma_to_sofia()
+    get_noise_graph('12co32')
+    get_noise_graph('13co32')
+
     # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
-    reg_fn_short = "catalogs/pillar_samples_v2.reg"
-    pillar_sample_spectra('peaks', show_positions=False, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    # reg_fn_short = "catalogs/pillar_samples_v2.reg"
+    # pillar_sample_spectra('peaks', show_positions=False, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
 
     # for i in [1]:
     #     for j in range(2):

@@ -893,6 +893,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
     get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
     short_names = list(cube_utils.cubefilenames.keys())
+    print(short_names)
     cube_filenames = [cube_utils.cubefilenames[k] for k in short_names]
     names = [cube_utils.cubenames[k] for k in short_names]
     # cube_filenames = ["sofia/M16_CII_U.fits",
@@ -920,7 +921,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
     else:
         # colors = [marcs_colors[i] for i in [1, 5, 2]]
         colors = ['cyan', 'white']
-        # colors = ['white', 'k'] + [marcs_colors[i] for i in [0, 1, 5, 2]]
+        # colors = ['k', 'white'] + [marcs_colors[i] for i in [0, 1, 5, 2]]
         default_text_color = 'w'
 
     """
@@ -958,9 +959,12 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         (0, 50), # cii
         (0, 15), (0, 15), # hcn
         (0, 15), (0, 7), # hcop
-        (0, 60), (0, 50), # co10/CONV
+        (0, 5), (0, 5), # n2hp
+        (0, 15), (0, 15), # cs
+        (0, 65), (0, 50), # co10/CONV
         (0, 20), (0, 20), # 13co
         (0, 2.5), (0, 2.5), # c18o
+        (0, 15), # co65
     ]
 
     def check_idx(idx):
@@ -1078,7 +1082,7 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
                 levels = make_contour_levels(noise_1sig_moment)
                 # Linestyles: make the first one dashed, everything else solid
                 linestyles = ['-'] + ['-']*(len(levels) - 1) # I need to deal with the dashes/negative contours
-                ax.contour(all_imgs[j], colors=colors[color_idx], levels=levels, linestyles=linestyles, linewidths=0.5, alpha=0.9)
+                ax.contour(all_imgs[j], colors=colors[color_idx], levels=levels, linestyles=linestyles, linewidths=1, alpha=0.9)
                 if i == 0:
                     # (colors[color_idx] if not (colors[color_idx] in ('k', 'black') and ) else ...)
                     if (colors[color_idx] in ('k', 'black')) and (idx_for_img is not None) and (cmap in ('magma', 'inferno', 'cividis')):
@@ -1126,8 +1130,8 @@ def channel_maps_again(*cube_idxs, vel_start=24.5, vel_stop=25.5, grid_shape=Non
         insetcax.tick_params(axis='y', colors=default_text_color)
         insetcax.yaxis.set_ticks_position('left')
     plt.subplots_adjust(hspace=0, wspace=0)
-    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15, 2022-02-22, 2022-03-24, 2022-03-29
-    fig.savefig(f"/home/ramsey/Pictures/2022-05-10/contouroverlay_{unique_label}_channelmaps_{level_scaling.upper()}.png",
+    # 2021-10-18, 2022-01-24, 2022-02-01, 2022-02-15, 2022-02-22, 2022-03-24, 2022-03-29, 2022-05-10
+    fig.savefig(f"/home/ramsey/Pictures/2022-08-11/contouroverlay_{unique_label}_channelmaps_{level_scaling.upper()}.png",
         metadata=catalog.utils.create_png_metadata(title=f'contours {contour_levels_multipliers} xsigma',
             file=__file__, func='channel_maps_again'))
     # plt.show()
@@ -1750,13 +1754,27 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
             selected_regions = (0, 1)
         elif selected_set == 'S':
             selected_regions = (2, 3)
+        elif selected_set == 'baseN':
+            selected_regions = (3, 4)
+        elif selected_set == 'baseS':
+            selected_regions = (5, 6)
+    try:
+        selected_regions
+    except NameError as e:
+        raise RuntimeError(f"You forgot to set selected_set ({selected_set}) to something that makes sense for this pillar ({pillar})") from e
+    else:
+        pass
 
-    filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, f"carma/M16.ALL.*subpv{smooth_stub}.fits"))
-    filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, f"carma/M16.ALL.*subpv.SOFIAbeam{smooth_stub}.fits"))
-    get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
-    get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
+    try:
+        filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, f"carma/M16.ALL.*subpv{smooth_stub}.fits"))
+        filepaths_conv = glob.glob(os.path.join(catalog.utils.m16_data_path, f"carma/M16.ALL.*subpv.SOFIAbeam{smooth_stub}.fits"))
+        get_mol = lambda mol, fp_list : [f for f in fp_list if mol in f].pop()
+        get_both_mol = lambda mol : (get_mol(mol, filepaths), get_mol(mol, filepaths_conv))
+        mol_fn = get_mol(molecular_line, filepaths)
+    except IndexError:
+        mol_fn = cube_utils.cubefilenames[molecular_line]
     # get all the filenames at once
-    cube_filenames = ["sofia/M16_CII_U.fits", get_mol(molecular_line, filepaths), "bima/M16_12CO1-0_7x4.fits"]
+    cube_filenames = ["sofia/M16_CII_U.fits", mol_fn, "bima/M16_12CO1-0_7x4.fits"]
     colors = [marcs_colors[0], marcs_colors[1], marcs_colors[6],]
     short_names = ['cii', molecular_line, '12co10']
     names = [cube_utils.cubenames[x] for x in short_names]
@@ -1927,8 +1945,8 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
     molecular_line_stub = '' if molecular_line == 'hcop' else f"-{molecular_line}"
     # plt.show()
     # fig.savefig(f"/home/rkarim/Pictures/2021-10-12-work/pv_{selected_region}{smooth_stub}.png")
-    # 2021-01-12, 2022-01-25, 2022-02-01, 2022-02-27, 2022-04-28
-    fig.savefig(f"/home/ramsey/Pictures/2022-05-23/pv_{pillar_stub}_{selected_set}{clip_stub}{molecular_line_stub}{contour_stub}{smooth_stub}.png",
+    # 2021-01-12, 2022-01-25, 2022-02-01, 2022-02-27, 2022-04-28, 2022-05-23, 2022-07-22
+    fig.savefig(f"/home/ramsey/Pictures/2022-08-11/pv_{pillar_stub}_{selected_set}{clip_stub}{molecular_line_stub}{contour_stub}{smooth_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f"PV from {reg_filename_short}, 0th contour = {zeroth_contour_sigma}sig, steps of {contour_sigma_step}sig",
             file=__file__, func='pv_again'))
 
@@ -1936,23 +1954,26 @@ def pv_again(selected_set="across-wide", pillar=1, clip_bright=False, contour='c
 if __name__ == "__main__":
     # vel_lims = dict(vel_start=21.5, vel_stop=22.5)
     # vel_lims = dict(vel_start=19.5, vel_stop=27.5) # production at 4,4
-    # vel_lims = dict(vel_start=20, vel_stop=27.5) # production at 3,5
+    vel_lims = dict(vel_start=20, vel_stop=27.5) # production at 3,5
     # vel_lims = dict(vel_start=24.5, vel_stop=25.5) # testing
     ###
     # fig_params = dict(grid_shape=(4, 4), figsize=(25, 25))
-    # fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
+    fig_params = dict(grid_shape=(3, 5), figsize=(25, 15))
     # fig_params = dict(grid_shape=(3, 5), figsize=(25, 13)) # just for the zoomed in version
     ###
-    # args = channel_maps_again('cii', 'n2hp', **vel_lims, **fig_params, idx_for_img=0, level_scaling='linear', check_levels=False, length_scale_mult=None)
+    args = channel_maps_again('co65', 'hcop', **vel_lims, **fig_params, idx_for_img=0, level_scaling='log', check_levels=False, length_scale_mult=None)
 
     # highlight_threads_moment0()
 
 
     # pv_again(selected_set='across-wide', clip_bright=True, contour='cii')
-    pv_again(selected_set='N', pillar=2, clip_bright=False, contour='molecular', smooth=False)
-    pv_again(selected_set='S', pillar=2, clip_bright=False, contour='molecular', smooth=False)
-    pv_again(selected_set='N', pillar=2, clip_bright=False, contour='molecular', smooth=False, molecular_line='cs')
-    pv_again(selected_set='S', pillar=2, clip_bright=False, contour='molecular', smooth=False, molecular_line='cs')
+    # x = 'across-wide'
+    # y = 'along'
+    # p = 1
+    # pv_again(selected_set=x, pillar=p, clip_bright=False, contour='molecular', smooth=True)
+    # pv_again(selected_set=y, pillar=p, clip_bright=False, contour='molecular', smooth=True)
+    # pv_again(selected_set=x, pillar=p, clip_bright=False, contour='molecular', smooth=True, molecular_line='co65')
+    # pv_again(selected_set=y, pillar=p, clip_bright=False, contour='molecular', smooth=True, molecular_line='co65')
 
     # gain2(selected_set=2, line_stub='cii') #????
     # sample_spectra(0)

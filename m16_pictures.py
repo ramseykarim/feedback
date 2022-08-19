@@ -813,16 +813,18 @@ def quick_make_BIMA_HST_APEX_overlay():
 
 
 def compare_32_65_10():
-    # co32_cube = SpectralCube.read(catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits"))
+    co32_cube = SpectralCube.read(catalog.utils.search_for_file("apex/M16_12CO3-2_truncated.fits"))
     co10_cube = SpectralCube.read(catalog.utils.search_for_file("bima/M16_12CO1-0_APEXbeam.fits"))
     co65_cube = SpectralCube.read(catalog.utils.search_for_file("apex/M16_CO6-5_APEXbeam.fits"))
+    vel_lims = (20*kms, 27*kms)
     if False:
         # this is how we convolved the 6-5 data
+        # Update 2022-08-18, I am convolving 6-5 to CII in m16_investigation.convolve_carma_to_sofia
         co65_cube._unit = u.K
         co65_cube = co65_cube.convolve_to(co32_cube.beam)
         co65_cube.write(catalog.utils.m16_data_path+"apex/M16_CO6-5_APEXbeam.fits", format='fits')
     select = 1
-    mom0_co65 = co65_cube.spectral_slab(20*kms, 27*kms).moment0()
+    mom0_co65 = co65_cube.spectral_slab(*vel_lims).moment0()
     fig = plt.figure(figsize=(10, 10))
     ax = plt.subplot(111, projection=mom0_co65.wcs)
     if select < 0:
@@ -834,14 +836,15 @@ def compare_32_65_10():
     handles.append(mpatches.Patch(color='k', label="APEX 12CO(6-5)"))
     overlay_stub = ""
     if select % 2 == 0:
-        co32_img = reproject_interp(catalog.utils.search_for_file("apex/M16_12CO3-2_mom0.fits"), mom0_co65.wcs, shape_out=mom0_co65.shape, return_footprint=False)
+        co32_mom0 = co32_cube.spectral_slab(*vel_lims).moment0()
+        co32_img = reproject_interp((co32_mom0.to_value(), co32_mom0.wcs), mom0_co65.wcs, shape_out=mom0_co65.shape, return_footprint=False)
         overlay_img = co32_img
         overlay_stub = "APEX 12CO(3-2)"
         overlay_color = 'red'
         ax.contour(overlay_img, colors=overlay_color, linewidths=1)
         handles.append(mpatches.Patch(color=overlay_color, label=overlay_stub))
     if select > 0:
-        co10_mom0 = co10_cube.spectral_slab(20*kms, 27*kms).moment0()
+        co10_mom0 = co10_cube.spectral_slab(*vel_lims).moment0()
         co10_img = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), mom0_co65.wcs, shape_out=mom0_co65.shape, return_footprint=False)
         overlay_img = co10_img
         co10_stub = "BIMA 12CO(1-0)"
@@ -858,8 +861,11 @@ def compare_32_65_10():
         ax.set_title(f"APEX 12CO(6-5) compared to {overlay_stub}", fontsize=10)
     ax.set_xlabel("RA"); ax.set_ylabel("Dec")
     ax.legend(handles=handles)
-    plt.show()
-    # plt.savefig("/home/ramsey/Pictures/2021-05-12-work/CO_65_10.png")
+    # plt.show()
+    # 2021-05-12,
+    plt.savefig("/home/ramsey/Pictures/2022-08-10/CO_65_10.png",
+        metadata=catalog.utils.create_png_metadata(title='co lines comparison at APEX beam',
+            file=__file__, func='compare_32_65_10'))
 
 
 def justify_background_figure():
@@ -1408,16 +1414,29 @@ def hh216_co32():
             file=__file__, func="hh216_co32"), dpi=150)
 
 
+def save_smaller_CO32_maps():
+    """
+    August 10, 2022
+    Repeating the "_truncated" process for the newer CO32 maps that Rolf gave us
+    in September 2021 (I have not looked at them until now)
+    I couldn't find where I trimmed the older CO32 maps.
+    """
+    raise RuntimeError("Already ran this on August 10, 2022")
+    tw_or_th = "13"
+    original_fn = catalog.utils.search_for_file(f"apex/M16_{tw_or_th}CO3-2_ref.fits")
+    save_fn = original_fn.replace('_ref.fits', '_truncated.fits') # so that we don't have to rename all the usages
+    cube = cube_utils.CubeData(original_fn).data
+    subcube = cube.spectral_slab(-10*kms, 60*kms).with_spectral_unit(kms)
+    subcube.meta['HISTORY'] = "rkarim trimmed spectra to -10,60 km/s on 2022-08-10"
+    subcube.write(save_fn)
+
+
 if __name__ == "__main__":
     # m16_channel_maps()
-    save_fits_thin_channel_maps()
+    # save_fits_thin_channel_maps()
     # single_parallel_pillar_pvs() # most recently uncommented (april 21, 2022)
 
     # simple_mom0_carma_molecules('cii')
     # advanced_mom0_carma_molecules()
-    # hh216_co32()
 
-    # justify_background_figure()
-    # background_samples_figure_molecular()
-
-    # irac8um_to_cii_figure()
+    compare_32_65_10()

@@ -565,6 +565,24 @@ def prepare_pdrt_tables_2():
     print("done")
 
 
+def prepare_pdrt_tables_3():
+    """
+    Created August 15, 2022
+    This is going to be the best version yet
+    I want to be able to make a quick table (or Measurement, idk) at a given
+    location for all lines (in a specified list) at a fixed resolution
+    (largest of the samples).
+    These will be used in spaghetti plots.
+    I want to include a diagnostic image for each sample, which includes the
+    location on a moment 0 image within the velocity limits I am integrating
+    over, and the full spectrum at that location with lines showing the velocity
+    limits. I want to write this diagnostic image out for each sample and each
+    location so that I can show that each location makes sense.
+    """
+    #TODO!
+    ...
+
+
 def fit_molecular_components_with_gaussians(region_name, cii=False, regrid=False):
     """
     Created October 22, 2021
@@ -2490,13 +2508,48 @@ def calculate_co_column_density():
     plt.show()
 
 
+def calculate_pillar_lifetimes_from_columndensity():
+    """
+    August 8, 2022
+    Use the 13CO column densities and a rough estimate of photoevaporative flow
+    mass loss rate to make a lifetime map
+    """
+    co_column_fn = catalog.utils.search_for_file("bima/13co10_column_density.fits")
+    N13CO, n13co_hdr = fits.getdata(co_column_fn, header=True)
+    # Convert 13CO to H2 column using numbers from Tiwari 2021
+    ratio_12co_to_13co = 52
+    ratio_12co_to_H2 = 8.5e-5
+    NH2 = (N13CO * ratio_12co_to_13co / ratio_12co_to_H2) * u.cm**-2
+    """
+    Estimate mass loss rate (in terms of H2 molecules / time)
+    From Gorti & Hollenbach 2002, mass loss rate dm/dt = A * rho_base * v_f
+    For our purposes, dH2 / dt / dA = n_base * v_f
+    Assume n_base (physical density at base of flow) and v_f (flow velocity)
 
-
+    Whether it's H or H2 is hazy but it's just a factor of 2
+    """
+    n_base = 1e4 * u.cm**-3
+    v_f = 1.0*kms
+    H2_loss_rate_per_area = n_base * v_f
+    # Divide the H2 column map by this H2 loss rate per area
+    lifetime_map = (NH2 / H2_loss_rate_per_area).to(u.Myr)
+    print(lifetime_map.unit)
+    fig = plt.figure(figsize=(10, 8))
+    plt.subplot(111, projection=WCS(n13co_hdr))
+    plt.imshow(lifetime_map.to_value(), origin='lower', vmin=0, cmap='terrain')
+    plt.colorbar(label='Lifetime upper limit (Myr)')
+    plt.title("Photoevaporative flow lifetime limits from N($^{13}$CO)")
+    plt.xlabel("RA")
+    plt.ylabel("Dec")
+    fig.savefig("/home/ramsey/Pictures/2022-08-08/lifetime_map_n13co_color.png",
+        metadata=catalog.utils.create_png_metadata(title='lifetime upper limits from N(13co), n_base = 10^4cm-3 v_f = 1km/s',
+            file=__file__, func='calculate_pillar_lifetimes_from_columndensity'))
 
 
 
 if __name__ == "__main__":
-    calculate_co_column_density()
+    # calculate_co_column_density()
+    calculate_pillar_lifetimes_from_columndensity()
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
