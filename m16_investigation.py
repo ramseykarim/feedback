@@ -1973,8 +1973,7 @@ if __name__ == "__main__":
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
     # convolve_carma_to_sofia()
-    get_noise_graph('12co32')
-    get_noise_graph('13co32')
+    get_noise_graph('12co10APEX')
 
     # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     # reg_fn_short = "catalogs/pillar_samples_v2.reg"

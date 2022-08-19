@@ -997,12 +997,14 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
 
     spectrum_ylims = {
         'hcopCONV': (-1, 15), '13co10CONV': (-2, 17),
-        'cii': (-3, 40), 'hcn': (-2, 15),
-        'hcnCONV': (-1, 15), 'n2hpCONV': (-1, 4),
+        'cii': (-3, 40), 'ciiAPEX': (-3, 40),
+        'hcn': (-2, 15), 'hcnCONV': (-1, 15),
+        'n2hpCONV': (-1, 4),
         'csCONV': (-1, 8),
         '12co10': (-10, 130), 'hcop': (-2, 15),
         '13co10': (-4, 20), 'cs': (-2, 8),
-        '12co10CONV': (-5, 120)
+        '12co10CONV': (-5, 120), '12co10APEX': (-5, 120),
+        'co65CONV': (-5, 25), '12co32': (-5, 45), '13co32': (-2, 23),
     }
 
     if pillar == 1:
@@ -1014,18 +1016,20 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
 
     img_vmin = { # these are all for 1 km/s moment, so multiply by km/s width of moment
         'hcopCONV': 0, '13co10CONV': 0,
-        'cii': 10. if pillar!=3 else 5., 'hcn': 1./3,
-        'hcnCONV': 0, 'n2hpCONV': None,
+        'cii': 10. if pillar!=3 else 5., 'ciiAPEX': 10. if pillar!=3 else 5.,
+        'hcn': 1./3, 'hcnCONV': 0,
+        'n2hpCONV': None,
         'csCONV': 0,
         '12co10': 10, 'hcop': 1./3,
         '13co10': 1, 'cs': 0,
-        '12co10CONV': 10.,
+        '12co10CONV': 10., '12co10APEX': 10.,
+        'co65CONV': 1, '12co32': 0, '13co32': 0,
     }
 
     img_vmax = { # same deal as above. Only used for pillar 3!!!!!!!!
         'hcopCONV': 2, '13co10CONV': None,
-        'hcnCONV': 2, '12co10CONV': 75./3,
-        'cii':55./3
+        'hcnCONV': 2, '12co10CONV': 75./3, '12co10APEX': 75./3,
+        'cii':55./3, 'ciiAPEX':55./3,
     }
 
     # Decide which things are fixed in the models
@@ -1250,18 +1254,23 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     untieciistd_stub = f"_ciiUNtiedstd" if untieciistd else ''
     fixedciistd_stub = "_ciifixedstd" if fixed_cii_std else ''
     if cii_index is not None:
-        fixedmean_stub = f"_fixedciimean" if fixedmean else '_fittingciimean'
+        fixedmean_stub = f"_fixedciimean" if fixedmean else ''
     else:
         fixedmean_stub = ''
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
     # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03, 2022-05-19,
-    # 2022-06-03,
-    # fig.savefig(f"/home/ramsey/Pictures/2022-04-28/threads/fit_{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.png",
-    #     metadata=catalog.utils.create_png_metadata(title=f'regions from {reg_filename_short}',
-    #         file=__file__, func='fit_molecular_and_cii_with_gaussians'))
-    fig.savefig(f"/home/ramsey/Pictures/2022-06-07/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}.pdf")
-
+    # 2022-06-03, 2022-06-07,
+    savename = f"/home/ramsey/Pictures/2022-08-18/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
+    ###########################
+    save_as_png = True
+    ###########################
+    if save_as_png:
+        fig.savefig(f"{savename}.png",
+            metadata=catalog.utils.create_png_metadata(title=f'regions from {reg_filename_short}',
+                file=__file__, func='fit_molecular_and_cii_with_gaussians'))
+    else:
+        fig.savefig(f"{savename}.pdf")
     # plt.show()
 
 
@@ -2549,7 +2558,7 @@ def calculate_pillar_lifetimes_from_columndensity():
 
 if __name__ == "__main__":
     # calculate_co_column_density()
-    calculate_pillar_lifetimes_from_columndensity()
+    # calculate_pillar_lifetimes_from_columndensity()
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
@@ -2568,6 +2577,8 @@ if __name__ == "__main__":
 
     # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=3)
     # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
+    fit_molecular_and_cii_with_gaussians(1, lines=['co65CONV', '12co10CONV', '13co10CONV'], pillar=1, select=0)
+    fit_molecular_and_cii_with_gaussians(1, lines=['co65CONV', '12co10CONV', '13co10CONV'], pillar=1, select=1)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)

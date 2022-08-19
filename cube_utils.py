@@ -32,25 +32,28 @@ I will always use "CONV" to mean CII beam. If I mean APEX CO 3-2, I'll just say 
 """
 onesigmas = { # all values in K. These are the 1sigma noise levels, which contours will be based on
     'cii': 1.0, # CII (might be 1.2 but sampling that really dark area shows 1 and that seems good to me)
+    'ciiAPEX': 0.8, # August 18, 2022 (mostly approx'd from DS9)
     'hcn': 0.55, 'hcnCONV': 0.26, # HCN: I finally checked it, it is very close to HCO+
     'hcop': 0.57, 'hcopCONV': 0.27, # HCO+/conv
     '12co10': 6.2, '12co10CONV': 2.0, # 12co10/conv
+    '12co10APEX': 1.5, # August 18, 2022; hard to estimate
     '13co10': 2.6, '13co10CONV': 0.7, # 13co10/conv
     'c18o10': 0.66, 'c18o10CONV': 0.40, # c18o10/conv
-    'co65': 1.65, 'co65CONV': 1, # checked August 11 and 18, 2022
-    '12co32': 1, '13co32': 1, # checked August 18, 2022
+    'co65': 1.65, 'co65CONV': 0.57, # checked August 11 and 18, 2022
+    '12co32': 0.69, '13co32': 0.62, # checked August 18, 2022; I wonder if these should be the same
     'n2hp': 0.56, 'n2hpCONV': 0.24, # Finally checked these on April 25 and 26, 2022
     'cs': 0.60, 'csCONV': 0.24, # Both cs and n2hp CONV are 0.24, it's not just copy-paste
 }
 
 cubenames = {
-    'cii': '[C II]',
+    'cii': '[C II]', 'ciiAPEX': '[C II] (CO(3-2) beam)',
     'hcn': 'HCN(1-0)', 'hcnCONV': 'HCN(1-0) (CII beam)',
     'hcop': 'HCO+(1-0)', 'hcopCONV': 'HCO+(1-0) (CII beam)',
     '12co10': '$^{12}$CO(1-0)', '12co10CONV': '$^{12}$CO(1-0) (CII beam)',
+    '12co10APEX': '$^{12}$CO(1-0) (CO(3-2) beam)',
     '13co10': "$^{13}$CO(1-0)", '13co10CONV': "$^{13}$CO(1-0) (CII beam)",
     'c18o10': "C$^{18}$O(1-0) (smooth)", 'c18o10CONV': "C$^{18}$O(1-0) (CII beam, smooth)",
-    'co65': "$^{12}$CO(6-5)", 'co65': "$^{12}$CO(6-5)  (CII beam)",
+    'co65': "$^{12}$CO(6-5)", 'co65CONV': "$^{12}$CO(6-5)  (CII beam)",
     '12co32': "$^{12}$CO(3-2)", '13co32': "$^{13}$CO(3-2)",
     'n2hp': 'N$_2$H+(1-0)', 'n2hpCONV': 'N$_2$H+(1-0) (CII beam)',
     'cs': 'CS(2-1)', 'csCONV': 'CS(2-1) (CII beam)',
@@ -59,12 +62,13 @@ cubenames = {
 
 carma_template = lambda mol, conv : f"carma/M16.ALL.{mol}.sdi.cm.subpv" + ('.SOFIAbeam' if conv else '') + ".fits"
 cubefilenames = {
-    'cii': "sofia/M16_CII_U.fits",
+    'cii': "sofia/M16_CII_U.fits", 'ciiAPEX': "sofia/M16_CII_U_APEXbeam.fits",
     'hcn': carma_template('hcn', False), 'hcnCONV': carma_template('hcn', True),
     'hcop': carma_template('hcop', False), 'hcopCONV': carma_template('hcop', True),
     'n2hp': carma_template('n2hp', False), 'n2hpCONV': carma_template('n2hp', True),
     'cs': carma_template('cs', False), 'csCONV': carma_template('cs', True),
     '12co10': "bima/M16_12CO1-0_7x4.fits", '12co10CONV': "bima/M16_12CO1-0_14x14.fits",
+    '12co10APEX': "bima/M16_12CO1-0_APEXbeam.fits",
     '13co10': "bima/M16.BIMA.13co1-0.fits", '13co10CONV': "bima/M16.BIMA.13co1-0.SOFIAbeam.fits",
     'c18o10': "bima/M16.BIMA.c18o.cm.SMOOTH.fits", 'c18o10CONV': "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits",
     'co65': "apex/M16_CO6-5.fits", 'co65CONV': "apex/M16_CO6-5.SOFIAbeam.fits",
