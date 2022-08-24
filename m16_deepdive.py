@@ -2466,8 +2466,8 @@ def fit_n2hp_peak(i=5):
     new_v_axis = v_axis + delta_V
 
     mask = new_v_axis < 30*u.km/u.s
-    trimmed_v_axis = new_v_axis[mask].to(u.km/u.s)
-    trimmed_i_axis = i_axis[mask]
+    trimmed_v_axis = new_v_axis[mask].to(u.km/u.s).to_value()
+    trimmed_i_axis = i_axis[mask].to_value()
 
     # plt.plot(v_axis, i_axis)
     # plt.show()
@@ -2519,6 +2519,51 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
         savename = os.path.join(path_name, savename)
         np.savetxt(savename, np.array([spectral_axis.to_value(), spectrum.to_value()]), header=f"{spectral_axis.unit}, {spectrum.unit}")
         print("saved "+savename)
+
+
+def save_n2hp_new_vaxis_cube():
+    """
+    August 24, 2022
+    Save a new version of the full resolution N2H+ cube which is has the velocity
+    axis correct for the line that's currently at -9 km/s (J=1-0, F1=0-1, F=1-2)
+    """
+    cube_filename = "/n/aurora1/feedback/m16/M16.ALL.n2hp.fullres.sdi.fits"
+    cube = cube_utils.SpectralCube.read(cube_filename)
+    path_name = catalog.utils.m16_data_path+"carma"
+
+
+    v_axis = cube.spectral_axis.to(kms)
+
+    # Following the method in m16_deepdive.fit_n2hp_peak
+    line_table = generate_n2hp_line_table()
+    rest_freq = line_table.loc[7, 'FREQ(GHz)'] * u.GHz
+    new_rest_line = line_table.loc[line_table['JF1F'] == 'J=1-0, F1=0-1, F=1-2'].iloc[0]
+    new_rest_freq = new_rest_line['FREQ(GHz)'] * u.GHz
+
+    delta_V = const.c * (new_rest_freq - rest_freq)/rest_freq
+    new_v_axis = v_axis + delta_V
+
+    hdr = cube.header
+    del hdr['HISTORY']
+    hdr['ORIGIN'] = 'rkarim, m16_deepdive.save_n2hp_new_vaxis_cube'
+    old_restfrq = hdr['RESTFRQ']
+    hdr['HISTORY'] = f"old RESTFRQ value was {old_restfrq} Hz"
+    hdr['HISTORY'] = f"Closest line found in LAMDA {line_table.loc[7, 'JF1F']} at {rest_freq}"
+    hdr['HISTORY'] = f"New line in LAMDA {new_rest_line['JF1F']} at {new_rest_freq}"
+    hdr['HISTORY'] = f"Shifted rest frequency from {rest_freq} to {new_rest_freq}"
+    hdr['HISTORY'] = f"by {delta_V}"
+    hdr['RESTFRQ'] = (new_rest_freq.to(u.Hz).to_value(), "[Hz] Line rest frequency")
+    hdr['RESTFREQ'] = new_rest_freq.to(u.Hz).to_value()
+    del hdr['LSTART'], hdr['LSTEP'], hdr['LWIDTH'], hdr['LTYPE']
+    hdr['CRVAL3'] = (hdr['CRVAL3'] + delta_V.to_value(), "[m s-1] Coordinate value at reference point")
+
+
+    print(new_v_axis[88])
+
+    # Mask at < 28.4 km/s
+    new_cube = cube_utils.SpectralCube(data=cube.unmasked_data[:], header=hdr, wcs=WCS(hdr))
+    new_cube = new_cube[:88, :, :]
+    new_cube.write(os.path.join(path_name, "n2hp_fullres_j_10_f1_01_f_12.fits"))
 
 
 def save_hcop_and_cs_moment_imgs(line='hcop'):
@@ -2819,12 +2864,13 @@ if __name__ == "__main__":
 
     # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=2)
     # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=8)
-    fit_spectrum_detailed('hcopCONV', n_components=3, pillar=1, reg_number=8)
+    # fit_spectrum_detailed('hcopCONV', n_components=3, pillar=1, reg_number=8)
     # fit_spectrum_detailed('12co10CONV', n_components=2, pillar=1, reg_number=5)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
     # save_n2hp_full_spectra()
+    save_n2hp_new_vaxis_cube()
     # for line in ['hcn', 'cs', 'n2hp']:
     #     save_hcop_and_cs_moment_imgs(line)
 
