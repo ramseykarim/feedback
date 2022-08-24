@@ -907,6 +907,8 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
     July 19, 2022: I seem to have not finished making this on March 30, 2022.
     I will finish it now and I want to use the grid layout from identify_components_with_co()
     to compare the relative intensities of different lines at different locations
+
+    August 19, 2022: Adding CO6-5 and 3-2
     """
     reg_list_raw = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_list = []
@@ -919,10 +921,14 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
 
     short_names = ['cii',
         '12co10CONV', '13co10CONV', 'c18o10CONV',
-        'hcopCONV', 'csCONV',]
+        'co65CONV', '12co32', '13co32',
+        'hcopCONV', 'hcnCONV', 'csCONV',]
     line_names = [cube_utils.cubenames[line_stub] for line_stub in short_names]
     # multiplier = [1, 1, 1, 0.5, 1]
-    multiplier = [1, 1, 4, 15, 4, 4]
+    multiplier = [1,
+        1, 4, 15,
+        4, 1, 1,
+        4, 4, 4,]
 
     reference_filename = catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")
     reference_name = "HST F657N"
@@ -936,8 +942,9 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
     }
     if selected_region in preset_region_selections:
         selected_region_name = selected_region
-        selected_region = preset_region_selections[selected_region]
+        selected_region = preset_region_selections[selected_region_name]
     else:
+        # Let the name be the number/index
         selected_region_name = selected_region
 
     single_img = isinstance(selected_region, int)
@@ -956,7 +963,7 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
     if not isinstance(selected_region, int):
         # select 8 regions somehow
         if isinstance(selected_region, slice):
-            reg_list = reg_list[reg]
+            reg_list = reg_list[selected_region]
         elif selected_region == 'all':
             reg_list = reg_list[:8]
         elif isinstance(selected_region, tuple):
@@ -1094,10 +1101,16 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
         plt.subplots_adjust(left=0.05, right=0.95, wspace=0.4)
     else:
         plt.subplots_adjust(hspace=0, wspace=0)
-    # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!)
-    fig.savefig(f"/home/ramsey/Pictures/2022-07-19/pillar_samples_{selected_region_name}.png",
-        metadata=catalog.utils.create_png_metadata(title=f"region {selected_region} from {reg_filename_short}",
-            file=__file__, func='pillar_sample_spectra'))
+    # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!), 2022-07-19
+    savename = f"/home/ramsey/Pictures/2022-08-19/pillar_samples_{selected_region_name}"
+    save_as_png = False
+    if save_as_png:
+        fig.savefig(f"{savename}.png",
+            metadata=catalog.utils.create_png_metadata(title=f"region {selected_region} from {reg_filename_short}",
+                file=__file__, func='pillar_sample_spectra'))
+    else:
+        # lets me zoom in more
+        fig.savefig(f"{savename}.pdf")
 
 
 def multiple_moments():
@@ -1973,11 +1986,11 @@ if __name__ == "__main__":
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
     # convolve_carma_to_sofia()
-    get_noise_graph('12co10APEX')
+    # get_noise_graph('12co10APEX')
 
-    # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     # reg_fn_short = "catalogs/pillar_samples_v2.reg"
-    # pillar_sample_spectra('peaks', show_positions=False, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    pillar_sample_spectra('all', show_positions=False, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
 
     # for i in [1]:
     #     for j in range(2):

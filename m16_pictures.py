@@ -1431,6 +1431,52 @@ def save_smaller_CO32_maps():
     subcube.write(save_fn)
 
 
+def try_component_velocity_figure():
+    """
+    August 22, 2022
+    Trying some version of a component velocity figure to improve on a table.
+    This will be sort of a chart, not an astronomical image
+    """
+    tab_12co10 = {
+        'NE Thread': (25.61, 23.46), 'SE Thread': (25.76,), 'NW Thread': (24.9, 26.24), 'SW Thread': (25.44,),
+        'NE Head': (24.87, 23.49), 'SE Head': (25.42, 23.53), 'NW Head': (25.04, 23.23), 'SW Head': (25.13, 23.13),
+    }
+
+    tab_hcop = {
+        'NE Thread': (25.61, 23.07), 'SE Thread': (25.93,), 'NW Thread': (24.9, 26.03), 'SW Thread': (25.21,),
+        'NE Head': (25.17, 23.87), 'SE Head': (25.29, 23.7), 'NW Head': (24.74,), 'SW Head': (25.09, 23.99),
+    }
+    x_keys = ['SE Thread', 'NE Thread', 'SE Head', 'NE Head', 'SW Thread', 'NW Thread', 'SW Head', 'NW Head',]
+    x_values = [1, 2, 3, 4, 6, 7, 8, 9]
+    table_names = ['12co10', 'hcop']
+    markers = ['x', '+']
+    print(x_keys)
+    x_arr = {k: [] for k in table_names}
+    y_arr = {k: [] for k in table_names}
+    for i, k in enumerate(x_keys):
+        x = x_values[i]
+        for name, table in zip(table_names, (tab_12co10, tab_hcop)):
+            for y in table[k]:
+                x_arr[name].append(x)
+                y_arr[name].append(y)
+    fig = plt.figure(figsize=(10, 6))
+    ax = plt.subplot(111)
+    for i, name in enumerate(table_names):
+        plt.scatter(x_arr[name], y_arr[name], marker=markers[i], label=cube_utils.cubenames[name])
+    x_axis = list(range(1, len(x_keys)+1))
+    ax.set_ylim([22, 28])
+    ax.set_xticks(x_values)
+    ax.set_xticklabels(x_keys, rotation=45, fontsize=13)
+    plt.subplots_adjust(bottom=0.2)
+    ax.set_ylabel("$V_{\\rm LSR}$ (km/s)")
+    ax.legend()
+    savename = "/home/ramsey/Pictures/2022-08-23/model_fit_table_viz.png"
+    fig.savefig(f"{savename}.png",
+        metadata=catalog.utils.create_png_metadata(title='hcopCONV and 12co10CONV',
+            file=__file__, func='try_component_velocity_figure'))
+
+
+
 if __name__ == "__main__":
     # m16_channel_maps()
     # save_fits_thin_channel_maps()
@@ -1439,4 +1485,6 @@ if __name__ == "__main__":
     # simple_mom0_carma_molecules('cii')
     # advanced_mom0_carma_molecules()
 
-    compare_32_65_10()
+    # compare_32_65_10()
+
+    try_component_velocity_figure()

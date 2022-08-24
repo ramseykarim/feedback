@@ -905,6 +905,105 @@ def make_quick_image():
     plt.show()
 
 
+def setup_fitting_defaults(pillar):
+    """
+    August 22, 2022
+    Return a dictionary of things that I will reuse in multiple fitting functions
+    This would honestly make more sense as a Class, just structurally, but I'm
+    already in too deep and it doesn't matter
+    """
+    utils_dict = {}
+
+    if pillar == 1:
+        reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    elif pillar == 2:
+        reg_filename_short = "catalogs/pillar2_pointsofinterest.reg"
+    elif pillar == 3:
+        reg_filename_short = "catalogs/pillar3_pointsofinterest.reg"
+    utils_dict['reg_filename_short'] = reg_filename_short
+
+    utils_dict['spectrum_ylims'] = {
+        'hcopCONV': (-1, 15), '13co10CONV': (-2, 17),
+        'cii': (-3, 40), 'ciiAPEX': (-3, 40),
+        'hcn': (-2, 15), 'hcnCONV': (-1, 15),
+        'n2hpCONV': (-1, 4),
+        'csCONV': (-0.5, 8),
+        '12co10': (-10, 130), 'hcop': (-2, 15),
+        '13co10': (-4, 20), 'cs': (-2, 8),
+        '12co10CONV': (-5, 120), '12co10APEX': (-5, 120),
+        'co65CONV': (-2, 25), '12co32': (-3, 45), '13co32': (-1, 23),
+    }
+
+    if pillar == 1:
+        vel_lims = (24, 27)
+    elif pillar == 2:
+        vel_lims = (21, 24)
+    elif pillar == 3:
+        vel_lims = (21, 24)
+    utils_dict['vel_lims'] = vel_lims
+
+    img_vmin = { # these are all for 1 km/s moment, so multiply by km/s width of moment
+        'hcopCONV': 0, '13co10CONV': 0,
+        'cii': 10. if pillar!=3 else 5., 'ciiAPEX': 10. if pillar!=3 else 5.,
+        'hcn': 1./3, 'hcnCONV': 0,
+        'n2hpCONV': None,
+        'csCONV': 0,
+        '12co10': 10, 'hcop': 1./3,
+        '13co10': 1, 'cs': 0,
+        '12co10CONV': 10., '12co10APEX': 10.,
+        'co65CONV': 1, '12co32': 0, '13co32': 0,
+    }
+    utils_dict['img_vmin'] = img_vmin
+
+    img_vmax = { # same deal as above. Only used for pillar 3!!!!!!!!
+        'hcopCONV': 2, '13co10CONV': None,
+        'hcnCONV': 2, '12co10CONV': 75./3, '12co10APEX': 75./3,
+        'cii':55./3, 'ciiAPEX':55./3,
+    }
+    utils_dict['img_vmax'] = img_vmax
+
+    if pillar == 1:
+        cutout_args = dict(length_scale_mult=4)
+    elif pillar == 2:
+        cutout_args = dict(length_scale_mult=3, reg_filename='catalogs/pillar2_across.reg', reg_index=2)
+    elif pillar == 3:
+        cutout_args = dict(length_scale_mult=1.3, reg_filename='catalogs/parallelpillars_2.reg', reg_index=5)
+    utils_dict['cutout_args'] = cutout_args
+
+    def trim_cube(line_name, cube):
+        if line_name.replace('CONV', '') in ('hcn', 'n2hp', '13co10'):
+            # Get rid of satellite lines and negatives
+            full_cube = cube
+            cube = cube.spectral_slab(17*kms, 27.5*kms)
+        elif line_name.replace('CONV', '') in ('12co10',):
+            # Get rid of the redshifted feature
+            full_cube = cube
+            cube = cube.spectral_slab(17*kms, 27*kms)
+        else:
+            full_cube = None
+        return cube, full_cube
+    utils_dict['trim_cube'] = trim_cube
+
+    def choose_vmin_vmax(line_name):
+        vmin = None if img_vmin[line_name] is None else img_vmin[line_name]*(vel_lims[1] - vel_lims[0])
+        if pillar == 3:
+            vmax = None if ((line_name not in img_vmax) or (img_vmax[line_name] is None)) else img_vmax[line_name]*(vel_lims[1]-vel_lims[0])
+        else:
+            vmax = None
+        return vmin, vmax
+    utils_dict['choose_vmin_vmax'] = choose_vmin_vmax
+
+    if pillar == 1:
+        velocity_gridline_range = (22, 28)
+    elif pillar == 2:
+        velocity_gridline_range = (18, 24)
+    elif pillar == 3:
+        velocity_gridline_range = (18, 24)
+    utils_dict['velocity_gridline_range'] = velocity_gridline_range
+
+    return utils_dict
+
+
 def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, select=0):
     """
     Created October 27 2021, 25 minutes before my meeting
@@ -949,16 +1048,12 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     I will update for P3 now too. I made 4 points in
     catalogs/pillar3_pointsofinterest.reg (point regions)
     """
+    utils_dict = setup_fitting_defaults(pillar) # contains useful things
     # reg_filename_short = "catalogs/pillar1_emissionpeaks.hcopregrid.moreprecise.reg" # order appears to be [HCO+, CII]
     # reg_filename_short = "catalogs/p1_threads_pathsandpoints.reg" # order appears to be North-E, North-W, South-E, South-W
     # reg_filename_short = "catalogs/pillar1_pointsofinterest.reg" # order is wide profile, blue tail, north of west thread, bluest component, top of western thread (where IRAC4 peaks), above western thread (where IRAC4 is dark)
     # reg_filename_short = "catalogs/pillar1_peak_degeneracyboundary.reg" # order is 3 component peak, 2 component peak
-    if pillar == 1:
-        reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
-    elif pillar == 2:
-        reg_filename_short = "catalogs/pillar2_pointsofinterest.reg"
-    elif pillar == 3:
-        reg_filename_short = "catalogs/pillar3_pointsofinterest.reg"
+    reg_filename_short = utils_dict['reg_filename_short']
     sky_regions = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     # print("There are ", len(sky_regions), " regions")
     # now supporting multiple selected_regions
@@ -970,6 +1065,15 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
             selected_region_list = [sky_regions[x-1] for x in [1, 2, 8, 5]] # head
         elif select == 2:
             selected_region_list = [sky_regions[x-1] for x in [4, 8, 5]] # Wthread
+        # Select 3, 4, 5, 6 are the latest idea for the paper (2022-08-20)
+        elif select == 3:
+            selected_region_list = [sky_regions[x-1] for x in [5, 4, 7]] # single component fits (W thread and NW head)
+        elif select == 4:
+            selected_region_list = [sky_regions[x-1] for x in [1, 2, 8]] # 2 component fits (rest of head)
+        elif select == 5:
+            selected_region_list = [sky_regions[x-1] for x in [1, 3, 6]] # E thread + NE head
+        elif select == 6:
+            selected_region_list = [sky_regions[1 - 1]] # position 1 is the 3-component position
     elif pillar == 2:
         """
         Order is
@@ -995,42 +1099,10 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     else:
         pixel_name = selected_region_list[0].meta['label'].replace(" ", '-')
 
-    spectrum_ylims = {
-        'hcopCONV': (-1, 15), '13co10CONV': (-2, 17),
-        'cii': (-3, 40), 'ciiAPEX': (-3, 40),
-        'hcn': (-2, 15), 'hcnCONV': (-1, 15),
-        'n2hpCONV': (-1, 4),
-        'csCONV': (-1, 8),
-        '12co10': (-10, 130), 'hcop': (-2, 15),
-        '13co10': (-4, 20), 'cs': (-2, 8),
-        '12co10CONV': (-5, 120), '12co10APEX': (-5, 120),
-        'co65CONV': (-5, 25), '12co32': (-5, 45), '13co32': (-2, 23),
-    }
-
-    if pillar == 1:
-        vel_lims = (24, 27)
-    elif pillar == 2:
-        vel_lims = (21, 24)
-    elif pillar == 3:
-        vel_lims = (21, 24)
-
-    img_vmin = { # these are all for 1 km/s moment, so multiply by km/s width of moment
-        'hcopCONV': 0, '13co10CONV': 0,
-        'cii': 10. if pillar!=3 else 5., 'ciiAPEX': 10. if pillar!=3 else 5.,
-        'hcn': 1./3, 'hcnCONV': 0,
-        'n2hpCONV': None,
-        'csCONV': 0,
-        '12co10': 10, 'hcop': 1./3,
-        '13co10': 1, 'cs': 0,
-        '12co10CONV': 10., '12co10APEX': 10.,
-        'co65CONV': 1, '12co32': 0, '13co32': 0,
-    }
-
-    img_vmax = { # same deal as above. Only used for pillar 3!!!!!!!!
-        'hcopCONV': 2, '13co10CONV': None,
-        'hcnCONV': 2, '12co10CONV': 75./3, '12co10APEX': 75./3,
-        'cii':55./3, 'ciiAPEX':55./3,
-    }
+    spectrum_ylims = utils_dict['spectrum_ylims']
+    vel_lims = utils_dict['vel_lims']
+    img_vmin = utils_dict['img_vmin']
+    img_vmax = utils_dict['img_vmax']
 
     # Decide which things are fixed in the models
     fixedstd = False
@@ -1113,33 +1185,15 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     have len==len(selected_region_list)
     """
     model_list = []
-    if pillar == 1:
-        cutout_args = dict(length_scale_mult=4)
-    elif pillar == 2:
-        cutout_args = dict(length_scale_mult=3, reg_filename='catalogs/pillar2_across.reg', reg_index=2)
-    elif pillar == 3:
-        cutout_args = dict(length_scale_mult=1.3, reg_filename='catalogs/parallelpillars_2.reg', reg_index=5)
+    cutout_args = utils_dict['cutout_args']
 
     for line_idx, line_name in enumerate(line_names_list):
         # Extract spectra at each region
         cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_name], **cutout_args)
-        if line_name.replace('CONV', '') in ('hcn', 'n2hp', '13co10'):
-            # Get rid of satellite lines and negatives
-            full_cube = cube
-            cube = cube.spectral_slab(17*kms, 27.5*kms)
-        elif line_name.replace('CONV', '') in ('12co10',):
-            # Get rid of the redshifted feature
-            full_cube = cube
-            cube = cube.spectral_slab(17*kms, 27*kms)
-        else:
-            full_cube = None
+        cube, full_cube = utils_dict['trim_cube'](line_name, cube) # get rid of satellite lines & other features in certain lines
         cube_x = cube.spectral_axis.to_value()
         # PLOT IMAGE!!!
-        vmin = None if img_vmin[line_name] is None else img_vmin[line_name]*(vel_lims[1] - vel_lims[0])
-        if pillar == 3:
-            vmax = None if ((line_name not in img_vmax) or (img_vmax[line_name] is None)) else img_vmax[line_name]*(vel_lims[1]-vel_lims[0])
-        else:
-            vmax = None
+        vmin, vmax = utils_dict['choose_vmin_vmax'](line_name)
         im = axes_img[line_idx].imshow(cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower', cmap='Blues', vmin=vmin, vmax=vmax)
         fig.colorbar(im, ax=axes_img[line_idx])
         # PLOT BEAM!!!
@@ -1169,7 +1223,6 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
 
             # Plot markers
             #### Don't plot a mark, just use the number as the marker
-            #### axes_img[line_idx].plot([pix_coords[1]], [pix_coords[0]], 'o', markersize=5, color='k')
             if len(selected_region_list) > 1:
                 # Label region, if more than one
                 pad = 1.5
@@ -1177,6 +1230,9 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
                 # dy = pad
                 dx, dy = 0, 0
                 axes_img[line_idx].text(pix_coords[1]+dx, pix_coords[0]+dy, str(reg_idx + 1), color='r', fontsize=12, ha='center', va='center')
+            else:
+                axes_img[line_idx].plot([pix_coords[1]], [pix_coords[0]], 'o', markersize=5, color='r')
+
 
             # Plot noise stuff on spectrum Axes
             cps2.plot_noise_and_vlims(axes_spec[line_idx][reg_idx], channel_noise, vel_lims)
@@ -1218,12 +1274,7 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
         ax.yaxis.set_tick_params(direction='in', which='both')
     for ax in sum(axes_spec, []):
         ax.set_xlim([17, 30])
-        if pillar == 1:
-            velocity_gridline_range = (22, 28)
-        elif pillar == 2:
-            velocity_gridline_range = (18, 24)
-        elif pillar == 3:
-            velocity_gridline_range = (18, 24)
+        velocity_gridline_range = utils_dict['velocity_gridline_range']
         for v in range(*velocity_gridline_range):
             ax.axvline(v, color='gray', alpha=0.2)
     for line_name, ax in zip(line_names_list, axes_img):
@@ -1260,8 +1311,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
     # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03, 2022-05-19,
-    # 2022-06-03, 2022-06-07,
-    savename = f"/home/ramsey/Pictures/2022-08-18/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
+    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24
+    savename = f"/home/ramsey/Pictures/2022-08-24/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -1272,6 +1323,192 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     else:
         fig.savefig(f"{savename}.pdf")
     # plt.show()
+
+
+def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
+    """
+    August 22, 2022
+    Fit one line spectrum in one region. Very similar to fit_molecular_and_cii_with_gaussians()
+    The main difference is that I'll keep that function nice and general, and this
+    one can have a bunch of detailed constraints to make the fits look nice.
+    The goal here is to characterize the CO line asymmetry by fitting one or two
+    components, and since it often fits poorly I'll have to do a little more
+    work with initial conditions and constraints to make the fits come out better
+    :param reg_number: 1-indexed!!!!!!!!!!!
+    """
+    utils_dict = setup_fitting_defaults(pillar)
+    reg_filename_short = utils_dict['reg_filename_short']
+    # I have been 1-indexing the regions so I'll keep doing that
+    reg = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))[reg_number - 1]
+    pixel_name = reg.meta['label'].replace(' ', '-')
+
+    spectrum_ylims = utils_dict['spectrum_ylims']
+    vel_lims = utils_dict['vel_lims']
+    img_vmin = utils_dict['img_vmin']
+    img_vmax = utils_dict['img_vmax']
+
+    # Decide which things are fixed in the models
+    fixedstd = True
+    tiestd = True
+    fixedmean = False
+
+    fig = plt.figure(figsize=(15, 6))
+    grid_len = 8
+    grid_spec_frac = 6
+    axes_spec = plt.subplot2grid((1, grid_len), (0, 0), colspan=grid_spec_frac)
+    axes_img = plt.subplot2grid((1, grid_len), (0, grid_spec_frac), colspan=(grid_len - grid_spec_frac))
+
+    dictionary_of_fitting_parameters_that_work = {
+        # put things in here by "{line_stub}-{pixel_name}-{n_components}"
+        "hcopCONV-NW-thread-1": {'m1': 24.9, 'm1f': True, 's1': 0.3, 'a1': 3.5},
+        "hcopCONV-NW-thread-2": {'m1': 24.9, 'm1f': True, 's1': 0.3, 'a1': 3.5, 'm2': 25.5, 's2': 0.3, 'a2': 1.26},
+        '12co10CONV-E-peak-2': {'m1': 23.5, 's1': 0.85, 'a1': 32, 'm2': 25.4, 's2': 0.85, 'a2': 66.4},
+        # '12co10CONV-broad-line-2': {'m1': 23.1, 'm1b': (22, 24), 's1': 1, 'a1': 10, 'm2': 24.7, 's2': 1, 'a2': 50},
+        '12co10CONV-broad-line-2': {'m1': 24.7, 's1': 1, 'a1': 50, 's2t': False, 's2f': True, 'a2': 3.5, 'a2f': False, 'm2': 18, 'm2f': True, 's2': 80},
+        '12co10CONV-broad-line-3': {'m1': 23.1, 'm1b': (22, 24), 's1': 1, 'a1': 10, 'm2': 24.7, 's2': 1, 'a2': 50, 's3t': False, 's3': 80, 's3f': True, 'm3': 18, 'm3f': True, 'a3': 3.5, 'a3f': False},
+        '12co10CONV-W-peak-2': {'m1': 25.7, 's1': 1, 'a1': 60, 's2t': False, 's2': 80, 's2f': True, 'm2': 19, 'm2f': True, 'a2': 4.7, 'a2f': False},
+        '12co10CONV-W-peak-3': {'m1': 23, 'a1': 20, 's1': 0.7, 's1b': (0.1, 0.95), 'm2': 25.7, 'a2': 60, 's3t': False, 's3': 80, 's3f': True, 'm3': 19, 'm3f': True, 'a3': 4.7, 'a3f': False},
+        '12co10CONV-NW-thread-2': {'m1': 24.9, 'm1f': True, 's1': 0.5, 'a1': 30, 'm2': 26, 'm2f': False, 'a2': 10},
+
+        'hcopCONV-E-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.45},
+        'hcopCONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.45},
+    }
+    def parse_and_assign_saved_params(model):
+        key = f"{line_stub}-{pixel_name}-{n_components}"
+        if key not in dictionary_of_fitting_parameters_that_work:
+            return None
+        saved_params = dictionary_of_fitting_parameters_that_work[key]
+        model_list = list(cps2.iter_models(model))
+        for model_index in range(len(model_list)):
+            n = model_index + 1
+            if f'm{n}' in saved_params:
+                model_list[model_index].mean = saved_params[f'm{n}']
+            if f'm{n}f' in saved_params:
+                model_list[model_index].mean.fixed = saved_params[f'm{n}f']
+            if f'm{n}b' in saved_params:
+                model_list[model_index].mean.bounds = saved_params[f'm{n}b']
+
+            if f's{n}' in saved_params:
+                model_list[model_index].stddev = saved_params[f's{n}']
+            if f's{n}t' in saved_params:
+                model_list[model_index].stddev.tied = saved_params[f's{n}t']
+            if f's{n}f' in saved_params:
+                model_list[model_index].stddev.fixed = saved_params[f's{n}f']
+            if f's{n}b' in saved_params:
+                model_list[model_index].stddev.bounds = saved_params[f's{n}b']
+
+            if f'a{n}' in saved_params:
+                model_list[model_index].amplitude = saved_params[f'a{n}']
+            if f'a{n}f' in saved_params:
+                model_list[model_index].amplitude.fixed = saved_params[f'a{n}f']
+            if f'a{n}b' in saved_params:
+                model_list[model_index].amplitude.bounds = saved_params[f'a{n}b']
+        print(f"Found result for {key}:", saved_params)
+        print("Model initialized to")
+        print(model)
+
+    default_mean = 25.
+    mean_bounds = (20, 30)
+    g0 = cps2.models.Gaussian1D(amplitude=7, mean=default_mean, stddev=0.5,
+        bounds={'amplitude': (0, None), 'mean': mean_bounds})
+    if n_components > 1:
+        g1 = g0.copy()
+        if n_components > 2:
+            g0.mean = default_mean - 2
+            g1.mean = default_mean - 0.5
+            g2 = g1.copy()
+            g2.mean = default_mean + 0.5
+            g = g0 + g1 + g2
+        else:
+            g0.mean = default_mean - 1
+            g1.mean = default_mean + 0.5
+            g = g0 + g1
+    else:
+        g = g0
+
+    fitter = cps2.fitting.LevMarLSQFitter(calc_uncertainties=True)
+    if tiestd:
+        cps2.tie_std_models(g)
+    if fixedstd:
+        cps2.fix_std(g)
+    parse_and_assign_saved_params(g)
+    ndim = len(get_fittable_param_names(g))
+
+    cutout_args = utils_dict['cutout_args']
+    cube = cps2.cutout_subcube(data_filename=cube_utils.cubefilenames[line_stub], **cutout_args)
+    cube, full_cube = utils_dict['trim_cube'](line_stub, cube)
+    cube_x = cube.spectral_axis.to_value()
+    # PLOT IMAGE!!!
+    vmin, vmax = utils_dict['choose_vmin_vmax'](line_stub)
+    im = axes_img.imshow(cube.spectral_slab(*(v*kms for v in vel_lims)).moment0().to_value(), origin='lower', cmap='Blues', vmin=vmin, vmax=vmax)
+    fig.colorbar(im, ax=axes_img)
+    # PLOT BEAM!!!
+    patch = cube.beam.ellipse_to_plot(*(axes_img.transAxes + axes_img.transData.inverted()).transform([0.9, 0.06]), misc_utils.get_pixel_scale(cube[0, :, :].wcs))
+    patch.set_alpha(0.9)
+    patch.set_facecolor('grey')
+    patch.set_edgecolor('grey')
+    axes_img.add_artist(patch)
+
+    channel_noise = cube_utils.onesigmas[line_stub]
+    pix_coords = tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1])
+    spectrum = cube[(slice(None), *pix_coords)].to_value()
+    is_cii = ('cii' in line_stub)
+    if is_cii:
+        cii_background_spectrum = cps2.get_cii_background().to_value()
+        spectrum = spectrum - cii_background_spectrum
+    if full_cube is not None:
+        full_spectrum = full_cube[(slice(None), *pix_coords)].to_value()
+        if is_cii:
+            full_spectrum -= cii_background_spectrum
+    else:
+        full_spectrum = None
+    axes_img.plot([pix_coords[1]], [pix_coords[0]], 'o', markersize=5, color='r')
+    cps2.plot_noise_and_vlims(axes_spec, channel_noise, vel_lims)
+    g_init = g.copy()
+    g_fit = fitter(g_init, cube_x, spectrum, weights=np.full(spectrum.size, 1./channel_noise))
+    if full_spectrum is not None:
+        axes_spec.plot(full_cube.spectral_axis.to_value(), full_spectrum, color='grey', alpha=0.5)
+    cps2.plot_everything_about_models(axes_spec, cube_x, spectrum, g_fit, noise=channel_noise, dof=(cube_x.size - ndim))
+    for ax in (axes_spec, axes_img):
+        ax.xaxis.set_ticks_position('both')
+        ax.yaxis.set_ticks_position('both')
+        ax.xaxis.set_tick_params(direction='in', which='both')
+        ax.yaxis.set_tick_params(direction='in', which='both')
+    axes_spec.set_xlim([17, 30])
+    velocity_gridline_range = utils_dict['velocity_gridline_range']
+    for v in range(*velocity_gridline_range):
+        axes_spec.axvline(v, color='gray', alpha=0.2)
+    index_stub = f"\n{reg_number}"
+    # Label spectrum plot
+    axes_spec.text(0.8, 0.9, f'{cube_utils.cubenames[line_stub].replace(" (CII beam)", "")}{index_stub}', fontsize=15, ha='center', va='center', transform=axes_spec.transAxes)
+    axes_spec.set_ylim(spectrum_ylims[line_stub])
+    plt.tight_layout()
+    plt.subplots_adjust(left=0.05, hspace=0.05, right=0.95)
+
+    pillar_stub = f"p{pillar}_"
+
+    if fixedstd:
+        fixedstd_stub = f"_fixedstd{list(cps2.iter_models(g_init))[0].stddev.value:04.2f}"
+        tiestd_stub = ''
+    else:
+        fixedstd_stub = ''
+        tiestd_stub = f"_untiedstd" if not tiestd else ''
+    fixedmean_stub = f"_fixedmean" if fixedmean else ''
+    # 2022-08-22,24
+    savename = f"/home/ramsey/Pictures/2022-08-24/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
+    ###########################
+    save_as_png = True
+    ###########################
+    if save_as_png:
+        fig.savefig(f"{savename}.png",
+            metadata=catalog.utils.create_png_metadata(title=f'regions from {reg_filename_short}',
+                file=__file__, func='fit_spectrum_detailed'))
+    else:
+        fig.savefig(f"{savename}.pdf")
+
+
+
+
 
 
 
@@ -2577,8 +2814,13 @@ if __name__ == "__main__":
 
     # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=3)
     # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
-    fit_molecular_and_cii_with_gaussians(1, lines=['co65CONV', '12co10CONV', '13co10CONV'], pillar=1, select=0)
-    fit_molecular_and_cii_with_gaussians(1, lines=['co65CONV', '12co10CONV', '13co10CONV'], pillar=1, select=1)
+    # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', '12co32', 'co65CONV'], pillar=1, select=3)
+    # fit_molecular_and_cii_with_gaussians(3, lines=['hcopCONV', 'hcnCONV', 'csCONV'], pillar=1, select=1)
+
+    # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=2)
+    # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=8)
+    fit_spectrum_detailed('hcopCONV', n_components=3, pillar=1, reg_number=8)
+    # fit_spectrum_detailed('12co10CONV', n_components=2, pillar=1, reg_number=5)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)

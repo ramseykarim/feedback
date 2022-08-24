@@ -639,15 +639,23 @@ def plot_noise_img(ax, noise_loc, show_box_lo_lims):
     ax.plot([noise_loc[1] - show_box_j_lo], [noise_loc[0] - show_box_i_lo], 'x', color='grey')
 
 
-def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x=0.05, text_y=0.95, dy=-0.05, noise=None, dof=None):
+def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x=0.05, text_y=0.93, dy=-0.05, noise=None, dof=None):
     """
     November 5, 2021
     Convenience function for plotting all these models
     Moved from m16_deepdive.py on Nov 11
+    August 19, 2022: added the peak velocity to the sidebar printout
     :param model: an astropy.modeling.models model
     """
     if spectrum is not None:
         ax.plot(xaxis, spectrum, color='k', linestyle='-', marker='|')
+        # Calculate and print the peak velocity (subject to noise spikes, but better than nothing)
+        peak_velocity = xaxis[np.argmax(spectrum)]
+        ax.text(text_x, text_y, "$v_{\\rm peak}$ = " + f"{peak_velocity:5.2f}", transform=ax.transAxes, color='k')
+        text_y += dy # increment text_y for the rest of the printouts
+        # Put a vertical dashed line through the peak velocity
+        ax.axvline(peak_velocity, color='k', linestyle='--', alpha=0.3)
+
     if model is None:
         return
     fitted_spectrum = model(xaxis)
@@ -663,9 +671,9 @@ def plot_everything_about_models(ax, xaxis, spectrum, model, m_color='r', text_x
         mean_unc_txt = f"$\pm${m.mean.std:.3f}" if m.mean.std is not None else ""
         stddev_unc_txt = f"$\pm${m.stddev.std:.3f}" if m.stddev.std is not None else ""
         alpha = 1 if component_is_nonzero else 0.15
-        ax.text(text_x, text_y + dy*(0 + 4*i), f"$A_{i}$ = {m.amplitude.value:5.2f}{amplitude_unc_txt}", transform=ax.transAxes, color=m_color, alpha=alpha)
         ax.text(text_x, text_y + dy*(1 + 4*i), f"$\mu_{i}$ = {m.mean.value:5.2f}{mean_unc_txt}", transform=ax.transAxes, color=m_color, alpha=alpha)
         ax.text(text_x, text_y + dy*(2 + 4*i), f"$\sigma_{i}$ = {m.stddev.value:5.2f}{stddev_unc_txt}", transform=ax.transAxes, color=m_color, alpha=alpha)
+        ax.text(text_x, text_y + dy*(0 + 4*i), f"$A_{i}$ = {m.amplitude.value:5.2f}{amplitude_unc_txt}", transform=ax.transAxes, color=m_color, alpha=alpha)
     if noise is not None:
         chisq = np.sum((spectrum-fitted_spectrum)**2 / noise**2)
         if dof is not None:
