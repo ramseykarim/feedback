@@ -971,11 +971,15 @@ def setup_fitting_defaults(pillar):
     utils_dict['cutout_args'] = cutout_args
 
     def trim_cube(line_name, cube):
-        if line_name.replace('CONV', '') in ('hcn', 'n2hp', '13co10'):
+        if line_name.replace('CONV', '') in ('hcn', '13co10'):
             # Get rid of satellite lines and negatives
             full_cube = cube
-            cube = cube.spectral_slab(17*kms, 27.5*kms)
-        elif line_name.replace('CONV', '') in ('12co10',):
+            if line_name.replace('CONV', '') == 'hcn':
+                lo_lim = [None, 20, 17, 17][pillar]
+            else:
+                lo_lim = 17
+            cube = cube.spectral_slab(lo_lim*kms, 27.5*kms)
+        elif line_name.replace('CONV', '') in ('12co10', '12co32'):
             # Get rid of the redshifted feature
             full_cube = cube
             cube = cube.spectral_slab(17*kms, 27*kms)
@@ -1348,7 +1352,7 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
     img_vmax = utils_dict['img_vmax']
 
     # Decide which things are fixed in the models
-    fixedstd = True
+    fixedstd = False
     tiestd = True
     fixedmean = False
 
@@ -1362,16 +1366,55 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         # put things in here by "{line_stub}-{pixel_name}-{n_components}"
         "hcopCONV-NW-thread-1": {'m1': 24.9, 'm1f': True, 's1': 0.3, 'a1': 3.5},
         "hcopCONV-NW-thread-2": {'m1': 24.9, 'm1f': True, 's1': 0.3, 'a1': 3.5, 'm2': 25.5, 's2': 0.3, 'a2': 1.26},
+        'co65CONV-NW-thread-2': {'m1': 24.9, 'm1f': False, 's1': 0.3, 'a1': 3.5, 'm2': 25.5, 's2': 0.3, 'a2': 1.26},
+        'co65CONV-SW-thread-2': {'m1': 24.9, 'm1f': False, 's1': 0.3, 'a1': 3.5, 'm2': 25.5, 's2': 0.3, 'a2': 1.26},
+        '12co32-NW-thread-2': {'m1': 25.31, 'm1f': False, 's1': 0.7, 's1b': (0.3, 0.9), 'm2': 26.1, 'm2b': (26, 30)},
+        '12co32-SW-thread-2': {'m1': 25.42, 'm1f': True, 's1': 0.7, 'm2': 26.1, 'm2b': (26, 30)},
+        '12co32-NW-thread-3': {'m1': 25.31, 'm1f': True, 's1': 0.5, 's1b': (0.3, 0.5), 'm2': 26, 'm3b': (24, 24.75), 'm3': 24},
+        # '12co32-SW-thread-3': {'m1': 25.42, 'm1f': True, 's1': 0.7, 's1b': (0.3, 0.7), 'm2': 26, 'm3b': (24, 24.75), 'm3': 24},
+        'csCONV-SE-thread-1': {'m1': 26},
+        'hcnCONV-NW-thread-2': {'m1': 24.9, 'm2': 26},
+        'hcnCONV-SW-thread-2': {'m1': 25.2, 'm2': 26},
+        'hcnCONV-NE-thread-2': {'m1': 23., 'm2': 25.6},
+        'hcnCONV-SE-thread-2': {'m1': 25., 'm2': 25.9},
+
         '12co10CONV-E-peak-2': {'m1': 23.5, 's1': 0.85, 'a1': 32, 'm2': 25.4, 's2': 0.85, 'a2': 66.4},
+        '12co10CONV-E-peak-3': {'m1': 23.5, 's1': 0.85, 'a1': 32, 'm2': 25.4, 's2': 0.85, 'a2': 66.4, 's1b': (0.2, 0.8)},
+        '12co10CONV-E-peak-4': {'m1': 23.5, 's1': 0.85, 'a1': 32, 'm2': 25.4, 's2': 0.85, 'a2': 66.4, 's1b': (0.2, 0.65), 's4t': False, 's4': 80, 's4f': True, 'm4': 18, 'm4f': True, 'a4': 3.5, 'a4f': False},
+        '12co10CONV-S-peak-4': {'m1': 23.5, 's1': 0.85, 'a1': 32, 'm2': 25.4, 's2': 0.85, 'a2': 66.4, 's1b': (0.2, 0.7), 's4t': False, 's4': 80, 's4f': True, 'm4': 18, 'm4f': True, 'a4': 3.5, 'a4f': False},
         # '12co10CONV-broad-line-2': {'m1': 23.1, 'm1b': (22, 24), 's1': 1, 'a1': 10, 'm2': 24.7, 's2': 1, 'a2': 50},
         '12co10CONV-broad-line-2': {'m1': 24.7, 's1': 1, 'a1': 50, 's2t': False, 's2f': True, 'a2': 3.5, 'a2f': False, 'm2': 18, 'm2f': True, 's2': 80},
         '12co10CONV-broad-line-3': {'m1': 23.1, 'm1b': (22, 24), 's1': 1, 'a1': 10, 'm2': 24.7, 's2': 1, 'a2': 50, 's3t': False, 's3': 80, 's3f': True, 'm3': 18, 'm3f': True, 'a3': 3.5, 'a3f': False},
+        '12co10CONV-broad-line-4': {'m1': 23.1, 'm1b': (22, 24), 's1b': (0.2, 0.6), 'a1': 10, 'm2': 24.7, 'a2': 50, 's4t': False, 's4': 80, 's4f': True, 'm4': 18, 'm4f': True, 'a4': 3.5, 'a4f': False},
+
         '12co10CONV-W-peak-2': {'m1': 25.7, 's1': 1, 'a1': 60, 's2t': False, 's2': 80, 's2f': True, 'm2': 19, 'm2f': True, 'a2': 4.7, 'a2f': False},
         '12co10CONV-W-peak-3': {'m1': 23, 'a1': 20, 's1': 0.7, 's1b': (0.1, 0.95), 'm2': 25.7, 'a2': 60, 's3t': False, 's3': 80, 's3f': True, 'm3': 19, 'm3f': True, 'a3': 4.7, 'a3f': False},
+        '12co10CONV-W-peak-4': {'m1': 23, 'a1': 32, 'm2': 24.4, 'm3': 25.4, 'a2': 66.4, 's1b': (0.2, 0.65), 's4t': False, 's4': 80, 's4f': True, 'm4': 18, 'm4f': True, 'a4': 3.5, 'a4f': False},
+
         '12co10CONV-NW-thread-2': {'m1': 24.9, 'm1f': True, 's1': 0.5, 'a1': 30, 'm2': 26, 'm2f': False, 'a2': 10},
 
-        'hcopCONV-E-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.45},
-        'hcopCONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.45},
+        '12co32-E-peak-3': {'m1': 23.5, 'm2': 24.7, 'm3': 25.7, 's1b': (0.2, 0.7)},
+
+        '12co32-S-peak-2': {'m1': 23.5, 'm2': 25.3, 's1b': (0.2, 0.9)},
+        '12co32-S-peak-3': {'m1': 23.5, 'm2': 24.7, 'm3': 25.7, 's1b': (0.2, 0.8)},
+        '12co32-W-peak-3': {'m1': 23.5, 'm2': 24.7, 'm3': 25.7, 's1b': (0.2, 0.85)},
+
+        '12co32-broad-line-3': {'m1': 23.5, 'm2': 24.7, 'm3': 25.7, 's1b': (0.2, 0.7)},
+
+        'hcopCONV-E-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.5},
+        'hcopCONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.5},
+        'hcopCONV-W-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1b': (0.2, 0.45)},
+
+        'csCONV-S-peak-3': {'m1': 24.1, 'm2': 25, 'm3': 25.9, 'a1': 2, 'a2': 8, 'a3': 6, 's1': 0.4},
+        'csCONV-S-peak-2': {'m1': 25, 'm2': 25, 'a1': 2, 'a2': 8, 's1': 1.2, 's2': 0.4},
+        'csCONV-W-peak-3': {'m1': 24.1, 'm2': 25, 'm3': 25.9, 'a1': 1, 'a2': 3, 'a3': 1, 's1b': (0.1, 0.5)},
+        'hcnCONV-E-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.5},
+        'hcnCONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.5},
+        'hcnCONV-W-peak-2': {'s1b': (0.2, 0.5)},
+        'hcnCONV-W-peak-3': {'m1': 23.5, 'm2': 24.1, 'm3': 25, 'a1': 1., 'a2': 9, 'a3': 1, 's1b': (0.2, 0.5)},
+
+        'co65CONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.7},
+        'co65CONV-W-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1b': (0.2, 0.7)},
     }
     def parse_and_assign_saved_params(model):
         key = f"{line_stub}-{pixel_name}-{n_components}"
@@ -1418,7 +1461,12 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
             g1.mean = default_mean - 0.5
             g2 = g1.copy()
             g2.mean = default_mean + 0.5
-            g = g0 + g1 + g2
+            if n_components > 3:
+                g3 = g2.copy()
+                g3.mean = default_mean + 1
+                g = g0 + g1 + g2 + g3
+            else:
+                g = g0 + g1 + g2
         else:
             g0.mean = default_mean - 1
             g1.mean = default_mean + 0.5
@@ -2859,18 +2907,18 @@ if __name__ == "__main__":
 
     # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=3)
     # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
-    # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', '12co32', 'co65CONV'], pillar=1, select=3)
-    # fit_molecular_and_cii_with_gaussians(3, lines=['hcopCONV', 'hcnCONV', 'csCONV'], pillar=1, select=1)
+    # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', '12co32', 'co65CONV'], pillar=1, select=0)
+    # fit_molecular_and_cii_with_gaussians(2, lines=['hcopCONV', 'hcnCONV', 'csCONV'], pillar=1, select=0)
 
-    # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=2)
-    # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=8)
-    # fit_spectrum_detailed('hcopCONV', n_components=3, pillar=1, reg_number=8)
-    # fit_spectrum_detailed('12co10CONV', n_components=2, pillar=1, reg_number=5)
+    fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=5)
+    # fit_spectrum_detailed('12co32', n_components=3, pillar=1, reg_number=8)
+    # fit_spectrum_detailed('hcnCONV', n_components=2, pillar=1, reg_number=3)
+    # fit_spectrum_detailed('hcnCONV', n_components=2, pillar=1, reg_number=6)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
     # save_n2hp_full_spectra()
-    save_n2hp_new_vaxis_cube()
+    # save_n2hp_new_vaxis_cube()
     # for line in ['hcn', 'cs', 'n2hp']:
     #     save_hcop_and_cs_moment_imgs(line)
 

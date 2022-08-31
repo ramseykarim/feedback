@@ -1990,7 +1990,7 @@ if __name__ == "__main__":
 
     reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     # reg_fn_short = "catalogs/pillar_samples_v2.reg"
-    pillar_sample_spectra('all', show_positions=False, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    pillar_sample_spectra('all', show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
 
     # for i in [1]:
     #     for j in range(2):
