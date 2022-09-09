@@ -932,6 +932,7 @@ def setup_fitting_defaults(pillar):
         '13co10': (-4, 20), 'cs': (-2, 8),
         '12co10CONV': (-5, 120), '12co10APEX': (-5, 120),
         'co65CONV': (-2, 25), '12co32': (-3, 45), '13co32': (-1, 23),
+        'c18o10CONV': (-1, 4),
     }
 
     if pillar == 1:
@@ -951,6 +952,7 @@ def setup_fitting_defaults(pillar):
         '12co10': 10, 'hcop': 1./3,
         '13co10': 1, 'cs': 0,
         '12co10CONV': 10., '12co10APEX': 10.,
+        'c18o10CONV': 0,
         'co65CONV': 1, '12co32': 0, '13co32': 0,
     }
     utils_dict['img_vmin'] = img_vmin
@@ -1315,8 +1317,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
     # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03, 2022-05-19,
-    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24
-    savename = f"/home/ramsey/Pictures/2022-08-24/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
+    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24, 2022-09-08
+    savename = f"/home/ramsey/Pictures/2022-09-08/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -1412,6 +1414,9 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         'hcnCONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.5},
         'hcnCONV-W-peak-2': {'s1b': (0.2, 0.5)},
         'hcnCONV-W-peak-3': {'m1': 23.5, 'm2': 24.1, 'm3': 25, 'a1': 1., 'a2': 9, 'a3': 1, 's1b': (0.2, 0.5)},
+
+        'n2hpCONV-S-peak-2': {'m1': 24.75, 'm2': 25.1, 'a1': 1, 'a2': 1, 's1b': (0.1, 0.3)},
+        'n2hpCONV-S-peak-3': {'m1': 24.8, 'm2': 25.2, 'm3': 25.5, 'a1': 1, 'a2': 1, 's1b': (0.1, 0.15)},
 
         'co65CONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.7},
         'co65CONV-W-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1b': (0.2, 0.7)},
@@ -1542,8 +1547,8 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         fixedstd_stub = ''
         tiestd_stub = f"_untiedstd" if not tiestd else ''
     fixedmean_stub = f"_fixedmean" if fixedmean else ''
-    # 2022-08-22,24
-    savename = f"/home/ramsey/Pictures/2022-08-24/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
+    # 2022-08-22,24, 2022-09-08
+    savename = f"/home/ramsey/Pictures/2022-09-08/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -2212,6 +2217,8 @@ def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version='3'):
     to show where the model fit "flips" from 3 component to 2 component.
     I could use that in the paper as some evidence for a different type of
     gas interaction (or at least observational obstacle) in that region.
+
+    Updated/edited a little September 1, 2022
     """
     if line[:4] == 'hcop':
         directory = "carma"
@@ -2288,7 +2295,11 @@ def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version='3'):
     ax3.set_ylabel("Dec")
 
 
-    plt.show()
+    # plt.show()
+    savename = f"/home/ramsey/Pictures/2022-09-01/p1_3d_viz_in_2d_{line}_{n_submodels}p"
+    fig.savefig(f"{savename}.png",
+        metadata=catalog.utils.create_png_metadata(title="projection of grid fit",
+            file=__file__, func="make_3d_fit_viz_in_2d"))
     # elif True:
     #     from mayavi import mlab
     #     mlab.figure(bgcolor=(0.2, 0.2, 0.2), fgcolor=(0.93, 0.93, 0.93), size=(800, 700))
@@ -2909,11 +2920,13 @@ if __name__ == "__main__":
     # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
     # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', '12co32', 'co65CONV'], pillar=1, select=0)
     # fit_molecular_and_cii_with_gaussians(2, lines=['hcopCONV', 'hcnCONV', 'csCONV'], pillar=1, select=0)
+    # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'n2hpCONV', 'c18o10CONV'], pillar=1, select=1)
 
-    fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=5)
+
+    # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=5)
     # fit_spectrum_detailed('12co32', n_components=3, pillar=1, reg_number=8)
     # fit_spectrum_detailed('hcnCONV', n_components=2, pillar=1, reg_number=3)
-    # fit_spectrum_detailed('hcnCONV', n_components=2, pillar=1, reg_number=6)
+    fit_spectrum_detailed('n2hpCONV', n_components=3, pillar=1, reg_number=8)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
@@ -2924,7 +2937,7 @@ if __name__ == "__main__":
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
-    # make_3d_fit_viz_in_2d(3, line='hcop', version=2) # working on this april 19, 2022
+    # make_3d_fit_viz_in_2d(1, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
     # correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
     # test_fitting_uncertainties_with_emcee(which_line='cii')

@@ -65,7 +65,7 @@ cubefilenames = {
     'cii': "sofia/M16_CII_U.fits", 'ciiAPEX': "sofia/M16_CII_U_APEXbeam.fits",
     'hcn': carma_template('hcn', False), 'hcnCONV': carma_template('hcn', True),
     'hcop': carma_template('hcop', False), 'hcopCONV': carma_template('hcop', True),
-    'n2hp': carma_template('n2hp', False), 'n2hpCONV': carma_template('n2hp', True),
+    'n2hp': "carma/n2hp_fullres_j_10_f1_01_f_12.fits", 'n2hpCONV': "carma/n2hp_fullres_j_10_f1_01_f_12.SOFIAbeam.fits",
     'cs': carma_template('cs', False), 'csCONV': carma_template('cs', True),
     '12co10': "bima/M16_12CO1-0_7x4.fits", '12co10CONV': "bima/M16_12CO1-0_14x14.fits",
     '12co10APEX': "bima/M16_12CO1-0_APEXbeam.fits",

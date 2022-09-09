@@ -215,6 +215,7 @@ def convolve_carma_to_sofia():
     Reused September 21, 2021 for 13CO and C18O (1-0), roughly the same code
     Reused April 26, 2022 to do N2H+ and CS
     Reused August 18, 2022 to do CO6-5 (the 6-5 to 3-2 beam was in m16_pictures.compare_32_65_10)
+    Reused September 8, 2022 to do the satellite line of N2H+
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     """
@@ -228,14 +229,22 @@ def convolve_carma_to_sofia():
 
     # cube_mol = cube_utils.CubeData([f for f in filepaths if 'n2hp' in f].pop())
     # cube_mol = cube_utils.CubeData("bima/M16.BIMA.c18o.cm.fits").convert_to_K()
-    cube_mol = cube_utils.CubeData("apex/M16_CO6-5.fits").convert_to_K()
+    # cube_mol = cube_utils.CubeData("apex/M16_CO6-5.fits").convert_to_K()
+    cube_mol = cube_utils.CubeData("carma/n2hp_fullres_j_10_f1_01_f_12.fits")
+
     write_path, original_mol_fn = os.path.split(cube_mol.full_path)
     write_fn = original_mol_fn.replace('.fits', '.SOFIAbeam.fits')
     print(write_path)
     print(original_mol_fn)
     print(write_fn)
     cube_mol = cube_mol.data # gets spectralcube object from cubedata object
-    cube_mol = cube_mol.convolve_to(cube_cii.beam)
+    try:
+        cube_mol = cube_mol.convolve_to(cube_cii.beam)
+    except ValueError as e:
+        print("First try failed, error message says: ", e)
+        print("Trying again with huge operations allowed")
+        cube_mol.allow_huge_operations = True # spectral_cube said to do it
+        cube_mol = cube_mol.convolve_to(cube_cii.beam)
     cube_mol.write(os.path.join(write_path, write_fn), format='fits')
 
 
@@ -1985,12 +1994,12 @@ if __name__ == "__main__":
     #### For 12CO I used zcs=7 (or 5), css=5, lsm=None, rest same as above
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
-    # convolve_carma_to_sofia()
+    convolve_carma_to_sofia()
     # get_noise_graph('12co10APEX')
 
-    reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     # reg_fn_short = "catalogs/pillar_samples_v2.reg"
-    pillar_sample_spectra('all', show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    # pillar_sample_spectra('all', show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
 
     # for i in [1]:
     #     for j in range(2):
