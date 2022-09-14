@@ -900,7 +900,7 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0, vel_lims=None,
 
 
 
-def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_samples.reg", show_positions=False):
+def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short="catalogs/pillar_samples.reg", show_positions=False):
     """
     June 1, 2021
     In prep for the meeting with Nicola tomorrow, I want to look at spectra of CO 1-0, 3-2, 6-5, and CII towards the head of P1
@@ -928,16 +928,25 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
         else:
             reg_list.append(reg)
 
-    short_names = ['cii',
+    available_short_names = {'cii',
         '12co10CONV', '13co10CONV', 'c18o10CONV',
         'co65CONV', '12co32', '13co32',
-        'hcopCONV', 'hcnCONV', 'csCONV',]
+        'hcopCONV', 'hcnCONV', 'csCONV', 'n2hpCONV'}
+
+    # The lines to plot
+    if short_names is None:
+        # Default behavior is all lines
+        short_names = available_short_names
+    else:
+        # Verify that each selected line is valid
+        assert set(short_names) <= available_short_names
+
     line_names = [cube_utils.cubenames[line_stub] for line_stub in short_names]
     # multiplier = [1, 1, 1, 0.5, 1]
-    multiplier = [1,
-        1, 4, 15,
-        4, 1, 1,
-        4, 4, 4,]
+    multiplier = {'cii': 1,
+        '12co10CONV': 0.5, '13co10CONV': 4, 'c18o10CONV': 15,
+        'co65CONV': 2, '12co32': 1, '13co32': 1,
+        'hcopCONV': 2, 'hcnCONV': 4, 'csCONV': 4, 'n2hpCONV': 8}
 
     reference_filename = catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")
     reference_name = "HST F657N"
@@ -1034,7 +1043,7 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
     #     pillar_vel_limits = (19*kms, 24*kms)
     # pillar_vel_stub = make_vel_stub(pillar_vel_limits)
 
-    def add_spectrum(cube, spec_ax, reg, idx, cii=False):
+    def add_spectrum(cube, spec_ax, reg, idx, line_short_name, cii=False):
         # holdover from cii_systematic_emission_2() where there were multiple img/spec axes
         # spec_ax is the matplotlib Axis for the spectra
         pixreg = reg.to_pixel(cube[0, :, :].wcs)
@@ -1046,14 +1055,17 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
         #     mean_stub = f" [Mean: {mean_vel:.2f}]"
         # else:
         #     mean_stub = ""
-        multiplier_stub = '' if multiplier[idx] == 1 else f' $\\times${multiplier[idx]}'
-        p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub}",
-            linestyle='-' if not cii else '--')
+        multiplier_stub = '' if multiplier[line_short_name] == 1 else f' $\\times${multiplier[line_short_name]}'
         if cii:
             bg_spectrum = cps2.get_cii_background()
-            spectrum = spectrum - bg_spectrum
-            p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[idx], label=f"{line_names[idx]}{multiplier_stub} (BG sub)",
-                linestyle='-', color=p[0].get_c())
+            spectrum_bgsub = spectrum - bg_spectrum
+            # p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[line_short_name], label=f"{line_names[idx]}{multiplier_stub} (unsub.)",
+            #     linestyle='--', color=p[0].get_c())
+            p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum_bgsub.to_value() * multiplier[line_short_name], label=f"{line_names[idx]}{multiplier_stub}",
+                linestyle='-')
+        else:
+            p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[line_short_name], label=f"{line_names[idx]}{multiplier_stub}",
+                linestyle='-')
         # if False:#selected_region < 4:
         #     spec_ax.axvline(mean_vel, color=p[0].get_c(), alpha=0.6)
         return p
@@ -1062,14 +1074,14 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
         cube.convert_to_K()
         cube.data = cube.data.with_spectral_unit(kms)
         for reg_idx, reg in enumerate(reg_list):
-            add_spectrum(cube.data, ax_spec_list[reg_idx], reg, line_idx, cii=(line_idx==0))
+            add_spectrum(cube.data, ax_spec_list[reg_idx], reg, line_idx, line_stub, cii=(line_idx==0))
 
 
-    spec_ylim = (-10, 80) # CII
+    spec_ylim = (-5, 45) # CII
     # spec_ylim = (-3, 25) # 12CO(3-2)
     # spec_ylim = (-1, 10) # 13CO(3-2)
     # spec_xlim = (15, 40) # OLD, Marc suggested to widen it
-    spec_xlim = (15, 45)
+    spec_xlim = (15, 35)
 
     for reg_idx, reg in enumerate(reg_list):
         pixreg = reg.to_pixel(ref_wcs)
@@ -1084,7 +1096,7 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
             ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{reg_idx+1}", color='r', fontsize=11, ha='center', va='center')
 
         ax_spec = ax_spec_list[reg_idx]
-        if single_img or reg_idx == 7:
+        if single_img or reg_idx == 6:
             ax_spec.legend(loc='upper right', fontsize=9)
         ax_spec.set_ylim(spec_ylim)
         ax_spec.set_xlim(spec_xlim)
@@ -1110,8 +1122,8 @@ def pillar_sample_spectra(selected_region, reg_filename_short="catalogs/pillar_s
         plt.subplots_adjust(left=0.05, right=0.95, wspace=0.4)
     else:
         plt.subplots_adjust(hspace=0, wspace=0)
-    # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!), 2022-07-19
-    savename = f"/home/ramsey/Pictures/2022-08-19/pillar_samples_{selected_region_name}"
+    # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!), 2022-07-19, 2022-08-19, 2022-09-12
+    savename = f"/home/ramsey/Pictures/2022-09-12/pillar_samples_{selected_region_name}"
     save_as_png = False
     if save_as_png:
         fig.savefig(f"{savename}.png",
@@ -1994,12 +2006,12 @@ if __name__ == "__main__":
     #### For 12CO I used zcs=7 (or 5), css=5, lsm=None, rest same as above
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
-    convolve_carma_to_sofia()
+    # convolve_carma_to_sofia()
     # get_noise_graph('12co10APEX')
 
-    # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     # reg_fn_short = "catalogs/pillar_samples_v2.reg"
-    # pillar_sample_spectra('all', show_positions=True, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    pillar_sample_spectra('all', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'n2hpCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
 
     # for i in [1]:
     #     for j in range(2):

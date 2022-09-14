@@ -1317,8 +1317,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
     # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03, 2022-05-19,
-    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24, 2022-09-08
-    savename = f"/home/ramsey/Pictures/2022-09-08/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
+    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24, 2022-09-08,12
+    savename = f"/home/ramsey/Pictures/2022-09-12/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -1374,6 +1374,9 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         '12co32-SW-thread-2': {'m1': 25.42, 'm1f': True, 's1': 0.7, 'm2': 26.1, 'm2b': (26, 30)},
         '12co32-NW-thread-3': {'m1': 25.31, 'm1f': True, 's1': 0.5, 's1b': (0.3, 0.5), 'm2': 26, 'm3b': (24, 24.75), 'm3': 24},
         # '12co32-SW-thread-3': {'m1': 25.42, 'm1f': True, 's1': 0.7, 's1b': (0.3, 0.7), 'm2': 26, 'm3b': (24, 24.75), 'm3': 24},
+
+        '13co10CONV-NW-thread-2': {'m1': 25.1, 's1': 0.3, 's1b': (0.1, 0.5), 'm2': 26},
+
         'csCONV-SE-thread-1': {'m1': 26},
         'hcnCONV-NW-thread-2': {'m1': 24.9, 'm2': 26},
         'hcnCONV-SW-thread-2': {'m1': 25.2, 'm2': 26},
@@ -1385,6 +1388,9 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         '12co10CONV-E-peak-4': {'m1': 23.5, 's1': 0.85, 'a1': 32, 'm2': 25.4, 's2': 0.85, 'a2': 66.4, 's1b': (0.2, 0.65), 's4t': False, 's4': 80, 's4f': True, 'm4': 18, 'm4f': True, 'a4': 3.5, 'a4f': False},
         '12co10CONV-S-peak-4': {'m1': 23.5, 's1': 0.85, 'a1': 32, 'm2': 25.4, 's2': 0.85, 'a2': 66.4, 's1b': (0.2, 0.7), 's4t': False, 's4': 80, 's4f': True, 'm4': 18, 'm4f': True, 'a4': 3.5, 'a4f': False},
         # '12co10CONV-broad-line-2': {'m1': 23.1, 'm1b': (22, 24), 's1': 1, 'a1': 10, 'm2': 24.7, 's2': 1, 'a2': 50},
+        # '13co10CONV-broad-line-3': {'m1': 22.3, 's1': 0.3, 'm2': 23.7, 'm3': 25.1, 's1b': (0.1, 0.3)},
+
+
         '12co10CONV-broad-line-2': {'m1': 24.7, 's1': 1, 'a1': 50, 's2t': False, 's2f': True, 'a2': 3.5, 'a2f': False, 'm2': 18, 'm2f': True, 's2': 80},
         '12co10CONV-broad-line-3': {'m1': 23.1, 'm1b': (22, 24), 's1': 1, 'a1': 10, 'm2': 24.7, 's2': 1, 'a2': 50, 's3t': False, 's3': 80, 's3f': True, 'm3': 18, 'm3f': True, 'a3': 3.5, 'a3f': False},
         '12co10CONV-broad-line-4': {'m1': 23.1, 'm1b': (22, 24), 's1b': (0.2, 0.6), 'a1': 10, 'm2': 24.7, 'a2': 50, 's4t': False, 's4': 80, 's4f': True, 'm4': 18, 'm4f': True, 'a4': 3.5, 'a4f': False},
@@ -1420,6 +1426,9 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
 
         'co65CONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.7},
         'co65CONV-W-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1b': (0.2, 0.7)},
+
+        'cii-NE-thread-2': {'m1': 23.5, 'm2': 25.6, 'm2f': False, 's1': 0.8},
+        'cii-SE-thread-3': {'m1': 22.5, 'm1b': (22, 22.7), 'a1': 3, 'a1b': (1, 5), 'm2': 25.6, 'm2b': (25.5, 25.75), 'm3': 28.17, 'm3b': (27.5, 29)},
     }
     def parse_and_assign_saved_params(model):
         key = f"{line_stub}-{pixel_name}-{n_components}"
@@ -1547,8 +1556,8 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         fixedstd_stub = ''
         tiestd_stub = f"_untiedstd" if not tiestd else ''
     fixedmean_stub = f"_fixedmean" if fixedmean else ''
-    # 2022-08-22,24, 2022-09-08
-    savename = f"/home/ramsey/Pictures/2022-09-08/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
+    # 2022-08-22,24, 2022-09-08,09,12
+    savename = f"/home/ramsey/Pictures/2022-09-12/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -2203,7 +2212,7 @@ def plot_selected_hcop_AND_CII_spectra():
 
 
 
-def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version='3'):
+def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version=None):
     """
     April 19, 2022
     I want to make a sort of 3d viz but for the paper. So not really 3d.
@@ -2242,25 +2251,34 @@ def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version='3'):
     means = []
     amplitudes = []
     shape = hdul[1].data.shape
-    ii, jj = tuple(x.ravel() for x in np.mgrid[0:shape[0], 0:shape[1]])
-    i_array = []
-    j_array = []
+    # ii, jj = tuple(x for x in np.mgrid[0:shape[0], 0:shape[1]])
+    ii, jj = np.mgrid[0:shape[0], 0:shape[1]]
+    i_axis = np.arange(shape[0])
+    j_axis = np.arange(shape[1])
+
+    i_cube = []
+    j_cube = []
+
     if n_submodels > 1:
         for k in range(n_submodels):
-            means.extend(hdul[f'mean_{k}'].data[:].ravel())
-            amplitudes.extend(hdul[f'amplitude_{k}'].data[:].ravel())
-            i_array.extend(ii)
-            j_array.extend(jj)
+            means.append(hdul[f'mean_{k}'].data[:])
+            amplitudes.append(hdul[f'amplitude_{k}'].data[:])
+            i_cube.append(ii)
+            j_cube.append(jj)
+        i_cube = np.array(i_cube)
+        j_cube = np.array(j_cube)
+        means = np.array(means)
+        amplitudes = np.array(amplitudes)
     else:
-        means = list(hdul['mean'].data[:].ravel())
-        amplitudes = list(hdul['amplitude'].data[:].ravel())
-        i_array = list(ii)
-        j_array = list(jj)
+        means = hdul['mean'].data[np.newaxis, :, :]
+        amplitudes = hdul['amplitude'].data[np.newaxis, :, :]
+        i_cube = ii[np.newaxis, :, :]
+        j_cube = jj[np.newaxis, :, :]
 
-    means = np.array(means)
-    amplitudes = np.array(amplitudes)
-    i_array = np.array(i_array)
-    j_array = np.array(j_array)
+    # means = np.array(means)
+    # amplitudes = np.array(amplitudes)
+    # i_array = np.array(i_array)
+    # j_array = np.array(j_array)
     if line == 'hcop':
         amp_cutoff = 2.5
     elif line == 'hcop_regrid':
@@ -2268,35 +2286,63 @@ def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version='3'):
     else:
         amp_cutoff = 5
     amp_mask = amplitudes > amp_cutoff # about 5sigma
-    means = means[amp_mask]
-    amplitudes = amplitudes[amp_mask]
-    i_array = i_array[amp_mask]
-    j_array = j_array[amp_mask]
 
-    fig = plt.figure()
-    ax1 = plt.subplot(221)
-    ax2 = plt.subplot(223)
-    ax3 = plt.subplot(224)
-    # ax.hist(means, bins=256, range=(20, 30))
-    im1 = ax1.hist2d(j_array, means, bins=64)[3]
-    fig.colorbar(im1, ax=ax1)
+
+    # means = means[amp_mask]
+    # amplitudes = amplitudes[amp_mask]
+    # i_array = i_array[amp_mask]
+    # j_array = j_array[amp_mask]
+
+    # im1 = ax1.hist2d(j_array, means, bins=64)[3]
+
+    if line[:4] == 'hcop':
+        n_bins = 128
+    else:
+        n_bins = 32
+
+    img_ra_vel = np.zeros((n_bins, shape[1]))
+    vel_limits = (22, 28)
+    for j in j_axis:
+        velocities_in_j = means[:, :, j].ravel()
+        amplitudes_in_j = amplitudes[:, :, j].ravel()
+        vel_hist_in_j, vel_edges = np.histogram(velocities_in_j[amplitudes_in_j > amp_cutoff], bins=n_bins, range=vel_limits)
+        img_ra_vel[:, j] = vel_hist_in_j
+    vel_centers = (vel_edges[:-1] + vel_edges[1:])/2
+    vel_delta = vel_edges[1] - vel_edges[0]
+
+
+    fig = plt.figure(figsize=(6, 8))
+    ax1 = plt.subplot(211)
+    ax2 = plt.subplot(212, projection=WCS(hdul[1].header))
+
+
+    im1 = ax1.imshow(img_ra_vel, origin='lower', aspect=(shape[1]/(vel_limits[1]-vel_limits[0])), extent=[0, shape[1], vel_limits[0], vel_limits[1]])
+    fig.colorbar(im1, ax=ax1, label='$N$ valid components')
     # ax1.set_xlabel("RA")
     ax1.set_ylabel("Velocity (km/s)")
+    ax1.xaxis.set_ticks([])
     # ax.invert_xaxis()
 
-    im2 = ax2.hist2d(j_array, i_array, bins=64)[3]
-    fig.colorbar(im2, ax=ax2)
+
+    img_ra_dec = np.sum((amplitudes > amp_cutoff).astype(int), axis=0)
+    im2 = ax2.imshow(img_ra_dec, origin='lower', vmin=0, vmax=3)
+    cbar = fig.colorbar(im2, ax=ax2, ticks=list(range(0, 4)), label='$N$ valid components')
     ax2.set_xlabel("RA")
     ax2.set_ylabel("Dec")
+    ax2.tick_params(axis='x', direction='in')
 
-    im3 = ax3.hist2d(means, i_array, bins=64)[3]
-    fig.colorbar(im3, ax=ax3)
-    ax3.set_xlabel("Velocity (km/s)")
-    ax3.set_ylabel("Dec")
+    plt.subplots_adjust(bottom=0.1, top=0.95, left=0.12, right=0.98, hspace=0.07)
+
+
+    # im3 = ax3.hist2d(means, i_array, bins=64)[3]
+    # fig.colorbar(im3, ax=ax3)
+    # ax3.set_xlabel("Velocity (km/s)")
+    # ax3.set_ylabel("Dec")
 
 
     # plt.show()
-    savename = f"/home/ramsey/Pictures/2022-09-01/p1_3d_viz_in_2d_{line}_{n_submodels}p"
+    # 2022-09-01,13
+    savename = f"/home/ramsey/Pictures/2022-09-13/p1_3d_viz_in_2d_{line}_{n_submodels}p"
     fig.savefig(f"{savename}.png",
         metadata=catalog.utils.create_png_metadata(title="projection of grid fit",
             file=__file__, func="make_3d_fit_viz_in_2d"))
@@ -2920,13 +2966,15 @@ if __name__ == "__main__":
     # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
     # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', '12co32', 'co65CONV'], pillar=1, select=0)
     # fit_molecular_and_cii_with_gaussians(2, lines=['hcopCONV', 'hcnCONV', 'csCONV'], pillar=1, select=0)
-    # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'n2hpCONV', 'c18o10CONV'], pillar=1, select=1)
+    # fit_molecular_and_cii_with_gaussians(3, lines=['hcopCONV', 'cii'], pillar=1, select=0)
+    # fit_molecular_and_cii_with_gaussians(3, lines=['hcopCONV', 'cii'], pillar=1, select=1)
 
 
     # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=5)
     # fit_spectrum_detailed('12co32', n_components=3, pillar=1, reg_number=8)
     # fit_spectrum_detailed('hcnCONV', n_components=2, pillar=1, reg_number=3)
-    fit_spectrum_detailed('n2hpCONV', n_components=3, pillar=1, reg_number=8)
+    # fit_spectrum_detailed('13co10CONV', n_components=2, pillar=1, reg_number=4)
+    # fit_spectrum_detailed('cii', n_components=3, pillar=1, reg_number=6)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
@@ -2937,7 +2985,10 @@ if __name__ == "__main__":
 
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
-    # make_3d_fit_viz_in_2d(1, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
+    # make_3d_fit_viz_in_2d(3, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
+    for i in range(1, 5):
+        make_3d_fit_viz_in_2d(i, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
+
     # correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
     # test_fitting_uncertainties_with_emcee(which_line='cii')

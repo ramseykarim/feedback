@@ -1440,24 +1440,29 @@ def try_component_velocity_figure():
     This will be sort of a chart, not an astronomical image
     August 26, 2022 Trying again with more data
     """
-    csv_fn_template = lambda param : f"/home/ramsey/Pictures/2022-08-30/line_info_2_{param}.csv"
+    csv_fn_template = lambda param : f"/home/ramsey/Pictures/2022-09-12/line_info_2_{param}.csv"
     params = ['mean', 'linewidth', 'amplitude']
     dfs = {param: pd.read_csv(csv_fn_template(param)) for param in params}
     for p in dfs:
         df = dfs[p]
         df.set_index("Region Name", inplace=True)
-        # df.drop(['13co10', '13co32', 'CII'], axis=1, inplace=True)
-    unique_lines_set = {x[:-2] for x in [y for y in dfs['mean'].columns if y.strip() not in ['reg_name']]}
-    unique_lines = ['12co10', '12co32', 'co65', 'hcop', 'hcn', 'cs']
-    assert frozenset(unique_lines) == frozenset(unique_lines_set)
-    lines_dict = {}
-    for line in unique_lines:
-        components = [f"{line} {i}" for i in range(1, 4)]
-        lines_dict[line] = components
-    line_offsets = {line: x for line, x in zip(unique_lines, np.linspace(-0.2, 0.2, 6))}
+    line_columns = [y for y in dfs['mean'].columns if y.strip() not in ['reg_name']]
+    unique_lines = ['cii', '12co10', '13co10', '12co32', 'co65', 'hcop', 'hcn', 'cs', 'n2hp']
+    try:
+        assert frozenset(unique_lines) == frozenset(x[:-2] for x in line_columns)
+    except AssertionError:
+        print("I wrote down: ", unique_lines)
+        print("The files contain: ", frozenset(x[:-2] for x in line_columns))
+        return
+    lines_dict = {x: [] for x in unique_lines}
+    for component in line_columns:
+        # put the numbered components in a dictionary under the line name key
+        lines_dict[component[:-2]].append(component)
+
+    line_offsets = {line: x for line, x in zip(unique_lines, np.linspace(-0.22, 0.28, len(unique_lines)))}
 
     # Figure out normalization factors for amplitudes
-    amplitude_graph_max = 0.4 # Given that the regions are spaced by 1.0, maximum allowable amplitude spread
+    amplitude_graph_max = 0.15 # Given that the regions are spaced by 1.0, maximum allowable amplitude spread
     line_amp_norms = {}
     for line in unique_lines:
         line_amplitudes = []
@@ -1466,41 +1471,49 @@ def try_component_velocity_figure():
         line_amp_norms[line] = amplitude_graph_max / np.nanmax(line_amplitudes)
 
     x_keys = ['SE Thread', 'NE Thread', 'SE Head', 'NE Head', 'SW Thread', 'NW Thread', 'SW Head', 'NW Head',]
-    x_values = list(range(1, 5)) + list(range(7, 11))
+    x_values = list(range(1, 9))
 
-    markers = ['v', 'x', '^', '<', '>', 'o']
+    markers = ["$c$", 'v', 'D', 'x', '^', '<', '>', 'o', 's']
     assigned_markers = {l: m for l, m in zip(unique_lines, markers)}
-    colors = ['b', 'g', 'r']
+    colors = ['b', 'g', 'r', 'k']
 
-    fig = plt.figure(figsize=(14, 6.5))
-    ax = plt.subplot(111)
+    fig = plt.figure(figsize=(13, 10.5))
+    ax1 = plt.subplot(211)
+    ax2 = plt.subplot(212)
+
 
     for i, line in enumerate(unique_lines):
         components = lines_dict[line]
         for c in components:
-            xarr, yarr = [], []
-            lwarr, amparr = [], []
+            xarr1, yarr1 = [], []
+            xarr2, yarr2 = [], []
+            lwarr1, amparr1 = [], []
+            lwarr2, amparr2 = [], []
             c_index = int(c[-1]) - 1
             for xk, xv in zip(x_keys, x_values):
                 yv = dfs['mean'].loc[xk, c]
                 lw = dfs['linewidth'].loc[xk, c]
                 amp = dfs['amplitude'].loc[xk, c]
                 if np.isfinite(yv):
-                    xarr.append(xv)
-                    yarr.append(yv)
-                    lwarr.append(lw)
-                    amparr.append(amp)
-            if xarr:
-                plt.errorbar(np.array(xarr)+line_offsets[line], yarr, xerr=np.array(amparr)*line_amp_norms[line], yerr=np.array(lwarr)*2.355/2, color=colors[c_index], marker=assigned_markers[line], alpha=0.7, label=(cube_utils.cubenames[line] if c_index == 1 else None), linestyle='none')
-    ax.set_ylim([21, 28])
-    ax.set_xticks(x_values)
-    ax.set_xticklabels(x_keys, rotation=45, fontsize=13)
-    plt.subplots_adjust(bottom=0.2, left=0.05, right=0.97)
-    ax.set_ylabel("$V_{\\rm LSR}$ (km/s)")
-    ax.legend(loc='lower center')
-    # 2022-08-23
-    savename = "/home/ramsey/Pictures/2022-08-31/model_fit_table_viz"
-    save_as_png = False
+                    (xarr1 if xv<5 else xarr2).append(xv)
+                    (yarr1 if xv<5 else yarr2).append(yv)
+                    (lwarr1 if xv<5 else lwarr2).append(lw)
+                    (amparr1 if xv<5 else amparr2).append(amp)
+            if xarr1:
+                ax1.errorbar(np.array(xarr1)+line_offsets[line], yarr1, xerr=np.array(amparr1)*line_amp_norms[line], yerr=np.array(lwarr1)*2.355/2, color=colors[c_index], marker=assigned_markers[line], alpha=0.7, label=(cube_utils.cubenames[line] if c_index == 1 else None), linestyle='none')
+            if xarr2:
+                ax2.errorbar(np.array(xarr2)+line_offsets[line], yarr2, xerr=np.array(amparr2)*line_amp_norms[line], yerr=np.array(lwarr2)*2.355/2, color=colors[c_index], marker=assigned_markers[line], alpha=0.7, label=(cube_utils.cubenames[line] if c_index == 1 else None), linestyle='none')
+    for i, ax in enumerate((ax1, ax2)):
+        ax.set_ylim([20.5, 29.5])
+        ax.set_xlim([4*i + 0.5, 4*(i+1) + 0.6])
+        ax.set_xticks(x_values[4*i:4*(i+1)])
+        ax.set_xticklabels(x_keys[4*i:4*(i+1)], rotation=0, fontsize=13)
+        ax.set_ylabel("$V_{\\rm LSR}$ (km/s)")
+    ax2.legend(loc='lower center', ncol=len(unique_lines), handletextpad=0.05, handlelength=0.8)
+    plt.subplots_adjust(bottom=0.05, hspace=0.2, top=0.95, left=0.05, right=0.97)
+    # 2022-08-23,31, 09-09,12
+    savename = "/home/ramsey/Pictures/2022-09-12/model_fit_table_viz"
+    save_as_png = True
     if save_as_png:
         fig.savefig(f"{savename}.png",
             metadata=catalog.utils.create_png_metadata(title='bunch of lines, unfinished list though',
