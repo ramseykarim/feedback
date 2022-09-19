@@ -76,6 +76,18 @@ cubefilenames = {
 
 }
 
+cubeIDs_pdrt = {
+    'cii': 'CII_158',
+    '12co10': 'CO_10', '12co32': 'CO_32', 'co65': 'CO_65', '13co10': '13CO_10', '13co32': '13CO_32'
+
+}
+def get_pdrt_cubeID(line_stub):
+    line_stub = line_stub.replace('CONV', '').replace('APEX', '')
+    if line_stub in cubeIDs_pdrt:
+        return cubeIDs_pdrt[line_stub]
+    else:
+        return None
+
 
 def beam_area(theta_a, theta_b):
     """

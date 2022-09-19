@@ -381,7 +381,7 @@ def simple_mom0(selected_region=0, selected_line=0):
     plt.savefig(f"/home/ramsey/Pictures/2021-08-16-work/{line_stub}_{region_name}.png", metadata={"Comment": f"{levels_stub} spaced contours; m16_deepdive.simple_mom0"})
 
 
-def prepare_pdrt_tables():
+def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None):
     """
     Created: Aug 16, 2021
     Creating the ASCII tables for PDRT
@@ -396,105 +396,177 @@ def prepare_pdrt_tables():
     use catalogs/pdrt_test_pillar2.reg to grab the pixels at that location
     save cii and cii/co10 to tables (and figure out how tables work)
     tables: https://docs.astropy.org/en/stable/io/unified.html#ascii-formats and https://docs.astropy.org/en/stable/table/io.html#getting-started
-    """
 
-    # vel_lims = (20*kms, 24*kms) # P2 regions
-    vel_lims = (20*kms, 28*kms) # P1 regions
-
-    cii_cube = cps2.cutout_subcube(length_scale_mult=4, reg_index=2)
-    cii_restfreq = cii_cube.header['RESTFRQ'] * u.Hz
-    cii_mom0 = cii_cube.spectral_slab(*vel_lims).moment0()
-    del cii_cube
-
-    cii_vel_to_freq_equiv = u.doppler_optical(cii_restfreq)
-    cii_vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=cii_vel_to_freq_equiv)
-    cii_dv = (cii_vel_to_freq_f(vel_lims[0]) - cii_vel_to_freq_f(vel_lims[1]))
-    ### that's a conversion factor from km/s (over the moment0 integration limits) to Hz
-    """
     2022-01-17 comment: I'm not sure if the moment integration limits are the
     important spectral quantity here. I think K km/s is kinda just saying
     K * Hz but with km/s instead, so the relevant quantity would be the channel
     width integrated over in the moment calculation... I should revisit this!
     TODO: revisit K km/s -> CGI unit conversion, remake pdrt tables
+    (done as of Sept 2022)
+
+    Written under an unfinished (unstarted) prepare_pdrt_tables_3 (and there's a 2!)
+        Created August 15, 2022
+        This is going to be the best version yet
+        I want to be able to make a quick table (or Measurement, idk) at a given
+        location for all lines (in a specified list) at a fixed resolution
+        (largest of the samples).
+        These will be used in spaghetti plots.
+        I want to include a diagnostic image for each sample, which includes the
+        location on a moment 0 image within the velocity limits I am integrating
+        over, and the full spectrum at that location with lines showing the velocity
+        limits. I want to write this diagnostic image out for each sample and each
+        location so that I can show that each location makes sense.
+
+    Updated September 14, 2022
+    Going to standardize this for any region, any line.
+    Part of this is detecting where the line is and only integrating over it.
+    I should save a diagnostic figure for that, for each line/region
+    (I hadn't seen prepare_pdrt_tables_3 yet when I wrote this, but sounds like
+    I have a consistent plan!)
     """
 
-    co10_cube = cube_utils.CubeData("bima/M16_12CO1-0_14x14.fits").convert_to_K().data
-    co10_restfreq = co10_cube.header['RESTFRQ'] * u.Hz
-    co10_mom0 = co10_cube.spectral_slab(*vel_lims).moment0().to(u.K*kms)
-    del co10_cube
+    region_filenames = ["catalogs/pillar1_pointsofinterest_v3.reg", # The 8 classic P1a regions
+        "catalogs/pillar123_pointsofinterest_v1.reg", # Several more around P1b, 2, 3, and Shelf
+        ]
+    if reg_filename is None:
+        reg_filename = 0
+    # reg_filename can either be a filename or an index into the list above
+    if isinstance(reg_filename, int):
+        reg_filename = region_filenames[reg_filename]
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename))
 
-    reg_list = regions.read_ds9(catalog.utils.search_for_file("catalogs/pdrt/pdrt_test_pillar1.reg"))
-    for i, reg in enumerate(reg_list):
-        pixreg = reg.to_pixel(cii_mom0.wcs)
-        reg_mask = pixreg.to_mask().to_image(cii_mom0.shape)
+    if regions_to_do is not None:
+        if isinstance(regions_to_do, str):
+            regions_to_do = [regions_to_do]
+        else:
+            assert isinstance(regions_to_do, list)
+    #### testing
+    # reg_list = [reg_list[0]]
+    ####
 
-        cii_values = cii_mom0[np.where(reg_mask==1)]
-        cii_values = (cii_values/kms)
-        cii_values = cii_values.to(u.Jy/u.sr, equivalencies=u.brightness_temperature(cii_restfreq))
-        cii_values = (cii_values * cii_dv).to(u.erg / (u.s * u.sr * u.cm**2))
-        cii_ID = ['CII_158']*len(cii_values)
-        cii_uncertainty = [10.]*len(cii_values) # using 10%
-        ### CII noise RMS is about 1; but this DOESNT account for the moment0 part!!!! needs a sqrt(N) term...
+    # utility functions for later
+    slice_from = lambda s: slice(s[0], s[1]+1)
+    thin_slice_from = lambda s: slice(s, s+1)
 
-        t = QTable([cii_values, cii_uncertainty, cii_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158'}, units={'uncertainty': '%'})
-        t.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/cii_pillar1_{i}.txt", format='ipac')
+    # reg = reg_list[0]
+    # x = reg.meta['label']
+    # print(x)
+    # return
 
-        co10_vel_to_freq_equiv = u.doppler_optical(co10_restfreq)
-        co10_vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=co10_vel_to_freq_equiv)
-        co10_dv = co10_vel_to_freq_f(vel_lims[0]) - co10_vel_to_freq_f(vel_lims[1])
+    line_stub_list = [line1]
+    if line2:
+        line_stub_list.append(line2)
+    line_name_list = [cube_utils.cubenames[l] for l in line_stub_list]
 
-        co10_reproj = reproject_interp((co10_mom0.to_value(), co10_mom0.wcs), cii_mom0.wcs, shape_out=cii_mom0.shape, return_footprint=False)
-        co10_values = co10_reproj[np.where(reg_mask==1)] * co10_mom0.unit
-        co10_values = (co10_values/kms)
-        co10_values = co10_values.to(u.Jy/u.sr, equivalencies=u.brightness_temperature(co10_restfreq))
-        co10_values = (co10_values * co10_dv).to(u.erg / (u.s * u.sr * u.cm**2))
+    # Describe the arguments to this call in one short string
+    # Used for saving the table at the end
+    unique_run_identifier = "__".join(line_stub_list) + "__" + os.path.basename(reg_filename).replace('.reg', '')
+    print(unique_run_identifier)
 
-        cii_to_co10_values = cii_values/co10_values
+    reference_filename = catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")
+    reference_name = "HST F657N"
+    ref_img, ref_hdr = fits.getdata(reference_filename, header=True)
+    ref_wcs = WCS(ref_hdr)
+    plot_ref_img = lambda ax : ax.imshow(ref_img, origin='lower', cmap='Greys_r', vmin=0.1, vmax=0.6)
 
-        cii_to_co10_ID = ["CII_158/CO_10"]*len(cii_values) # CHECK THIS
-        cii_to_co10_uncertainty = cii_uncertainty # also use 10%
-        # co10_uncertainty = [4]*len(cii_to_co10_ID) # CHECK THIS TOO; needs sqrt(N) term.... but N depends on number of channels.. CO10 RMS is around 4
+    preset_bounds = {
+        # All co10 entries are in reverse order because the spectral axis is reversed (high-to-low)
+        '12co10CONV-broad-line': (None, 21), '12co10CONV-E-peak': (27.5, None), '12co10CONV-NE-thread': (None, 21), '12co10CONV-NW-thread': (27.5, None),
+        '12co10CONV-SE-thread': (27.5, 23), '12co10CONV-S-peak': (27.5, None), '12co10CONV-SW-thread': (27, None), '12co10CONV-W-peak': (27.5, 21),
+        '13co10CONV-SW-thread': (24.5, 27), '12co32-E-peak': (None, 27.5), '12co32-W-peak': (None, 27.5), '12co32-SW-thread': (None, 27.5), '12co32-S-peak': (None, 27.5), '12co32-E-peak': (None, 27.5), '12co32-SE-thread': (None, 27.5), '12co32-NW-thread': (None, 27.5), '12co32-E-peak': (None, 27.5),
+    }
 
-        t = QTable([cii_to_co10_values, cii_to_co10_uncertainty, cii_to_co10_ID], names=('data', 'uncertainty', 'identifier'), meta={'name': 'CII_158/CO_10'}, units={'uncertainty': '%'})
-        t.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/cii_to_co10_pillar1_{i}.txt", format='ipac')
-    """
-    TODO: convert K km/s to erg cm-2 s-1 sr-1 ????????
-    Solved:
-    >>> from astropy import units as u
-    >>> v = 3*u.km/u.s
-    >>> restfreq = (158*u.micron).to(u.GHz, equivalencies=u.spectral())
-    >>> restfreq
-    <Quantity 1897.42062025 GHz>
+    result_list = []
+    for line_stub in line_stub_list:
+        cube_fn = cube_utils.cubefilenames[line_stub]
+        cube = cps2.cutout_subcube(data_filename=cube_fn, length_scale_mult=None)
+        channel_noise = cube_utils.onesigmas[line_stub]
+        reg_coord_list = [tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1]) for reg in reg_list]
+        for pix_coords, reg in zip(reg_coord_list, reg_list):
+            # Get some basic information
+            reg_name = reg.meta['label'].replace(" ", "-")
+            if (regions_to_do is not None) and (reg_name not in regions_to_do):
+                # If we are specifying only SOME regions, and this is NOT one of them, skip!
+                continue
+            spectrum = cube[(slice(None), *pix_coords)]
+            rest_freq = cube.header['RESTFRQ'] * u.Hz
+            # Make the 1sigma mask for line finding
+            mask_1sigma = spectrum.to_value() > channel_noise
+            line_bounding_indices = list(misc_utils.identify_longest_run(mask_1sigma))
+            preset_key = f"{line_stub}-{reg_name}"
+            if preset_key in preset_bounds:
+                for idx, vel in enumerate(preset_bounds[preset_key]):
+                    if vel:
+                        line_bounding_indices[idx] = cube.closest_spectral_channel(vel*kms)
+            line_bounding_indices = tuple(line_bounding_indices)
+            # This indexing trick cube[:, x:x+1, y:y+1].moment0()[0,0] lets us use the moment function on a single 1D spectrum
+            integrated_intensity = cube[slice_from(line_bounding_indices), thin_slice_from(pix_coords[0]), thin_slice_from(pix_coords[1])].moment0()[0, 0]
 
-    >>> vel_to_freq = u.doppler_optical(restfreq)
-    >>> (1*u.km/u.s).to(u.GHz, equivalencies=vel_to_freq)
-    <Quantity 1897.41429116 GHz>
-    >>> (50*u.km/u.s).to(u.GHz, equivalencies=vel_to_freq)
-    <Quantity 1897.10421733 GHz>
-    >>> vel_to_freq_f = lambda v : v.to(u.Hz, equivalencies=vel_to_freq)
+            # Uncertainty calculation
+            cube_dv = np.abs(np.diff(cube.spectral_axis[:2]))[0].to(kms)
+            n_channels = line_bounding_indices[1]+1 - line_bounding_indices[0]
+            err_integrated_intensity = channel_noise*u.K * cube_dv * np.sqrt(n_channels)
 
-    >>> kms = u.km/u.s
-    >>> vel_to_freq_f(24*kms) - vel_to_freq_f(20*kms)
-    <Quantity -25312740.45532227 Hz>
-    >>> (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms)).to(u.GHz)
-    <Quantity 0.02531274 GHz>
-    >>> (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms))
-    <Quantity 25312740.45532227 Hz>
+            # Unit conversion
+            # Get the conversion between velocity and frequency
+            vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=u.doppler_optical(rest_freq))
+            # Frequency interval of 1 km/s (center it around 25 km/s just cause)
+            freq_interval = vel_to_freq_f(24*kms) - vel_to_freq_f(25*kms)
+            # Divide the integrated intensity by 1 km/s and convert to cgs and multiply by the frequency interval
+            def convert_Kkms_to_cgs(int_intens):
+                """
+                int(S)df = S{int(T)dV / Delta_V} * Delta_f
+                and then make sure final units are good
+                """
+                return (freq_interval * (int_intens / (1*kms)).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(rest_freq))).to(u.erg / (u.s * u.cm**2 * u.sr))
 
-    >>> T = 10*u.K
-    >>> (T).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(restfreq))
-    <Quantity 1.106112e+12 Jy / sr>
-    >>> jysr = (T).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(restfreq))
-    >>> jysr
-    <Quantity 1.106112e+12 Jy / sr>
-    >>> (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms))
-    <Quantity 25312740.45532227 Hz>
-    >>> dv = (vel_to_freq_f(20*kms) - vel_to_freq_f(24*kms))
-    >>> (jysr*dv).to(u.erg / (u.s * u.sr * u.cm**2))
-    <Quantity 0.00027999 erg / (cm2 s sr)>
-    based on the pdrtpy-nb/notebooks/rcw49_nc_cii158.tab, this is of the right order of magnitude
-    ok go forth and prosper
-    """
+            integrated_intensity_cgs = convert_Kkms_to_cgs(integrated_intensity)
+            err_integrated_intensity_cgs = convert_Kkms_to_cgs(err_integrated_intensity)
+            # Add in the PDRT version of the line name
+            line_ID_pdrt = cube_utils.cubeIDs_pdrt[line_stub.replace('CONV', '')]
+            # Append everything to the results list
+            result_list.append((integrated_intensity_cgs, err_integrated_intensity_cgs, line_ID_pdrt, reg_name))
+
+            # Now do all the plotting
+            fig = plt.figure(num=1, figsize=(15,6), clear=True)
+            ax_spec = plt.subplot2grid((1, 4), (0, 0), colspan=3)
+            ax_img = plt.subplot2grid((1, 4), (0, 3), projection=ref_wcs)
+            # Plot HST image
+            plot_ref_img(ax_img)
+            # Pixel coordinate of the region in the reference HST image
+            ref_pix_coords = reg.to_pixel(ref_wcs).center.xy
+            ax_img.plot(*ref_pix_coords, color='r', marker='+')
+
+            ax_spec.plot(cube.spectral_axis.to_value(), spectrum, color=marcs_colors[0])
+            for sign in (-1, 1):
+                ax_spec.axhline(channel_noise*sign, color='grey', linestyle='--', alpha=0.4)
+            for bounding_index in line_bounding_indices:
+                ax_spec.axvline(cube.spectral_axis.to_value()[bounding_index], color='k', alpha=0.6)
+
+            ax_spec.fill_between(cube.spectral_axis.to_value(), mask_1sigma.astype(float)*channel_noise*2, color='pink', alpha=0.3)
+
+            ax_img.set_title(f"{reg_name}")
+            ax_spec.set_title(f"{line_stub} {rest_freq:.2E} ({line_bounding_indices[0]}, {line_bounding_indices[1]})")
+            text_kwargs = dict(transform=ax_spec.transAxes, fontsize=10)
+            ax_spec.text(0.05, 0.95, f"({cube.spectral_axis[line_bounding_indices[0]]:.2f}, {cube.spectral_axis[line_bounding_indices[1]]:.2f})", **text_kwargs)
+            ax_spec.text(0.05, 0.85, f"{integrated_intensity:.4f}", **text_kwargs)
+            ax_spec.text(0.05, 0.75, f"{integrated_intensity_cgs:.4E}", **text_kwargs)
+            ax_spec.set_xlabel("Velocity (km/s)")
+            ax_spec.set_ylabel("T (K)")
+
+            plt.tight_layout()
+            print(f"saving <{line_stub}_{reg_name}>")
+            fig.savefig(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/diagnostic_figs/diagnostic_{line_stub}_{reg_name}.png",
+                metadata=catalog.utils.create_png_metadata(title="make pdrt tables diagnostic image",
+                    file=__file__, func="prepare_pdrt_tables"))
+            fig.clear()
+
+
+
+    # Save data into a QTable
+    tab = QTable(list(zip(*result_list)), names=('data', 'uncertainty', 'identifier', 'region'), meta={'data': 'erg s-1 cm-2 sr-1', 'uncertainty': 'erg s-1 cm-2 sr-1'})
+    tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{unique_run_identifier}.txt", format='ipac',
+        overwrite=True)
 
 
 def prepare_pdrt_tables_2():
@@ -563,24 +635,6 @@ def prepare_pdrt_tables_2():
         fits.PrimaryHDU(data=fir_img_copy, header=fir_hdr).writeto(tmp_filename)
 
     print("done")
-
-
-def prepare_pdrt_tables_3():
-    """
-    Created August 15, 2022
-    This is going to be the best version yet
-    I want to be able to make a quick table (or Measurement, idk) at a given
-    location for all lines (in a specified list) at a fixed resolution
-    (largest of the samples).
-    These will be used in spaghetti plots.
-    I want to include a diagnostic image for each sample, which includes the
-    location on a moment 0 image within the velocity limits I am integrating
-    over, and the full spectrum at that location with lines showing the velocity
-    limits. I want to write this diagnostic image out for each sample and each
-    location so that I can show that each location makes sense.
-    """
-    #TODO!
-    ...
 
 
 def fit_molecular_components_with_gaussians(region_name, cii=False, regrid=False):
@@ -1427,7 +1481,8 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         'co65CONV-S-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1': 0.7},
         'co65CONV-W-peak-3': {'m1': 23.6, 'm2': 24.8, 'm3': 25.6, 'a1': 1.5, 'a2': 3.1, 'a3': 9.3, 's1b': (0.2, 0.7)},
 
-        'cii-NE-thread-2': {'m1': 23.5, 'm2': 25.6, 'm2f': False, 's1': 0.8},
+        # 'cii-NE-thread-2': {'m1': 23.5, 'm2': 25.6, 'm2f': False, 's1': 0.8},
+        'cii-NE-thread-2': {'m1': 23.46, 'm1f': True, 'm2': 25.61, 'm2f': True, 's1': 0.8}, # based on 12CO10 towards the same location
         'cii-SE-thread-3': {'m1': 22.5, 'm1b': (22, 22.7), 'a1': 3, 'a1b': (1, 5), 'm2': 25.6, 'm2b': (25.5, 25.75), 'm3': 28.17, 'm3b': (27.5, 29)},
     }
     def parse_and_assign_saved_params(model):
@@ -1556,8 +1611,8 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         fixedstd_stub = ''
         tiestd_stub = f"_untiedstd" if not tiestd else ''
     fixedmean_stub = f"_fixedmean" if fixedmean else ''
-    # 2022-08-22,24, 2022-09-08,09,12
-    savename = f"/home/ramsey/Pictures/2022-09-12/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
+    # 2022-08-22,24, 2022-09-08,09,12,15
+    savename = f"/home/ramsey/Pictures/2022-09-15/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -2974,7 +3029,7 @@ if __name__ == "__main__":
     # fit_spectrum_detailed('12co32', n_components=3, pillar=1, reg_number=8)
     # fit_spectrum_detailed('hcnCONV', n_components=2, pillar=1, reg_number=3)
     # fit_spectrum_detailed('13co10CONV', n_components=2, pillar=1, reg_number=4)
-    # fit_spectrum_detailed('cii', n_components=3, pillar=1, reg_number=6)
+    # fit_spectrum_detailed('cii', n_components=2, pillar=1, reg_number=3)
 
     # generate_n2hp_frequency_axis(debug=True)
     # fit_n2hp_peak(5)
@@ -2986,8 +3041,8 @@ if __name__ == "__main__":
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
     # make_3d_fit_viz_in_2d(3, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
-    for i in range(1, 5):
-        make_3d_fit_viz_in_2d(i, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
+    # for i in range(1, 5):
+    #     make_3d_fit_viz_in_2d(i, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
 
     # correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
@@ -2998,3 +3053,4 @@ if __name__ == "__main__":
     # test_fitting_2G_with_2G_wrapper()
 
     # plot_selected_hcop_spectra_fits()
+    prepare_pdrt_tables('cii', 'co65CONV')

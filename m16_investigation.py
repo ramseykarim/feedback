@@ -956,7 +956,8 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
 
     preset_region_selections = {
         'p1': slice(0, 7), 'p2': slice(7, 11), 'p3': slice(11, 14),
-        'shared base': 14, 'peaks': (2, 3, 6, 14, 8, 10, 11, 13)
+        'shared base': 14, 'peaks': (2, 3, 6, 14, 8, 10, 11, 13),
+        'head': (0, 4, 1, 7), 'threads': (2, 3, 5, 6),
     }
     if selected_region in preset_region_selections:
         selected_region_name = selected_region
@@ -970,6 +971,10 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
         fig = plt.figure(figsize=(15, 7)) # originally (18, 10)
         grid_shape = (1, 4)
         ref_ax_position = (0, 0)
+    elif selected_region_name in ['head', 'threads']:
+        fig = plt.figure(figsize=(15, 12))
+        grid_shape = (2, 3)
+        ref_ax_position = (0, 2)
     else:
         fig = plt.figure(figsize=(15, 12))
         grid_shape = (3, 3)
@@ -990,18 +995,17 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
             raise RuntimeError("Region index selected_region can't be ", selected_region)
         assert len(reg_list) <= 8
         ax_spec_list = []
-        for i in range(3):
-            for j in range(3):
+        for i in range(grid_shape[0]):
+            for j in range(grid_shape[1]):
                 if (i == ref_ax_position[0]) and (j == ref_ax_position[1]):
                     pass # create it later
                 else:
-                    ax_spec_list.append(plt.subplot2grid(grid_shape, (i, j)))
+                    if len(ax_spec_list) < len(reg_list):
+                        ax_spec_list.append(plt.subplot2grid(grid_shape, (i, j)))
     else:
         reg_list = [reg_list[selected_region]]
         ax_spec = plt.subplot2grid(grid_shape, (0, 1), colspan=3, rowspan=1)
         ax_spec_list = [ax_spec]
-
-
 
 
 
@@ -1096,7 +1100,7 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
             ax_img.text(pix_center[0], pix_center[1]+pix_radius, f"{reg_idx+1}", color='r', fontsize=11, ha='center', va='center')
 
         ax_spec = ax_spec_list[reg_idx]
-        if single_img or reg_idx == 6:
+        if single_img or reg_idx == len(reg_list)-1:
             ax_spec.legend(loc='upper right', fontsize=9)
         ax_spec.set_ylim(spec_ylim)
         ax_spec.set_xlim(spec_xlim)
@@ -1111,7 +1115,7 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
             ax_spec.yaxis.set_ticklabels([])
         else:
             ax_spec.set_ylabel("Line intensity (K)")
-        if not single_img and reg_idx+1 not in [6, 7, 8]:
+        if not single_img and reg_idx < ((grid_shape[0]-1)*grid_shape[1] - 1):
             ax_spec.xaxis.set_ticklabels([])
         else:
             ax_spec.set_xlabel("velocity (km/s)")
@@ -1122,9 +1126,9 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
         plt.subplots_adjust(left=0.05, right=0.95, wspace=0.4)
     else:
         plt.subplots_adjust(hspace=0, wspace=0)
-    # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!), 2022-07-19, 2022-08-19, 2022-09-12
-    savename = f"/home/ramsey/Pictures/2022-09-12/pillar_samples_{selected_region_name}"
-    save_as_png = False
+    # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!), 2022-07-19, 2022-08-19, 2022-09-12,15
+    savename = f"/home/ramsey/Pictures/2022-09-15/pillar_samples_{selected_region_name}"
+    save_as_png = True
     if save_as_png:
         fig.savefig(f"{savename}.png",
             metadata=catalog.utils.create_png_metadata(title=f"region {selected_region} from {reg_filename_short}",
@@ -2011,7 +2015,9 @@ if __name__ == "__main__":
 
     reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     # reg_fn_short = "catalogs/pillar_samples_v2.reg"
-    pillar_sample_spectra('all', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'n2hpCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    pillar_sample_spectra('head', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    pillar_sample_spectra('threads', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    # pillar_sample_spectra('threads', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
 
     # for i in [1]:
     #     for j in range(2):

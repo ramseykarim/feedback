@@ -303,7 +303,7 @@ def fit_gaussian(init_conds, masked_cube, g, ij, fitter, double=False, template=
         return None, nan_array, nan_array
     if cube_is_masked:
         masked_spectrum_mask = masked_cube.get_mask_array()[:, i, j]
-        new_spectrum_mask = identify_longest_run(masked_spectrum_mask)
+        new_spectrum_mask = misc_utils.identify_longest_run(masked_spectrum_mask, return_mask=True)
         masked_spectrum_val[~new_spectrum_mask] = np.nan
 
     # astropy.modeling does not like NaNs!!!
@@ -913,35 +913,6 @@ def fwhm_from_mask(spec_mask, spectral_axis=None):
     run_lengths = xarr[run_ends-1] - xarr[run_starts]
     max_length = run_lengths.max()
     return max_length
-
-
-def identify_longest_run(spec_mask, spectral_axis=None):
-    """
-    Similar to fwhm_from_mask, but just identify the longest run of True values
-    in the array, and make a mask of those
-    """
-    spec_mask = np.hstack(([False], spec_mask, [False]))
-    if not np.any(spec_mask):
-        return 0.
-    if spectral_axis is None:
-        xarr = np.arange(spec_mask.size)
-    else:
-        xarr = spectral_axis
-    diffs = np.diff(spec_mask.astype(int))
-    # Starts are the indices of "False" right BEFORE the True
-    run_starts, = np.where(diffs > 0)
-    run_starts += 1 # Bump up to first True
-    # Ends are the LAST indices of "True" BEFORE the False
-    run_ends, = np.where(diffs < 0)
-    run_ends += 1 # Bump up to first False
-    # Lengths are calculated from the x axis (spectral_axis)
-    run_lengths = xarr[run_ends] - xarr[run_starts]
-    max_loc = run_lengths.argmax()
-    # Subtract 2 from size to account for first and last False padding
-    return_mask = np.full(spec_mask.size-2, False, dtype=bool)
-    # Subtract 1 from indices to account for padded False at beginning
-    return_mask[run_starts[max_loc]-1:run_ends[max_loc]-1] = True
-    return return_mask
 
 
 def fit_image_to_file(cube, double=False, template_model=None, mask=True, noise=None,

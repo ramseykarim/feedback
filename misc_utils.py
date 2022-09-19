@@ -148,3 +148,89 @@ def minimum_valid_cutout(img):
     """
     return tuple(slice(np.min(x), np.max(x)+1) for x in np.where(img))
 
+
+def identify_longest_run(bool_array, xaxis=None, return_mask=False):
+    """
+    Identify the longest "run" of True values in the array and return the
+    starting and ending indices, or a mask which only includes the longest run
+    of True values from bool_array.
+    I got the solution for this off StackExchange or something, but didn't write
+    the link down...
+    I think this code is from 2020, but I couldn't be sure.
+    Updated and moved here September 15, 2022
+
+    Example:
+    If we have a boolean array
+     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20
+    [0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0]
+    The longest run of True (1) values is indices 9 through 14 (inclusive).
+    This program would return (9, 14), the indices of the first and last True.
+    If you wanted a valid array slice, you'd have to add 1 to 14 yourself.
+    If return_mask=True, then the resulting mask would be
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]
+
+    Note that we use the array indices to measure length in the example above,
+    implicitly assuming that each array value is spaced uniformly.
+    If you supply via the kwarg xaxis a 1D array the same length as bool_array
+    whose values represent a "location" for each bool_array element, then this
+    function will take that into account while calculating length.
+    If we had the array:
+     0  1  2  3  4  5  6  7  8  9 10
+    [0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0]
+    and its xaxis
+    22 23 25 30 38 40 41 42 43 44 45
+    then we no longer see that the run of 3 True values is the longest run,
+    since those only span a length of 2 units, but instead the run of 2 True
+    values which spans a length of 8 units.
+    The indices returned by this function would be (3, 4) in this case.
+
+    :param bool_array: a 1D boolean array whose longest run of True values we
+        want identified.
+    :param xaxis: (optional) a 1D float-like array which gives locations of
+        the bool_array values along some axis. If this argument is not given,
+        bool_array values are assumed to be evenly spaced.
+        If the supplied xaxis is evenly spaced (i.e. something that could come
+        from np.arange) then the answer will be no different than leaving
+        xaxis equal to None (default).
+        Must be same length as bool_array and must be sorted.
+    :param return_mask: rather than returning a tuple of indices, return a
+        boolean array the same length as bool_array in which the only True
+        values are in the longest run.
+    :returns: tuple(int, int) of the indices of the first and last True values
+        in the longest run of True values. To construct a valid array slice for
+        the run, you would have to add 1 to the ending index.
+        If return_mask==True, then 1D boolean array the same shape as
+        bool_array as described above.
+        If two runs are tied for longest, the earlier run will be returned.
+        If there are no True values in bool_array, returns None.
+    """
+    # Pad with False to make sure every "run" starts and ends within the array
+    padded_bool_array = np.hstack(([False], bool_array, [False]))
+    if not np.any(padded_bool_array):
+        return None
+    if xaxis is None:
+        xaxis = np.arange(padded_bool_array.size)
+    else:
+        raise NotImplementedError("xaxis argument not supported yet.")
+        # I have to pad the xaxis with something that makes sense, or just do
+        # indexing tricks.
+    # Find where the values switch (runs start or end)
+    diffs = np.diff(padded_bool_array.astype(int))
+    # Starts are the indices of "False" right BEFORE the True
+    run_starts, = np.where(diffs > 0)
+    run_starts += 1 # Bump up to first True
+    # Ends are the LAST indices of "True" BEFORE the False
+    run_ends, = np.where(diffs < 0)
+    run_ends += 1 # Bump up to first False
+    # Lengths are calculated from the x axis (spectral_axis)
+    run_lengths = xaxis[run_ends] - xaxis[run_starts]
+    max_loc = run_lengths.argmax()
+    # Get the indices to return, correct for padding by subtracting 1
+    start, end = run_starts[max_loc]-1, run_ends[max_loc]-2
+    if return_mask:
+        # Subtract 2 from size to account for first and last False padding
+        return_mask = np.full(spec_mask.size-2, False, dtype=bool)
+        return_mask[start:end+1] = True
+        return return_mask
+    else:
+        return start, end
