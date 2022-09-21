@@ -562,11 +562,117 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
             fig.clear()
 
 
-
-    # Save data into a QTable
-    tab = QTable(list(zip(*result_list)), names=('data', 'uncertainty', 'identifier', 'region'), meta={'data': 'erg s-1 cm-2 sr-1', 'uncertainty': 'erg s-1 cm-2 sr-1'})
+    # Save data into a QTable (so don't need to specify my own units)
+    tab = QTable(list(zip(*result_list)), names=('data', 'uncertainty', 'identifier', 'region'))
     tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{unique_run_identifier}.txt", format='ipac',
         overwrite=True)
+
+
+def prepare_pdrt_tables_fir(reg_filename=None):
+    """
+    Created: September 21, 2022
+    Same as above but for FIR, which is just an image
+    """
+
+    region_filenames = ["catalogs/pillar1_pointsofinterest_v3.reg", # The 8 classic P1a regions
+        "catalogs/pillar123_pointsofinterest_v1.reg", # Several more around P1b, 2, 3, and Shelf
+        ]
+    if reg_filename is None:
+        reg_filename = 0
+    # reg_filename can either be a filename or an index into the list above
+    if isinstance(reg_filename, int):
+        reg_filename = region_filenames[reg_filename]
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename))
+
+    fir_img, fir_hdr = fits.getdata(catalog.utils.search_for_file("herschel/m16-I_FIR.fits"), header=True)
+    fir_wcs = WCS(fir_hdr)
+    reg_coord_list = [tuple(round(x) for x in reg.to_pixel(fir_wcs).center.xy[::-1]) for reg in reg_list]
+
+    value_list = [fir_img[i, j] for (i, j) in reg_coord_list]
+    uncertainty_list = [10]*len(value_list)
+    id_list = ['FIR']*len(value_list)
+    reg_name_list = [reg.meta['label'].replace(' ', '') for reg in reg_list]
+
+
+    fig = plt.figure(figsize=(15, 15))
+    ax = plt.subplot(111, projection=fir_wcs)
+    im = ax.imshow(fir_img, origin='lower', cmap='Greys_r')
+    ax.set_title(f"FIR intensity, herschel/m16-I_FIR.fits")
+    fig.colorbar(im, ax=ax, label=fir_hdr['BUNIT'])
+    for reg_coord in reg_coord_list:
+        ax.plot([reg_coord[1]], [reg_coord[0]], '+', color='r')
+
+    fig.savefig(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/diagnostic_figs/diagnostic_FIR.png",
+        metadata=catalog.utils.create_png_metadata(title="make pdrt tables diagnostic image",
+            file=__file__, func="prepare_pdrt_tables_fir"))
+
+    unique_run_identifier = "FIR__" + os.path.basename(reg_filename).replace('.reg', '')
+
+    # Save data into a Table (put units in as dictionary)
+    tab = Table([value_list, uncertainty_list, id_list, reg_name_list], names=('data', 'uncertainty', 'identifier', 'region'), units={'data': fir_hdr['BUNIT'], 'uncertainty': '%'})
+    tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{unique_run_identifier}.txt", format='ipac')
+
+
+def prepare_pdrt_tables_g0(reg_filename=None):
+    """
+    Created: September 21, 2022
+    Make a table of G0 values at given locations
+    Get G0 from both the Herschel UV (Nicola made this) and the stars (I made that)
+    """
+    region_filenames = ["catalogs/pillar1_pointsofinterest_v3.reg", # The 8 classic P1a regions
+        "catalogs/pillar123_pointsofinterest_v1.reg", # Several more around P1b, 2, 3, and Shelf
+        ]
+    if reg_filename is None:
+        reg_filename = 0
+    # reg_filename can either be a filename or an index into the list above
+    if isinstance(reg_filename, int):
+        reg_filename = region_filenames[reg_filename]
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename))
+    reg_name_list = [reg.meta['label'].replace(' ', '') for reg in reg_list]
+
+    data_dir = "/home/ramsey/Documents/Research/Feedback/m16_data"
+    herschel_uv_fn = "herschel/uv_m16_repro_CII.fits"
+    stars_g0_fn = "catalogs/g0_hillenbrand_stars_fuvgt4.5_ltxarcmin.fits"
+
+    results = [[], []]
+    names = []
+    for idx, fn in enumerate([herschel_uv_fn, stars_g0_fn]):
+        data, hdr = fits.getdata(os.path.join(data_dir, fn), header=True)
+        data = np.squeeze(data)
+        wcs_obj = WCS(hdr, naxis=2)
+
+        fig = plt.figure(figsize=(15, 15))
+        ax = plt.subplot(111, projection=wcs_obj)
+        if idx == 0:
+            im = ax.imshow(data, origin='lower', cmap='Greys_r')
+            ax.set_title(f"Herschel uv, {os.path.basename(fn)}")
+            fig.colorbar(im, ax=ax, label='G0 (Habing)')
+        else:
+            im = ax.imshow(np.log10(data), origin='lower', cmap='Greys_r')
+            ax.set_title(f"Stars g0, {os.path.basename(fn)}")
+            fig.colorbar(im, ax=ax, label='G0 (Habing)')
+
+        for reg in reg_list:
+            pixel_coords_ij = tuple(round(x) for x in reg.to_pixel(wcs_obj).center.xy[::-1])
+            value = data[pixel_coords_ij]
+            results[idx].append(value)
+            ax.plot([pixel_coords_ij[1]], [pixel_coords_ij[0]], '+', color='r')
+
+        unique_run_identifier = "-".join(os.path.basename(fn).split('.')[:-1]) + "__" + os.path.basename(reg_filename).replace('.reg', '')
+        names.append(unique_run_identifier)
+        fig.savefig(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/diagnostic_figs/diagnostic_g0_{unique_run_identifier}.png",
+            metadata=catalog.utils.create_png_metadata(title="make pdrt tables diagnostic image",
+                file=__file__, func="prepare_pdrt_tables_g0"))
+
+
+    uncertainty_list = [10]*len(reg_list)
+    ids = ['Herschel_G0', 'Stars_G0']
+    for i, name in enumerate(names):
+        id_list = [ids[i]]*len(reg_list)
+        tab = Table([results[i], uncertainty_list, id_list, reg_name_list], names=('data', 'uncertainty', 'identifier', 'region'), units={'data': 'Habing unit', 'uncertainty': '%'})
+        tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{name}.txt", format='ipac')
+
+
 
 
 def prepare_pdrt_tables_2():
@@ -3053,4 +3159,4 @@ if __name__ == "__main__":
     # test_fitting_2G_with_2G_wrapper()
 
     # plot_selected_hcop_spectra_fits()
-    prepare_pdrt_tables('cii', 'co65CONV')
+    prepare_pdrt_tables_g0()
