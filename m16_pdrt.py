@@ -15,6 +15,9 @@ from pdrtpy.modelset import ModelSet
 from pdrtpy.plot.modelplot import ModelPlot
 from pdrtpy.measurement import Measurement
 import pdrtpy.pdrutils as utils
+from pdrtpy.tool.lineratiofit import LineRatioFit
+from pdrtpy.plot.lineratioplot import LineRatioPlot
+
 from astropy.nddata import StdDevUncertainty
 import astropy.units as u
 from astropy.table import Table
@@ -187,6 +190,17 @@ def collect_measurements_from_tables(line_or_ratio, reg_name=None):
     return meas
 
 
+def collect_all_measurements_for_region(reg_name):
+    """
+    Created: September 27, 2022
+    Run collect_measurements_from_tables on every supported line intensity
+    """
+    supported_line_stubs = ['cii', '12co10CONV', '13co10CONV', '12co32', '13co32', 'co65CONV', 'FIR']
+    result = []
+    for line in supported_line_stubs:
+        result.append(collect_measurements_from_tables(line, reg_name=reg_name))
+    return result
+
 
 def get_g0_values_at_locations(reg_name):
     """
@@ -194,17 +208,50 @@ def get_g0_values_at_locations(reg_name):
     Get the G0 from Herschel (Nicola made this) and also the one from the
     stars that I made, return the two values as a tuple
     :param reg_name: the name of the region
+    :return: dict(dict, dict)
+        main dictionary keys 'Herschel_G0', 'Stars_G0'
+        sub-dictionaries keys 'data', 'uncertainty', 'region'
+        in a tuple ordered (Herschel, Stars)
     """
     fns = ["uv_m16_repro_CII", "g0_hillenbrand_stars_fuvgt4-5_ltxarcmin"]
-    # for loop
-    t = Table.read(fn, format='ipac')
-    reg_name_list = t['region']
-    reg_i = list(reg_name_list).index(reg_name)
-    # # TODO: FINISH THIS! return a tuple
+    result = {}
+    for raw_fn in fns:
+        fn = get_measurement_filename(raw_fn)
+        t = Table.read(fn, format='ipac')
+        reg_name_list = t['region']
+        reg_i = list(reg_name_list).index(reg_name)
+        result[t['identifier'][reg_i]] = dict(t[reg_i])
+    return result
 
 
+def make_spaghetti_plot(reg_name):
+    """
+    Created: September 27, 2022
+    Following the notebook: https://github.com/mpound/pdrtpy-nb/blob/master/notebooks/PDRT_Example_Find_n_G0_Single_Pixel.ipynb
+    Make a spaghetti plot for a given region
+    """
+    meas_list = collect_all_measurements_for_region(reg_name)
+    ms = ModelSet("wk2020", z=1)
+    p = LineRatioFit(ms, measurements=meas_list)
+    p.run()
+    print(p.fit_result[0])
+    return
+    lrp_plot = LineRatioPlot(p)
+    lrp_plot.overlay_all_ratios(yaxis_unit="Habing", figsize=(15, 10),
+        loc='upper left',
+        bbox_to_anchor=(1.05,0.9))
+    g0_dict = get_g0_values_at_locations(reg_name)
+    g0_plot_params = {'Stars_G0': ('k', 'bottom'), 'Herschel_G0': ('r', 'top')}
+    for g0_name in g0_dict:
+        color, va = g0_plot_params[g0_name]
+        lrp_plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
+        lrp_plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
+    lrp_plot._plt.subplots_adjust(right=0.6)
+    lrp_plot.savefig(f"/home/ramsey/Pictures/2022-09-27/spaghetti_{reg_name}.png",
+        metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
+            'Title': f'{reg_name} spaghetti plot'})
 
 
 if __name__ == "__main__":
-    # make_phase_space_plot_3('cii/FIR', '12co32/12co10CONV')
-    get_g0_values()
+    for reg_name in ['W-peak']:
+        make_spaghetti_plot(reg_name)
