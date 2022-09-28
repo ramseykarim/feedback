@@ -234,24 +234,36 @@ def make_spaghetti_plot(reg_name):
     ms = ModelSet("wk2020", z=1)
     p = LineRatioFit(ms, measurements=meas_list)
     p.run()
-    print(p.fit_result[0])
-    return
     lrp_plot = LineRatioPlot(p)
-    lrp_plot.overlay_all_ratios(yaxis_unit="Habing", figsize=(15, 10),
-        loc='upper left',
-        bbox_to_anchor=(1.05,0.9))
-    g0_dict = get_g0_values_at_locations(reg_name)
-    g0_plot_params = {'Stars_G0': ('k', 'bottom'), 'Herschel_G0': ('r', 'top')}
-    for g0_name in g0_dict:
-        color, va = g0_plot_params[g0_name]
-        lrp_plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
-        lrp_plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
+    # lrp_plot.overlay_all_ratios(yaxis_unit="Habing", figsize=(15, 10),
+    #     loc='upper left',
+    #     bbox_to_anchor=(1.05,0.9))
+
+    # g0_dict = get_g0_values_at_locations(reg_name)
+    # g0_plot_params = {'Stars_G0': ('k', 'bottom'), 'Herschel_G0': ('r', 'top')}
+    # for g0_name in g0_dict:
+    #     color, va = g0_plot_params[g0_name]
+    #     lrp_plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
+    #     lrp_plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
+
+
+    lrp_plot.reduced_chisq(cmap='gray_r',norm='log',label=True,colors='white',
+        legend=True,vmax=8E4,figsize=(15,10),yaxis_unit='Habing')
     lrp_plot._plt.subplots_adjust(right=0.6)
-    lrp_plot.savefig(f"/home/ramsey/Pictures/2022-09-27/spaghetti_{reg_name}.png",
+    lrp_plot.savefig(f"/home/ramsey/Pictures/2022-09-27/chisq_{reg_name}.png",
         metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
-            'Title': f'{reg_name} spaghetti plot'})
+            'Title': f'{reg_name} chisq plot'})
+
+    # lrp_plot._plt.errorbar(soln.params['density'].value, soln.params['radiation_field'].value,
+    #     xerr=soln.params['density'].stderr, yerr=soln.params['radiation_field'].stderr)
+    # lrp_plot.savefig(f"/home/ramsey/Pictures/2022-09-27/spaghetti_{reg_name}.png",
+    #     metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
+    #         'Title': f'{reg_name} spaghetti plot'})
 
 
 if __name__ == "__main__":
-    for reg_name in ['W-peak']:
-        make_spaghetti_plot(reg_name)
+    # for reg_name in ['E-peak', 'S-peak', 'broad-line']:
+    for ns in ['N', 'S']:
+        for ew in ['E', 'W']:
+            reg_name = f"{ns}{ew}-thread"
+            make_spaghetti_plot(reg_name)
