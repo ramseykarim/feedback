@@ -423,6 +423,11 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
     I should save a diagnostic figure for that, for each line/region
     (I hadn't seen prepare_pdrt_tables_3 yet when I wrote this, but sounds like
     I have a consistent plan!)
+
+    Updated September 30, 2022
+    I will remove my own conversion from K km/s to cgs (but I will keep those
+    old diagnostic images) so I can let pdrtpy do the conversion (it knows how!)
+    I will have to store the line frequency in the table in this case.
     """
 
     region_filenames = ["catalogs/pillar1_pointsofinterest_v3.reg", # The 8 classic P1a regions

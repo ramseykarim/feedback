@@ -22,6 +22,7 @@ from astropy.nddata import StdDevUncertainty
 import astropy.units as u
 from astropy.table import Table
 
+from copy import deepcopy
 
 data_dir = "/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt"
 if not os.path.isdir(data_dir):
@@ -30,7 +31,28 @@ if not os.path.isdir(data_dir):
 def get_measurement_filename(line_stub):
     return os.path.join(data_dir, f"{line_stub}__pillar1_pointsofinterest_v3.txt")
 
+user_models = {'CO_65/FIR': ('CO65_FIR.fits', "CO(J=6-5) / I$_{FIR}$")}
+
 pillar = 1
+
+
+def load_user_model(ms, modelname):
+    """
+    September 28, 2022
+    load a model I saved as FITS into a ModelSet
+    """
+    fn_stub, title = user_models[modelname]
+    fn = os.path.join(data_dir, fn_stub)
+    ms.add_model(modelname, fn, title=title)
+
+
+def load_all_user_models(ms):
+    """
+    September 28, 2022
+    load all models I created
+    """
+    for modelname in user_models:
+        load_user_model(ms, modelname)
 
 
 def make_plot():
@@ -134,15 +156,21 @@ def make_phase_space_plot_3(meas_x, meas_y):
     This time, 2 ratios at a time
     """
 
-    meas_list = [collect_measurements_from_tables(meas) for meas in (meas_x, meas_y)]
+    meas_list = []
+    reg_name_list = get_region_names()
+    for reg_name in reg_name_list:
+        meas_list += [collect_measurements_from_tables(meas, reg_name=reg_name) for meas in (meas_x, meas_y)]
+    # ['k+', 'r+', 'g+', 'b+', 'y+', 'c+', 'ko', 'ro', 'go', 'yo']
+    markers = ['k^', 'k<', 'k+', 'r+', 'r^', 'kv', 'rv', 'r<']
 
     m = ModelSet(name='wk2020', z=1)
     # for x in m._supported_ratios['ratio label']:
     #     print(x)
     mp = ModelPlot(m)
 
-    mp.phasespace([meas_list[0].id, meas_list[1].id], nax1_clip=[1E2,1E5]*u.Unit("cm-3"), nax2_clip=[1E1,1E6]*utils.habing_unit, measurements=meas_list)
-    mp.savefig(f"/home/ramsey/Pictures/2022-09-21/phasespace_{meas_list[0].id.replace('/', 'over')}_{meas_list[1].id.replace('/', 'over')}.png")
+    mp.phasespace([meas_list[0].id, meas_list[1].id], nax1_clip=[1E2,1E5]*u.Unit("cm-3"), nax2_clip=[1E1,1E6]*utils.habing_unit, measurements=meas_list, fmt=markers, label=reg_name_list)
+    # 2022-09-21,
+    mp.savefig(f"/home/ramsey/Pictures/2022-09-29/phasespace_{meas_list[0].id.replace('/', 'over')}_{meas_list[1].id.replace('/', 'over')}.png")
 
 
 
@@ -195,11 +223,21 @@ def collect_all_measurements_for_region(reg_name):
     Created: September 27, 2022
     Run collect_measurements_from_tables on every supported line intensity
     """
-    supported_line_stubs = ['cii', '12co10CONV', '13co10CONV', '12co32', '13co32', 'co65CONV', 'FIR']
+    supported_line_stubs = ['cii', 'co65CONV', 'FIR', '12co10CONV', '12co32'] #  , '13co32', '13co10CONV'
     result = []
     for line in supported_line_stubs:
         result.append(collect_measurements_from_tables(line, reg_name=reg_name))
     return result
+
+
+def get_region_names():
+    """
+    September 29, 2022
+    Use the g0 tables to get a list of region names
+    """
+    fn = get_measurement_filename("uv_m16_repro_CII")
+    t = Table.read(fn, format='ipac')
+    return list(t['region'])
 
 
 def get_g0_values_at_locations(reg_name):
@@ -224,46 +262,93 @@ def get_g0_values_at_locations(reg_name):
     return result
 
 
-def make_spaghetti_plot(reg_name):
+def make_spaghetti_plot(reg_name, chisq=False):
     """
     Created: September 27, 2022
     Following the notebook: https://github.com/mpound/pdrtpy-nb/blob/master/notebooks/PDRT_Example_Find_n_G0_Single_Pixel.ipynb
     Make a spaghetti plot for a given region
     """
     meas_list = collect_all_measurements_for_region(reg_name)
+    for m in meas_list:
+        print(m.id, m)
+    return
     ms = ModelSet("wk2020", z=1)
+    load_all_user_models(ms)
     p = LineRatioFit(ms, measurements=meas_list)
     p.run()
     lrp_plot = LineRatioPlot(p)
-    # lrp_plot.overlay_all_ratios(yaxis_unit="Habing", figsize=(15, 10),
-    #     loc='upper left',
-    #     bbox_to_anchor=(1.05,0.9))
 
-    # g0_dict = get_g0_values_at_locations(reg_name)
-    # g0_plot_params = {'Stars_G0': ('k', 'bottom'), 'Herschel_G0': ('r', 'top')}
-    # for g0_name in g0_dict:
-    #     color, va = g0_plot_params[g0_name]
-    #     lrp_plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
-    #     lrp_plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
+    # add to the default color cycle since I have lots of lines/ratios. Must be done before I call the overlay plot function
+    lrp_plot._CB_color_cycle += ['#66ffb3', '#ff8000', '#e600e6', '#8533ff', '#999900']
+
+    if chisq:
+        lrp_plot.reduced_chisq(cmap='gray_r',norm='log',label=True,colors='white',
+            legend=True,vmax=8E4,figsize=(15,10),yaxis_unit='Habing')
+    else:
+        # co65_meas = [x for x in meas_list if "65" in x.id].pop()
+        # fir_meas = [x for x in meas_list if "FIR" in x.id].pop()
+        # new_meas_list = list(meas_list) + [co65_meas / fir_meas]
+        # print([x.id for x in new_meas_list])
+        # return
+        new_meas_list = [x for x in meas_list if "FIR" not in x.id]
+        lrp_plot.overlay_all_ratios(yaxis_unit="Habing", figsize=(15, 10),
+            loc='upper left', measurements=new_meas_list)
+            # loc='upper left',
+            # bbox_to_anchor=(1.05,0.9))
+
+    g0_dict = get_g0_values_at_locations(reg_name)
+    g0_plot_params = {'Stars_G0': ('#1f77b4', 'bottom'), 'Herschel_G0': ('#ff7f0e', 'top')}
+    for g0_name in g0_dict:
+        color, va = g0_plot_params[g0_name]
+        lrp_plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
+        lrp_plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
 
 
-    lrp_plot.reduced_chisq(cmap='gray_r',norm='log',label=True,colors='white',
-        legend=True,vmax=8E4,figsize=(15,10),yaxis_unit='Habing')
-    lrp_plot._plt.subplots_adjust(right=0.6)
-    lrp_plot.savefig(f"/home/ramsey/Pictures/2022-09-27/chisq_{reg_name}.png",
-        metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
-            'Title': f'{reg_name} chisq plot'})
+    dens, dens_unc = p.density.value, p.density.uncertainty.array
+    radfield_meas = utils.to(utils.habing_unit, p.radiation_field)
+    radfield, radfield_unc = radfield_meas.value, radfield_meas.uncertainty.array
+    lrp_plot._plt.errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
 
-    # lrp_plot._plt.errorbar(soln.params['density'].value, soln.params['radiation_field'].value,
-    #     xerr=soln.params['density'].stderr, yerr=soln.params['radiation_field'].stderr)
-    # lrp_plot.savefig(f"/home/ramsey/Pictures/2022-09-27/spaghetti_{reg_name}.png",
-    #     metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
-    #         'Title': f'{reg_name} spaghetti plot'})
+    # 2022-09-28, (27 ?), 29
+    save_path = "/home/ramsey/Pictures/2022-09-29"
+
+    if chisq:
+        # lrp_plot._plt.subplots_adjust(right=0.6)
+        lrp_plot.savefig(os.path.join(save_path, f"chisq_{reg_name}.png"),
+            metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
+                'Title': f'{reg_name} chisq plot'})
+    else:
+        lrp_plot.savefig(os.path.join(save_path, f"spaghetti_{reg_name}.png"),
+            metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
+                'Title': f'{reg_name} spaghetti plot'})
+
+
+def add_model():
+    """
+    Created: September 28, 2022
+    Add a model to the set and save it to FITS somwhere
+    """
+    ms = ModelSet("wk2020", z=1)
+
+    cii_fir = ms.get_model("CII_158/FIR")
+    cii_co65 = ms.get_model("CII_158/CO_65")
+    co65_fir = cii_fir / cii_co65
+    text1 = "CO (J=6-5)/FIR"
+    text2 = "CII/FIR / CII/CO65"
+    savename = "CO65_FIR"
+
+    old_model = cii_fir
+    new_model = co65_fir
+
+    new_model.header = deepcopy(old_model.header)
+    new_model.header["TITLE"] = text1
+    new_model.header["DATAMAX"] = new_model.data.max()
+    new_model.header["DATAMIN"] = new_model.data.min()
+    new_model.header["HISTORY"] = f"Computed arithmetically from {text2}"
+    new_model.header["DATE"] = utils.now()
+
+    new_model.write(os.path.join(data_dir, savename+".fits"))
 
 
 if __name__ == "__main__":
-    # for reg_name in ['E-peak', 'S-peak', 'broad-line']:
-    for ns in ['N', 'S']:
-        for ew in ['E', 'W']:
-            reg_name = f"{ns}{ew}-thread"
-            make_spaghetti_plot(reg_name)
+    make_phase_space_plot_3("cii/FIR", "12co32/12co10CONV")
