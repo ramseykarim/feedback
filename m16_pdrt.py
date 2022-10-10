@@ -20,7 +20,7 @@ from pdrtpy.plot.lineratioplot import LineRatioPlot
 
 from astropy.nddata import StdDevUncertainty
 import astropy.units as u
-from astropy.table import Table
+from astropy.table import Table, QTable
 
 from copy import deepcopy
 
@@ -28,12 +28,91 @@ data_dir = "/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt"
 if not os.path.isdir(data_dir):
     data_dir = "/home/rkarim/Research/Feedback/m16_data/catalogs/pdrt"
 
-def get_measurement_filename(line_stub):
-    return os.path.join(data_dir, f"{line_stub}__pillar1_pointsofinterest_v3.txt")
+# Ratio of beam areas of the CO(3-2) to CII beam
+# CO(3-2) is around 19'' fwhm, CII is around 15''
+APEX_to_SOFIA_beam_area_ratio = 1.54853702
 
+
+# Whether to just use my converted units, or start from K km/s and let pdrtpy
+# make the conversion to cgs
+# I checked my conversions, they're good for at least CII and CO(1-0) and I
+# expect that they're good for all the others.
+use_my_unit_conversions = True
+
+def get_measurement_filename(line_stub):
+    """
+    Late September/early October 2022
+    Get the measurement table filename for a given line
+    If I switch to a different set of tables (e.g. from P1a to the other pillars),
+    I can just change that here
+    """
+    default_fn = os.path.join(data_dir, f"{line_stub}__pillar1_pointsofinterest_v3.txt")
+    if use_my_unit_conversions:
+        # Use the tables which I already converted to cgs
+        # This should be the most common behavior, since the conversions are fine
+        fn = default_fn
+    else:
+        # Use the K km/s tables (only available for some lines in P1a right now)
+        fn = os.path.join(data_dir, f"{line_stub}_v2__pillar1_pointsofinterest_v3.txt")
+        if not os.path.exists(fn):
+            fn = default_fn
+    return fn
+
+# Models that I created from existing models and saved as FITS
 user_models = {'CO_65/FIR': ('CO65_FIR.fits', "CO(J=6-5) / I$_{FIR}$")}
 
+default_supported_line_stubs = {'cii', 'co65CONV', 'FIR', '12co10CONV'} #  '12co32', '13co32', '13co10CONV'
+def set_supported_lines(line_name_list):
+    """
+    October 7, 2022
+    Reset supported lines dynamically. This lets me pick lines at the bottom of
+    this file in a function call rather than changing the contents of a function.
+    Reuse the same set instance (same memory location) rather than reassigning
+    the default_supported_line_stubs variable to a new set
+    """
+    global default_supported_line_stubs
+    default_supported_line_stubs.clear()
+    default_supported_line_stubs |= set(line_name_list)
+
+
+
+# Useful for switching to other sets of measurement tables
 pillar = 1
+
+
+
+
+"""
+Plotting functions
+"""
+
+
+
+def add_model():
+    """
+    Created: September 28, 2022
+    Add a model to the set and save it to FITS somwhere
+    """
+    ms = ModelSet("wk2020", z=1)
+
+    cii_fir = ms.get_model("CII_158/FIR")
+    cii_co65 = ms.get_model("CII_158/CO_65")
+    co65_fir = cii_fir / cii_co65
+    text1 = "CO (J=6-5)/FIR"
+    text2 = "CII/FIR / CII/CO65"
+    savename = "CO65_FIR"
+
+    old_model = cii_fir
+    new_model = co65_fir
+
+    new_model.header = deepcopy(old_model.header)
+    new_model.header["TITLE"] = text1
+    new_model.header["DATAMAX"] = new_model.data.max()
+    new_model.header["DATAMIN"] = new_model.data.min()
+    new_model.header["HISTORY"] = f"Computed arithmetically from {text2}"
+    new_model.header["DATE"] = utils.now()
+
+    new_model.write(os.path.join(data_dir, savename+".fits"))
 
 
 def load_user_model(ms, modelname):
@@ -55,111 +134,19 @@ def load_all_user_models(ms):
         load_user_model(ms, modelname)
 
 
-def make_plot():
-    """
-    Created: Aug 24, 2021
-    """
-    # Boilerplate from the notebook
-    m = ModelSet(name='wk2006', z=1)
-    mp = ModelPlot(m)
-    # create list of measurements for the plot
-    m16_measurements = []
-    pillar = 1
-    # Loop through the 10 regions
-    for i in range(10):
-        # Add to the list the CII/CO1-0 measurement and the CII/FIR measurement with the correct labels
-        cii_m = Measurement.read(os.path.join(data_dir, f"cii_pillar{pillar}_{i}.fits"), identifier='CII_158')
-        co10_m = Measurement.read(os.path.join(data_dir, f"co10_pillar{pillar}_{i}.fits"), identifier='CO_10')
-        fir_m = Measurement.read(os.path.join(data_dir, f"fir_pillar{pillar}_{i}.fits"), identifier='FIR')
-        cii_m_converted = utils.convert_integrated_intensity(cii_m)
-        # cii_m_converted.header['BUNIT'] = 'erg / (cm2 s sr)' # Marc's fix
-        cii_to_fir_m = cii_m_converted / fir_m
-        #### at this point, the cii_to_fir_m has a unit of cm2/cm2 which should have reduced
-        #### Marc recommends papering over it by assigning everything to unitless, but I'll see if it'll run without
-        co10_m_converted = utils.convert_integrated_intensity(co10_m)
-        cii_to_co10_m = cii_m_converted / co10_m_converted
-        m16_measurements.append(cii_to_co10_m)
-        m16_measurements.append(cii_m_converted)
-    # Create the plot using the same labels
-    mp.phasespace(['CII_158', 'CII_158/CO_10'], nax1_clip=[1E2,1E5]*u.Unit("cm-3"), nax2_clip=[1E1,1E6]*utils.habing_unit, measurements=m16_measurements, label=None, fmt=['k+', 'r+', 'g+', 'b+', 'y+', 'c+', 'ko', 'ro', 'go', 'yo'], title=f'M16 Pillar {pillar}')
-    mp.savefig(f"/home/ramsey/Pictures/2021-09-14-work/cii_co_pdrt_p{pillar}.png")
-
-
-def make_measurements_from_fits():
-    """
-    Created: Sept 8, 2021
-    This is a direct follow-up to m16_deepdive.prepare_pdrt_tables_2
-
-    Updated: Sept 14, 2021 following Marc's email working through my pilot error
-    The issue was that I need to manually encourage a unit conversion
-    I was also not making tables, I was making "measurements" which are FITS.
-    That's fine, Marc said, it'll work fine for the phase space plots.
-    """
-    # Filepath to the masked FITS images
-    tmp_path = "/home/ramsey/Downloads/tmp"
-    if not os.path.isdir(tmp_path):
-        tmp_path = "/home/rkarim/Downloads/tmp"
-    # Loop through the 10 regions
-    for i in range(10):
-        # Create and save CII measurement from masked images
-        cii_m_fn = os.path.join(data_dir, f"cii_pillar{pillar}_{i}.fits")
-        Measurement.make_measurement(os.path.join(tmp_path, f"reg_p{pillar}_cii_{i}.fits"), error='10%', outfile=cii_m_fn)
-
-        # Create and save CO1-0 measurement from masked images
-        co10_m_fn = os.path.join(data_dir, f"co10_pillar{pillar}_{i}.fits")
-        Measurement.make_measurement(os.path.join(tmp_path, f"reg_p{pillar}_co10_{i}.fits"), error='10%', outfile=co10_m_fn)
-
-        # Load the CII and CO1-0 measurements I just made
-        cii_m = Measurement.read(cii_m_fn)
-        co10_m = Measurement.read(co10_m_fn)
-        # Create and save the ratio measurement
-        cii_to_co10_m = cii_m / co10_m
-        cii_to_co10_m.write(os.path.join(data_dir, f"cii_to_co10_pillar{pillar}_{i}.fits"))
-
-        # Create and save FIR measurement from the masked image
-        fir_m_fn = os.path.join(data_dir, f"fir_pillar{pillar}_{i}.fits")
-        Measurement.make_measurement(os.path.join(tmp_path, f"reg_p{pillar}_fir_{i}.fits"), error='10%', outfile=fir_m_fn)
-        # Load the FIR measurement I just made
-        fir_m = Measurement.read(fir_m_fn)
-        # Create and save the CII to FIR ratio measurement
-        cii_to_fir_m = cii_m / fir_m
-        cii_to_fir_m.write(os.path.join(data_dir, f"cii_to_fir_pillar{pillar}_{i}.fits"))
-
-
-def make_phase_space_plot_2(l1, l2):
-    """
-    Created: September 21, 2022
-    Making phase space plots with my new measurements/tables
-
-    I didn't realize Marc already had a function utils.convert_integrated_intensity
-    I should probably check my conversion using his function
-    """
-    fn1 = get_measurement_filename(l1)
-    fn2 = get_measurement_filename(l2)
-    m1 = Measurement.from_table(fn1, array=False)
-    m2 = Measurement.from_table(fn2, array=False)
-    ratios = m1 / m2
-
-    m = ModelSet(name='wk2020', z=1)
-    # for x in m._supported_ratios['ratio label']:
-    #     print(x)
-    mp = ModelPlot(m)
-
-    mp.phasespace([m1.id, ratios.id], nax1_clip=[1E2,1E5]*u.Unit("cm-3"), nax2_clip=[1E1,1E6]*utils.habing_unit, measurements=[m1, ratios])
-    mp.savefig(f"/home/ramsey/Pictures/2022-09-21/phasespace_{m1.id}_{ratios.id.replace('/', 'over')}_1.png")
-
-
 def make_phase_space_plot_3(meas_x, meas_y):
     """
     Created: September 21, 2022
     Making phase space plots with my new measurements/tables
     This time, 2 ratios at a time
+
+    # TODO: need to fix this since collect_measurement_from_tables no longer makes ratios
     """
 
     meas_list = []
     reg_name_list = get_region_names()
     for reg_name in reg_name_list:
-        meas_list += [collect_measurements_from_tables(meas, reg_name=reg_name) for meas in (meas_x, meas_y)]
+        meas_list += [collect_measurement_from_tables(meas, reg_name=reg_name) for meas in (meas_x, meas_y)]
     # ['k+', 'r+', 'g+', 'b+', 'y+', 'c+', 'ko', 'ro', 'go', 'yo']
     markers = ['k^', 'k<', 'k+', 'r+', 'r^', 'kv', 'rv', 'r<']
 
@@ -173,60 +160,70 @@ def make_phase_space_plot_3(meas_x, meas_y):
     mp.savefig(f"/home/ramsey/Pictures/2022-09-29/phasespace_{meas_list[0].id.replace('/', 'over')}_{meas_list[1].id.replace('/', 'over')}.png")
 
 
-
-def collect_measurements_from_tables(line_or_ratio, reg_name=None):
+def collect_measurement_from_tables(line_name, reg_name=None):
     """
     Created: September 21, 2022
-    Get any Measurement from the tables, make any valid ratio, and
-    organize them by region.
+    Get any Measurement from the tables and organize them by region.
+    :param line_name: name of line (or other single quantity, like FIR)
     :param reg_name: If a reg_name is specified, only return those
+        If this region isn't found in the file (e.g. for CI or OI), return None
     :returns: a Measurement; single pixel if reg_name specified
     """
     supported_line_stubs = ['cii', '12co10CONV', '13co10CONV', '12co32', '13co32', 'co65CONV', 'FIR']
-    if '/' in line_or_ratio:
-        line_or_ratio = [x.strip() for x in line_or_ratio.split('/')]
-    elif isinstance(line_or_ratio, str):
-        line_or_ratio = [line_or_ratio]
+    fn = get_measurement_filename(line_name)
 
-    if len(line_or_ratio) == 1:
-        is_ratio = False
-    elif len(line_or_ratio) == 2:
-        is_ratio = True
-    else:
-        raise ValueError(f"Number of molecular lines can't be {len(line_or_ratio)} ({line_or_ratio})")
-
-    fns = [get_measurement_filename(l) for l in line_or_ratio]
-    meas_list = []
-    if reg_name is not None:
-        # Find the location of this region's row
-        reg_i = None
-        for fn in fns:
-            if reg_i is None:
-                t = Table.read(fn, format='ipac')
-                reg_name_list = t['region']
-                reg_i = list(reg_name_list).index(reg_name)
-            meas_list.append(Measurement.from_table(fn, array=True)[reg_i])
-    else:
-        for fn in fns:
+    if use_my_unit_conversions:
+        # I converted from K km/s using my own function when I created the tables.
+        # I checked the conversion using the pdrtpy function and they give the
+        # same answer.
+        if reg_name is not None:
+            # Find the location of this region's row
+            t = Table.read(fn, format='ipac')
+            reg_name_list = t['region']
+            reg_i = list(reg_name_list).index(reg_name)
+            meas = Measurement.from_table(fn, array=True)[reg_i]
+        else:
             # Get all regions in one Measurement
-            meas_list.append(Measurement.from_table(fn, array=False))
-    # Take ratio if we're doing that, otherwise just get the single value
-    if is_ratio:
-        meas = meas_list[0] / meas_list[1]
+            meas = Measurement.from_table(fn, array=False)
+        return_val = meas
+
     else:
-        meas = meas_list[0]
-    return meas
+        # Use the pdrtpy function convert_integrated_intensity to convert from
+        # K km/s to cgs
+        t = QTable.read(fn, format='ipac')
+        # # TODO: this is untested; not sure if t[i] returns Table-like (probably should)
+        if reg_name is not None:
+            reg_name_list = t['region']
+            reg_i = list(reg_name_list).index(reg_name)
+            t = t[reg_i] # Try to make a single-row table, not just a "Row"
+        # Create measurement from table manually so we can set the rest_freq
+        meas = Measurement(
+            data=t['data'].value, uncertainty=StdDevUncertainty(t['uncertainty'].value),
+            identifier=t['identifier'][0], restfreq=str(t['rest_freq'][0]),
+            unit=str(t['data'].unit)
+        )
+        return_val = utils.convert_integrated_intensity(meas)
+    # Modify the CO(3-2) value by the beam ratio
+    # This assumes that CO(3-2) is beam-diluted and that the area of the beam
+    # not covered by pillar sees no emission (rather than non-zero background)
+    # It's a good enough assumption to try to get something out of the CO(3-2)
+    # but it is probably only valid along threads and definitely not towards
+    # the head of P1 (towards anything larger than an APEX beam)
+    if 'co32' in line_name:
+        return_val = return_val * APEX_to_SOFIA_beam_area_ratio
+    return return_val
 
 
 def collect_all_measurements_for_region(reg_name):
     """
     Created: September 27, 2022
-    Run collect_measurements_from_tables on every supported line intensity
+    Run collect_measurement_from_tables on every supported line intensity
     """
-    supported_line_stubs = ['cii', 'co65CONV', 'FIR', '12co10CONV', '12co32'] #  , '13co32', '13co10CONV'
     result = []
-    for line in supported_line_stubs:
-        result.append(collect_measurements_from_tables(line, reg_name=reg_name))
+    for line in default_supported_line_stubs:
+        result.append(collect_measurement_from_tables(line, reg_name=reg_name))
+    # Filter out None values, which will be returned by collect_measurement_from_tables
+    # in the case that that region isn't available (CI and OI don't have full coverage)
     return result
 
 
@@ -269,10 +266,19 @@ def make_spaghetti_plot(reg_name, chisq=False):
     Make a spaghetti plot for a given region
     """
     meas_list = collect_all_measurements_for_region(reg_name)
-    for m in meas_list:
-        print(m.id, m)
-    return
-    ms = ModelSet("wk2020", z=1)
+    """
+    # TODO: the KOSMA-tau models work a little differently, and I should make sure
+    that I am working within those bounds
+
+    I think I will have to remove the overlays of intensities (says CII_158 is not supported)
+    """
+    # modelset_name = "kt2013wd01-7" # "wk2020"
+    # ms = ModelSet(modelset_name, z=1, medium='clumpy', mass=100.0)
+    modelset_name = 'wk2020'
+    ms = ModelSet(modelset_name, z=1)
+    # print(ms._supported_lines)
+    # print(ms._supported_ratios)
+    # return
     load_all_user_models(ms)
     p = LineRatioFit(ms, measurements=meas_list)
     p.run()
@@ -285,14 +291,9 @@ def make_spaghetti_plot(reg_name, chisq=False):
         lrp_plot.reduced_chisq(cmap='gray_r',norm='log',label=True,colors='white',
             legend=True,vmax=8E4,figsize=(15,10),yaxis_unit='Habing')
     else:
-        # co65_meas = [x for x in meas_list if "65" in x.id].pop()
-        # fir_meas = [x for x in meas_list if "FIR" in x.id].pop()
-        # new_meas_list = list(meas_list) + [co65_meas / fir_meas]
-        # print([x.id for x in new_meas_list])
-        # return
-        new_meas_list = [x for x in meas_list if "FIR" not in x.id]
-        lrp_plot.overlay_all_ratios(yaxis_unit="Habing", figsize=(15, 10),
-            loc='upper left', measurements=new_meas_list)
+        lrp_plot.overlay_all_ratios(yaxis_unit="Habing",
+            figsize=(15, 10), loc='upper left',
+            measurements=[x for x in meas_list if "FIR" not in x.id])
             # loc='upper left',
             # bbox_to_anchor=(1.05,0.9))
 
@@ -309,8 +310,11 @@ def make_spaghetti_plot(reg_name, chisq=False):
     radfield, radfield_unc = radfield_meas.value, radfield_meas.uncertainty.array
     lrp_plot._plt.errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
 
-    # 2022-09-28, (27 ?), 29
-    save_path = "/home/ramsey/Pictures/2022-09-29"
+    # 2022-09-28, (27 ?), 29, 10-05,6,7
+    save_path = f"/home/ramsey/Pictures/2022-10-07/{modelset_name}"
+    if not os.path.exists(save_path):
+        print("Creating directory ", save_path)
+        os.makedirs(save_path)
 
     if chisq:
         # lrp_plot._plt.subplots_adjust(right=0.6)
@@ -323,32 +327,21 @@ def make_spaghetti_plot(reg_name, chisq=False):
                 'Title': f'{reg_name} spaghetti plot'})
 
 
-def add_model():
-    """
-    Created: September 28, 2022
-    Add a model to the set and save it to FITS somwhere
-    """
-    ms = ModelSet("wk2020", z=1)
 
-    cii_fir = ms.get_model("CII_158/FIR")
-    cii_co65 = ms.get_model("CII_158/CO_65")
-    co65_fir = cii_fir / cii_co65
-    text1 = "CO (J=6-5)/FIR"
-    text2 = "CII/FIR / CII/CO65"
-    savename = "CO65_FIR"
-
-    old_model = cii_fir
-    new_model = co65_fir
-
-    new_model.header = deepcopy(old_model.header)
-    new_model.header["TITLE"] = text1
-    new_model.header["DATAMAX"] = new_model.data.max()
-    new_model.header["DATAMIN"] = new_model.data.min()
-    new_model.header["HISTORY"] = f"Computed arithmetically from {text2}"
-    new_model.header["DATE"] = utils.now()
-
-    new_model.write(os.path.join(data_dir, savename+".fits"))
-
+# line names
+# 'cii', 'co65CONV', 'FIR', '12co10CONV', '12co32', '13co32', '13co10CONV'
 
 if __name__ == "__main__":
-    make_phase_space_plot_3("cii/FIR", "12co32/12co10CONV")
+    set_supported_lines(['cii', 'co65CONV', 'FIR', '12co10CONV', '12co32'])
+    # for d in ['E', 'S', 'W']:
+    #     for i in range(2):
+    #         make_spaghetti_plot(d+'-peak', chisq=i)
+
+    # r = 'broad-line'
+    # for i in range(2):
+    #     make_spaghetti_plot(r, chisq=i)
+
+    for ns in 'NS':
+        for ew in 'EW':
+            for i in range(2):
+                make_spaghetti_plot(f'{ns}{ew}-thread', chisq=i)

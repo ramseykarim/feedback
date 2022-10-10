@@ -381,7 +381,8 @@ def simple_mom0(selected_region=0, selected_line=0):
     plt.savefig(f"/home/ramsey/Pictures/2021-08-16-work/{line_stub}_{region_name}.png", metadata={"Comment": f"{levels_stub} spaced contours; m16_deepdive.simple_mom0"})
 
 
-def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None):
+def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None,
+    convert_units=False):
     """
     Created: Aug 16, 2021
     Creating the ASCII tables for PDRT
@@ -465,7 +466,8 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
 
     # Describe the arguments to this call in one short string
     # Used for saving the table at the end
-    unique_run_identifier = "__".join(line_stub_list) + "__" + os.path.basename(reg_filename).replace('.reg', '')
+    version_stub = '' if convert_units else '_v2'
+    unique_run_identifier = "__".join(line_stub_list) + version_stub + "__" + os.path.basename(reg_filename).replace('.reg', '')
     print(unique_run_identifier)
 
     reference_filename = catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")
@@ -485,6 +487,11 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
     for line_stub in line_stub_list:
         cube_fn = cube_utils.cubefilenames[line_stub]
         cube = cps2.cutout_subcube(data_filename=cube_fn, length_scale_mult=None)
+        # # TODO: subtract CII background
+        if 'cii' in line_stub:
+            print(f"subtracting CII background ({line_stub})")
+            cii_bg_spectrum = cps2.get_cii_background()
+            cube = cube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
         channel_noise = cube_utils.onesigmas[line_stub]
         reg_coord_list = [tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1]) for reg in reg_list]
         for pix_coords, reg in zip(reg_coord_list, reg_list):
@@ -512,25 +519,30 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
             n_channels = line_bounding_indices[1]+1 - line_bounding_indices[0]
             err_integrated_intensity = channel_noise*u.K * cube_dv * np.sqrt(n_channels)
 
-            # Unit conversion
-            # Get the conversion between velocity and frequency
-            vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=u.doppler_optical(rest_freq))
-            # Frequency interval of 1 km/s (center it around 25 km/s just cause)
-            freq_interval = vel_to_freq_f(24*kms) - vel_to_freq_f(25*kms)
-            # Divide the integrated intensity by 1 km/s and convert to cgs and multiply by the frequency interval
-            def convert_Kkms_to_cgs(int_intens):
-                """
-                int(S)df = S{int(T)dV / Delta_V} * Delta_f
-                and then make sure final units are good
-                """
-                return (freq_interval * (int_intens / (1*kms)).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(rest_freq))).to(u.erg / (u.s * u.cm**2 * u.sr))
-
-            integrated_intensity_cgs = convert_Kkms_to_cgs(integrated_intensity)
-            err_integrated_intensity_cgs = convert_Kkms_to_cgs(err_integrated_intensity)
             # Add in the PDRT version of the line name
             line_ID_pdrt = cube_utils.cubeIDs_pdrt[line_stub.replace('CONV', '')]
-            # Append everything to the results list
-            result_list.append((integrated_intensity_cgs, err_integrated_intensity_cgs, line_ID_pdrt, reg_name))
+
+            if convert_units:
+                # Unit conversion
+                # Get the conversion between velocity and frequency
+                vel_to_freq_f = lambda v: v.to(u.Hz, equivalencies=u.doppler_optical(rest_freq))
+                # Frequency interval of 1 km/s (center it around 25 km/s just cause)
+                freq_interval = vel_to_freq_f(24*kms) - vel_to_freq_f(25*kms)
+                # Divide the integrated intensity by 1 km/s and convert to cgs and multiply by the frequency interval
+                def convert_Kkms_to_cgs(int_intens):
+                    """
+                    int(S)df = S{int(T)dV / Delta_V} * Delta_f
+                    and then make sure final units are good
+                    """
+                    return (freq_interval * (int_intens / (1*kms)).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(rest_freq))).to(u.erg / (u.s * u.cm**2 * u.sr))
+
+                integrated_intensity_cgs = convert_Kkms_to_cgs(integrated_intensity)
+                err_integrated_intensity_cgs = convert_Kkms_to_cgs(err_integrated_intensity)
+                # Append everything to the results list
+                result_list.append((integrated_intensity_cgs, err_integrated_intensity_cgs, line_ID_pdrt, reg_name))
+            else:
+                # Append everything to the results list, leave it in K km/s
+                result_list.append((integrated_intensity, err_integrated_intensity, line_ID_pdrt, reg_name, rest_freq.to(u.Hz)))
 
             # Now do all the plotting
             fig = plt.figure(num=1, figsize=(15,6), clear=True)
@@ -555,22 +567,26 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
             text_kwargs = dict(transform=ax_spec.transAxes, fontsize=10)
             ax_spec.text(0.05, 0.95, f"({cube.spectral_axis[line_bounding_indices[0]]:.2f}, {cube.spectral_axis[line_bounding_indices[1]]:.2f})", **text_kwargs)
             ax_spec.text(0.05, 0.85, f"{integrated_intensity:.4f}", **text_kwargs)
-            ax_spec.text(0.05, 0.75, f"{integrated_intensity_cgs:.4E}", **text_kwargs)
+            if convert_units:
+                ax_spec.text(0.05, 0.75, f"{integrated_intensity_cgs:.4E}", **text_kwargs)
             ax_spec.set_xlabel("Velocity (km/s)")
             ax_spec.set_ylabel("T (K)")
 
             plt.tight_layout()
             print(f"saving <{line_stub}_{reg_name}>")
-            fig.savefig(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/diagnostic_figs/diagnostic_{line_stub}_{reg_name}.png",
+            fig.savefig(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/diagnostic_figs/diagnostic{version_stub}_{line_stub}_{reg_name}.png",
                 metadata=catalog.utils.create_png_metadata(title="make pdrt tables diagnostic image",
                     file=__file__, func="prepare_pdrt_tables"))
             fig.clear()
 
 
     # Save data into a QTable (so don't need to specify my own units)
-    tab = QTable(list(zip(*result_list)), names=('data', 'uncertainty', 'identifier', 'region'))
+    names = ['data', 'uncertainty', 'identifier', 'region']
+    if not convert_units:
+        names.append('rest_freq')
+    tab = QTable(list(zip(*result_list)), names=names)
     tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{unique_run_identifier}.txt", format='ipac',
-        overwrite=True)
+        overwrite=False)
 
 
 def prepare_pdrt_tables_fir(reg_filename=None):
@@ -3164,4 +3180,8 @@ if __name__ == "__main__":
     # test_fitting_2G_with_2G_wrapper()
 
     # plot_selected_hcop_spectra_fits()
-    prepare_pdrt_tables_g0()
+    # prepare_pdrt_tables('12co10CONV', regions_to_do='W-peak', convert_units=False)
+    prepare_pdrt_tables('cii', convert_units=False)
+    prepare_pdrt_tables('cii', convert_units=True)
+    # prepare_pdrt_tables('co65CONV', regions_to_do='W-peak', convert_units=False)
+    # prepare_pdrt_tables('12co32', regions_to_do='W-peak', convert_units=False)

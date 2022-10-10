@@ -1,31 +1,40 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
+import os
+import datetime
 
 import scipy.constants as cst
 from scipy.special import factorial, zeta
+from scipy.interpolate import UnivariateSpline
 
 from astropy.wcs import WCS
 from astropy import units as u
 from astropy.modeling import models
 from astropy.io import fits
+from astropy.nddata.utils import Cutout2D
 
 from reproject import reproject_interp
 
 from .parse_FIR_fits import open_FIR_pickle, open_FIR_fits, herschel_path
 from . import catalog
 from . import misc_utils
+
+from .mantipython.physics import greybody, dust, instrument
 """
 Currently unknown creation date (while back though)
 
 Updated April 29, 2021 to get a L_FIR map to Maitraiyee
 I am following Goicoechea 2015's prescription for L_FIR (40-500 um)
 F[W m-2 Hz-1] = B(T) * (1 - e^-tau) * (solid angle per pixel)
+
+Updated October 7, 2022 to use the direct-calculation 70/160 method to find
+temperature and optical depth (for use in M16)
 """
 
 # Laptop directory
 # filename = "herschel/RCW49large_2p_2BAND_500grid_beta1.7.fits"; prefix='solution'
-filename = "herschel/results/M16_2p_3BAND_beta2.0.fits"; prefix='solution'
+filename = "herschel/M16_2p_3BAND_beta2.0.fits"; prefix='solution'
 # filename = "herschel/colorsoln_1.fits"; prefix=''
 filename = catalog.utils.search_for_file(filename)
 
@@ -202,6 +211,156 @@ def fir_intensity():
     plt.show()
 
 
+def fir_intensity_2():
+    """
+    October 7, 2022
+    Use the direct calculation method for 70 + 160 micron to find T, tau
+    This is the method we used for RCW 49 in the paper.
+    It will yield maps of 160 micron resolution, which is like 13ish (~11x15),
+    rather than the 250 micron resolution of like 18'' which is what I had before
+
+    per the file fit_FIR.py:
+        p70_correction = 268
+        p160_correction = 1055
+
+    Then, use the T-tau solution to integrate intensity between 40 and 500 micron
+    for use in PDRToolbox (following the method of fir_intensity())
+    """
+    # Copying this part from fir_intensity() (function above)
+    solution_path = catalog.utils.search_for_file("herschel/T-tau_colorsolution.fits")
+    with fits.open(solution_path) as hdul:
+        T_img = hdul['T'].data
+        tau_img = hdul['tau'].data
+        hdr = hdul['T'].header
+        original_w = WCS(hdr)
+    # Extract subimage centered at (XY) (2867, 1745) with width (XY) (1192, 873)
+    # try again with quarter width, lower Y
+    # Cutout2D uses XY for position and YX for size
+    center = (2867, 1745-30)
+    size = (1192//4, 873//4)
+    T_img_cutout = Cutout2D(T_img, center, size[::-1], wcs=original_w)
+    T_img = T_img_cutout.data
+    tau_img = tau_img[T_img_cutout.slices_original]
+    new_w = T_img_cutout.wcs
+
+    # plt.subplot(121, projection=new_w)
+    # plt.imshow(T_img, origin='lower', vmin=15, vmax=35)
+    # plt.subplot(122, projection=new_w)
+    # plt.imshow(np.log10(tau_img), origin='lower', vmin=-3.5, vmax=-1.5)
+    # plt.show()
+    # return
+
+    bb = models.BlackBody(T_img[:, :, np.newaxis]*u.K)
+    wl_lims = np.array([40., 500.]) * u.micron
+    nu_lims = wl_lims.to(u.Hz, equivalencies=u.spectral())
+    nu_array = np.linspace(nu_lims[1].to_value(), nu_lims[0].to_value(), 1000) * u.Hz
+    S_array = bb(nu_array[np.newaxis, np.newaxis, :])
+    # tau(nu) = tau_160 * (nu / nu_160)**2 (using beta = 2)
+    tau_array = tau_img[:, :, np.newaxis] * (nu_array[np.newaxis, np.newaxis, :] / (160*u.micron).to(u.Hz, equivalencies=u.spectral()))**2.
+    I_array = S_array * (1. - np.exp(-tau_array))
+    F_array = np.trapz(x=nu_array, y=I_array).to('erg s-1 cm-2 sr-1')
+
+    # plt.subplot(111, projection=new_w)
+    # plt.imshow(F_array.to_value(), origin='lower')
+    # plt.show()
+
+    hdr.update(new_w.to_header())
+    hdr['HISTORY'] = f"using {solution_path}"
+    hdr['HISTORY'] = f"cutout center XY {center[0]},{center[1]} size {size[0]},{size[1]}"
+    hdr['HISTORY'] = "integrated 40-500 micron beta=2"
+    hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    hdr['CREATOR'] = f"rkarim, via {__file__}.fir_intensity_2"
+    hdr['BUNIT'] = str(F_array.unit)
+    del hdr['EXTNAME']
+    hdu = fits.PrimaryHDU(data=F_array.to_value(), header=hdr)
+    hdu.writeto(os.path.join(os.path.dirname(solution_path), "M16_I_FIR_from70-160.fits"), overwrite=True)
+
+
+    calculate_T_and_tau = False # Done on October 10, 2022, saved as T-tau_colorsolution.fits
+    if calculate_T_and_tau:
+        p70_correction = 268
+        p160_correction = 1055
+
+        # Set up T vs 70/160 ratio spline model using the bandpass filters
+        # Following the code in color_temperature_comparison.ipynb
+        model_T_arr = np.arange(1, 200, 0.1) # units of K
+        # Set up PACS detectors (these use filter curves to act as detectors)
+        p70_detector, p160_detector = instrument.get_instrument([70, 160])
+        # Make output array (blue to red ratio)
+        model_bandpass_br_ratio = np.zeros_like(model_T_arr)
+        # Loop thru T array, can't use units because I didn't write mantipython with astropy.units
+        # Set optical depth to something very small (10^-8) since I can't put in zero
+        args = (-8., dust.TauOpacity(2.))
+        for i, t in enumerate(model_T_arr):
+            # # TODO: reuse Greybody
+            p70_I = p70_detector.detect(greybody.Greybody(t, *args))
+            p160_I = p160_detector.detect(greybody.Greybody(t, *args))
+            model_bandpass_br_ratio[i] = p70_I / p160_I
+        # Make spline interpolation from ratio to T
+        model_bandpass_br_spline = UnivariateSpline(model_bandpass_br_ratio, model_T_arr, s=0)
+        # This is our tool for interpolating from the ratio to T!
+
+        # Make an output array for the zero-tau 160 intensity (perfect blackbody run through the detector function)
+        zerotau_160intensity = np.zeros_like(model_T_arr)
+        args = (0, dust.TauOpacity(2.))
+        for i, t in enumerate(model_T_arr):
+            p160_I = p160_detector.detect(greybody.ThinGreybody(t, *args))
+            zerotau_160intensity[i] = p160_I
+        # Spline fit that as a function of temperature
+        zerotau_I_spline = UnivariateSpline(model_T_arr, zerotau_160intensity, s=0)
+
+        """
+        Now load the data and use it as follows:
+        T_solution = model_bandpass_br_spline(observed_70/observed_160)
+        tau_solution = observed_160 / zerotau_I_spline(T_solution)
+        """
+
+        # Path names
+        # I did the reproc160 on October 7, 2022 (previously I had only done 250)
+        pacs_obs_dir = catalog.utils.search_for_file("herschel/processed/1342218995_reproc160")
+        make_pacs_fn = lambda band : os.path.join(pacs_obs_dir, f"PACS{band}um-image-remapped-conv.fits")
+        p70_fn, p160_fn = make_pacs_fn(70), make_pacs_fn(160)
+        # Load
+        p70_img, p70_hdr = fits.getdata(p70_fn, header=True)
+        p70_img += p70_correction
+        p160_img, p160_hdr = fits.getdata(p160_fn, header=True)
+        p160_img += p160_correction
+
+        observed_br_ratio = p70_img / p160_img
+        T_solution = model_bandpass_br_spline(observed_br_ratio)
+        tau_solution = p160_img / zerotau_I_spline(T_solution)
+
+        # fig = plt.figure()
+        # axT = plt.subplot(121)
+        # im = axT.imshow(T_solution, vmin=15, vmax=35)
+        # fig.colorbar(im, ax=axT)
+        # axtau = plt.subplot(122)
+        # im = axtau.imshow(np.log10(tau_solution), vmin=-3.5, vmax=-1.5)
+        # fig.colorbar(im, ax=axtau)
+        # plt.show()
+
+        new_hdr = WCS(p70_hdr).to_header()
+        new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        new_hdr['CREATOR'] = f"rkarim, via {__file__}.fir_intensity_2"
+        new_hdr['AUTHOR'] = "Ramsey Karim"
+        new_hdr['OBJECT'] = "M16"
+        new_hdr['HISTORY'] = "Herschel PACS 70 and 160, obsID 1342218995, 160 grid and beam"
+        new_hdr['HISTORY'] = f"Zero-point offsets: {p70_correction} (70), {p160_correction} (160)"
+        new_hdr['HISTORY'] = "Zero-point offsets from fit_FIR.py, calculated long ago"
+        new_hdr['COMMENT'] = "T,tau calc'd using bandpasses; see color_temperature_comparison.ipynb"
+        hdul = fits.HDUList([fits.PrimaryHDU(),
+            fits.ImageHDU(data=T_solution, header=new_hdr.copy()),
+            fits.ImageHDU(data=tau_solution, header=new_hdr.copy())])
+        hdul[1].header['EXTNAME'] = 'T'
+        hdul[1].header['BUNIT'] = 'K'
+        hdul[2].header['EXTNAME'] = 'tau'
+        hdul[2].header['BUNIT'] = 'optical depth at 160 micron'
+        savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution.fits")
+        print("SAVING TO", savepath)
+        hdul.writeto(savepath)
+
+
+
 def check_I_FIR_G0():
     I_FIR_filename = catalog.utils.search_for_file("herschel/results/m16-I_FIR.fits")
     I_FIR, hdr = fits.getdata(I_FIR_filename, header=True)
@@ -216,4 +375,5 @@ def check_I_FIR_G0():
 if __name__ == "__main__":
     # fir_intensity()
     # check_I_FIR_G0()
-    make_plot_g0()
+    # make_plot_g0()
+    fir_intensity_2()
