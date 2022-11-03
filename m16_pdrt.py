@@ -10,6 +10,7 @@ in m16_deepdive.prepare_pdrt_tables_3
 __author__ = "Ramsey Karim"
 
 import os
+import numpy as np
 
 from pdrtpy.modelset import ModelSet
 from pdrtpy.plot.modelplot import ModelPlot
@@ -39,6 +40,70 @@ APEX_to_SOFIA_beam_area_ratio = 1.54853702
 # expect that they're good for all the others.
 use_my_unit_conversions = True
 
+# For use when we do not have access to tables or FITS headers; values in Hz
+line_frequencies = {'cii': 0.1900536900000E+13, '12co10': 1.15271204000E+11, '12co32': 0.3457959899000E+12, 'co65': 0.6914730000000E+12,}
+# Copy of the dict in cube_utils.py; not importing anything to this file, and I only need a few of these. Rarely used except when I'm using the Gaussian-modeled intensities
+cubeIDs_pdrt = {
+    'cii': 'CII_158',
+    '12co10': 'CO_10', '12co32': 'CO_32', 'co65': 'CO_65', '13co10': '13CO_10', '13co32': '13CO_32',
+    'oi': 'OI_63', 'ci': 'CI_609',
+}
+
+"""
+A collection of manually entered Measurements; these are primarily from the
+Gaussian-fitted line profiles, so each Measurement represents not a directly
+measured integrated intensity, but one derived from modeled Gaussian parameters.
+Multiple Gaussians were fitted to each line profile, so the solutions are not
+necessarily unique, but may be interesting in some cases.
+These are taken from the spreadsheet line_info_2.ods; the image model_fit_table_viz.png
+is also made from this table and is a good way to vizualize all these fitted components.
+All values in K km/s; will need to be converted using line frequencies (see line_frequencies dictionary)
+"""
+manually_entered_observations = {
+    # First broad line entry is an approximation of the blue component; CII and CO65 are blue, CO10 and CO32 are green
+    # Second broad line entry is red
+    'broad-line': (
+        (('cii', 67.4009783393804), ('12co10', 60.6854705288165), ('12co32', 21.9329974030212), ('co65', 12.8810613776738)),
+        (('cii', 28.0278640527865), ('12co10', 55.165875068079), ('12co32', 16.2479644761581), ('co65', 16.2249034960315)),
+    ),
+    # First E-peak component is blue; all components are blue
+    # Second E-peak component is red
+    'E-peak': (
+        (('cii', 23.7538121817132), ('12co10', 29.1646199753317), ('12co32', 15.1776342028907), ('co65', 5.7604824379295)),
+        (('cii', 41.1839025521873), ('12co10', 96.6994522645774), ('12co32', 54.6219367324841), ('co65', 20.4555906979537))
+    ),
+    # 'S-peak': ()
+}
+def make_measurement_list_from_manual_entry(region_stub_with_index):
+    """
+    October 12, 2022
+    Use the dictionary manually_entered_observations to create a Measurement
+    :returns: single-pixel Measurement
+    """
+    # Parse the region stub with index; like 'broad-line-1' or 'broad-line-2' (1-indexed)
+    split_region_stub_with_index = region_stub_with_index.split('-')
+    region_stub = '-'.join(split_region_stub_with_index[:-1])
+    index = int(split_region_stub_with_index[-1]) - 1 # transform 1-index to 0-index
+    print(f"Loading manually entered data for {region_stub} # {index}:")
+    # Get the tuple of length number_of_lines
+    # Each value into the tuple is a 2-tuple of (line_stub, integrated_intensity_Kkms)
+    tuple_of_info = manually_entered_observations[region_stub][index]
+    print(tuple_of_info)
+    meas_list = []
+    # Iterate thru and fill meas_list with one Measurement from each line
+    for line_stub, int_intens_kkms in tuple_of_info:
+        # Get rest_freq from the dictionary
+        rest_freq = line_frequencies[line_stub] * u.Hz
+        # Initialize the Measurement, assume a 10% uncertainty (for now at least)
+        meas = Measurement(
+            data=int_intens_kkms, uncertainty=StdDevUncertainty(int_intens_kkms/10.), # 10% uncertainty (total guess, not scientifically estimated)
+            identifier=cubeIDs_pdrt[line_stub], restfreq=str(rest_freq),
+            unit=u.K*u.km/u.s
+        )
+        meas_list.append(utils.convert_integrated_intensity(meas))
+    return meas_list
+
+
 def get_measurement_filename(line_stub):
     """
     Late September/early October 2022
@@ -46,7 +111,8 @@ def get_measurement_filename(line_stub):
     If I switch to a different set of tables (e.g. from P1a to the other pillars),
     I can just change that here
     """
-    default_fn = os.path.join(data_dir, f"{line_stub}__pillar1_pointsofinterest_v3.txt")
+    # default_fn = os.path.join(data_dir, f"{line_stub}__pillar1_pointsofinterest_v3.txt")
+    default_fn = os.path.join(data_dir, f"{line_stub}__pillar123_pointsofinterest_v1.txt")
     if use_my_unit_conversions:
         # Use the tables which I already converted to cgs
         # This should be the most common behavior, since the conversions are fine
@@ -61,7 +127,7 @@ def get_measurement_filename(line_stub):
 # Models that I created from existing models and saved as FITS
 user_models = {'CO_65/FIR': ('CO65_FIR.fits', "CO(J=6-5) / I$_{FIR}$")}
 
-default_supported_line_stubs = {'cii', 'co65CONV', 'FIR', '12co10CONV'} #  '12co32', '13co32', '13co10CONV'
+default_supported_line_stubs = {'cii', 'oiCONV', 'co65CONV', 'FIR', '12co10CONV'} #  '12co32', '13co32', '13co10CONV'
 def set_supported_lines(line_name_list):
     """
     October 7, 2022
@@ -209,8 +275,10 @@ def collect_measurement_from_tables(line_name, reg_name=None):
     # It's a good enough assumption to try to get something out of the CO(3-2)
     # but it is probably only valid along threads and definitely not towards
     # the head of P1 (towards anything larger than an APEX beam)
+
     if 'co32' in line_name:
         return_val = return_val * APEX_to_SOFIA_beam_area_ratio
+
     return return_val
 
 
@@ -224,6 +292,7 @@ def collect_all_measurements_for_region(reg_name):
         result.append(collect_measurement_from_tables(line, reg_name=reg_name))
     # Filter out None values, which will be returned by collect_measurement_from_tables
     # in the case that that region isn't available (CI and OI don't have full coverage)
+    result = [x for x in result if not np.isnan(x.data)]
     return result
 
 
@@ -248,6 +317,9 @@ def get_g0_values_at_locations(reg_name):
         sub-dictionaries keys 'data', 'uncertainty', 'region'
         in a tuple ordered (Herschel, Stars)
     """
+    if reg_name[-1].isdigit() and reg_name[-2]=='-':
+        # Assume we're doing something like 'broad-line-1' and get rid of '-1'
+        reg_name = reg_name[:-2]
     fns = ["uv_m16_repro_CII", "g0_hillenbrand_stars_fuvgt4-5_ltxarcmin"]
     result = {}
     for raw_fn in fns:
@@ -259,20 +331,31 @@ def get_g0_values_at_locations(reg_name):
     return result
 
 
-def make_spaghetti_plot(reg_name, chisq=False):
+def make_spaghetti_plot(reg_name, plot_setting=0):
     """
     Created: September 27, 2022
     Following the notebook: https://github.com/mpound/pdrtpy-nb/blob/master/notebooks/PDRT_Example_Find_n_G0_Single_Pixel.ipynb
     Make a spaghetti plot for a given region
+    :param plot_setting: the one knob to turn. values are as follows:
+        0: regular spaghetti plot with ratios AND intensities
+        1: just the chi squared plot
+        2: spaghetti plot with only ratios
+        3: spaghetti plot with only intensities
     """
-    meas_list = collect_all_measurements_for_region(reg_name)
+    if reg_name[-1].isdigit() and reg_name[-2]=='-':
+        # Use the manually entered data for broad-line and E-peak
+        meas_list = make_measurement_list_from_manual_entry(reg_name)
+    else:
+        # Use the regular observed tables
+        meas_list = collect_all_measurements_for_region(reg_name)
+
     """
     # TODO: the KOSMA-tau models work a little differently, and I should make sure
     that I am working within those bounds
 
     I think I will have to remove the overlays of intensities (says CII_158 is not supported)
     """
-    # modelset_name = "kt2013wd01-7" # "wk2020"
+    # modelset_name = "kt2013wd01-7"
     # ms = ModelSet(modelset_name, z=1, medium='clumpy', mass=100.0)
     modelset_name = 'wk2020'
     ms = ModelSet(modelset_name, z=1)
@@ -282,47 +365,76 @@ def make_spaghetti_plot(reg_name, chisq=False):
     load_all_user_models(ms)
     p = LineRatioFit(ms, measurements=meas_list)
     p.run()
-    lrp_plot = LineRatioPlot(p)
+
+    if plot_setting == 3:
+        plot = ModelPlot(ms)
+    else:
+        plot = LineRatioPlot(p)
 
     # add to the default color cycle since I have lots of lines/ratios. Must be done before I call the overlay plot function
-    lrp_plot._CB_color_cycle += ['#66ffb3', '#ff8000', '#e600e6', '#8533ff', '#999900']
+    plot._CB_color_cycle += ['#66ffb3', '#ff8000', '#e600e6', '#8533ff', '#999900']
 
-    if chisq:
-        lrp_plot.reduced_chisq(cmap='gray_r',norm='log',label=True,colors='white',
+    # make the list in case we need it
+    plottable_intensities = [x for x in meas_list if "FIR" not in x.id]
+
+    """
+    Handle the plot setting; this is which type of plot we want
+    chi squared, or overlay of either ratios, intensities, or both
+    """
+    kwargs = {'figsize': (15, 10), 'loc': 'upper left', 'yaxis_unit': "Habing"}
+    # chi squared only
+    if plot_setting == 1:
+        plot.reduced_chisq(cmap='gray_r',norm='log',label=True,colors='white',
             legend=True,vmax=8E4,figsize=(15,10),yaxis_unit='Habing')
+    # includes ratios
+    elif plot_setting%2 == 0:
+        if plot_setting == 0:
+            # yes intensities
+            kwargs['measurements'] = plottable_intensities
+        plot.overlay_all_ratios(**kwargs)
+    # intensities only
+    elif plot_setting == 3:
+        plot.overlay(measurements=plottable_intensities, **kwargs)
     else:
-        lrp_plot.overlay_all_ratios(yaxis_unit="Habing",
-            figsize=(15, 10), loc='upper left',
-            measurements=[x for x in meas_list if "FIR" not in x.id])
-            # loc='upper left',
-            # bbox_to_anchor=(1.05,0.9))
+        raise RuntimeError(f"unsupported plot setting: {plot_setting}")
 
     g0_dict = get_g0_values_at_locations(reg_name)
     g0_plot_params = {'Stars_G0': ('#1f77b4', 'bottom'), 'Herschel_G0': ('#ff7f0e', 'top')}
     for g0_name in g0_dict:
         color, va = g0_plot_params[g0_name]
-        lrp_plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
-        lrp_plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
+        plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
+        plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
 
 
     dens, dens_unc = p.density.value, p.density.uncertainty.array
     radfield_meas = utils.to(utils.habing_unit, p.radiation_field)
     radfield, radfield_unc = radfield_meas.value, radfield_meas.uncertainty.array
-    lrp_plot._plt.errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
+    plot._plt.errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
 
-    # 2022-09-28, (27 ?), 29, 10-05,6,7
-    save_path = f"/home/ramsey/Pictures/2022-10-07/{modelset_name}"
+    # set x and y limits because we know what they should probably be
+    plot._plt.xlim([10, 1e7])
+    plot._plt.ylim([0.3, 3e6])
+
+    # 2022-09-28, (27 ?), 29, 10-05,6,7,11,12,13,14,17
+    save_path = f"/home/ramsey/Pictures/2022-10-17" # removed modelset name because we won't do anymore kosma-tau models
     if not os.path.exists(save_path):
         print("Creating directory ", save_path)
         os.makedirs(save_path)
 
-    if chisq:
-        # lrp_plot._plt.subplots_adjust(right=0.6)
-        lrp_plot.savefig(os.path.join(save_path, f"chisq_{reg_name}.png"),
+    if plot_setting == 1:
+        # plot._plt.subplots_adjust(right=0.6)
+        plot.savefig(os.path.join(save_path, f"chisq_{reg_name}.png"),
             metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
                 'Title': f'{reg_name} chisq plot'})
     else:
-        lrp_plot.savefig(os.path.join(save_path, f"spaghetti_{reg_name}.png"),
+        setting_stub = ''
+        if plot_setting in [0, 2]:
+            setting_stub += 'ratio'
+        if plot_setting in [0, 3]:
+            setting_stub += 'intens'
+        if setting_stub:
+            setting_stub = '_' + setting_stub
+        plot.savefig(os.path.join(save_path, f"spaghetti{setting_stub}_{reg_name}.png"),
             metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_spaghetti_plot',
                 'Title': f'{reg_name} spaghetti plot'})
 
@@ -332,16 +444,28 @@ def make_spaghetti_plot(reg_name, chisq=False):
 # 'cii', 'co65CONV', 'FIR', '12co10CONV', '12co32', '13co32', '13co10CONV'
 
 if __name__ == "__main__":
-    set_supported_lines(['cii', 'co65CONV', 'FIR', '12co10CONV', '12co32'])
+    set_supported_lines(['cii', 'oiCONV', 'ciCONV', 'co65CONV', 'FIR', '12co10CONV', '12co32'])
     # for d in ['E', 'S', 'W']:
-    #     for i in range(2):
-    #         make_spaghetti_plot(d+'-peak', chisq=i)
+    #     for i in range(0, 4):
+    #         make_spaghetti_plot(d+'-peak', plot_setting=i)
+
+    reg_name_list = ['Eastern-Horn', 'Western-Horn', 'Inter-horn']
+    for reg_name in reg_name_list:
+        for i in range(1, 4):
+            make_spaghetti_plot(reg_name, plot_setting=i)
 
     # r = 'broad-line'
-    # for i in range(2):
-    #     make_spaghetti_plot(r, chisq=i)
+    # for i in range(0, 4):
+    #     make_spaghetti_plot(r, plot_setting=i)
 
-    for ns in 'NS':
-        for ew in 'EW':
-            for i in range(2):
-                make_spaghetti_plot(f'{ns}{ew}-thread', chisq=i)
+    # for ns in 'NS':
+    #     for ew in 'EW':
+    #         for i in range(1, 4):
+    #             make_spaghetti_plot(f'{ns}{ew}-thread', plot_setting=i)
+
+    # Use the manually entered observations from the Gaussian modeling adventure
+    # make_spaghetti_plot('broad-line-1', chisq=0)
+    # for idx in [1, 2]:
+    #     for reg_name in manually_entered_observations.keys():
+    #         for i in range(2):
+    #             make_spaghetti_plot(f"{reg_name}-{idx}", chisq=i)

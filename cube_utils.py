@@ -43,6 +43,7 @@ onesigmas = { # all values in K. These are the 1sigma noise levels, which contou
     '12co32': 0.69, '13co32': 0.62, # checked August 18, 2022; I wonder if these should be the same
     'n2hp': 0.56, 'n2hpCONV': 0.24, # Finally checked these on April 25 and 26, 2022
     'cs': 0.60, 'csCONV': 0.24, # Both cs and n2hp CONV are 0.24, it's not just copy-paste
+    'oiCONV': 0.45, 'ciCONV': 0.53, # checked October 11, 2022; the OI was by eye since the baselines wobble around a lot and make the median estimate a lot higher (0.76). 0.45 is a little generous (high), but should be ok
 }
 
 cubenames = {
@@ -57,6 +58,7 @@ cubenames = {
     '12co32': "$^{12}$CO(3-2)", '13co32': "$^{13}$CO(3-2)",
     'n2hp': 'N$_2$H+(1-0)', 'n2hpCONV': 'N$_2$H+(1-0) (CII beam)',
     'cs': 'CS(2-1)', 'csCONV': 'CS(2-1) (CII beam)',
+    'oiCONV': '[O I] (CII beam)', 'ciCONV': '[C I] (CII beam)'
 }
 
 
@@ -73,13 +75,13 @@ cubefilenames = {
     'c18o10': "bima/M16.BIMA.c18o.cm.SMOOTH.fits", 'c18o10CONV': "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits",
     'co65': "apex/M16_CO6-5.fits", 'co65CONV': "apex/M16_CO6-5.SOFIAbeam.fits",
     '12co32': "apex/M16_12CO3-2_truncated.fits", '13co32': "apex/M16_13CO3-2_truncated.fits", # spectra trimmed to approx. CII limits
-
+    'oiCONV': "sofia/m16_OI_63.SMOOTH.SOFIAbeam.fits", 'ciCONV': "apex/M16_CI.SMOOTH.SOFIAbeam.fits",
 }
 
 cubeIDs_pdrt = {
     'cii': 'CII_158',
-    '12co10': 'CO_10', '12co32': 'CO_32', 'co65': 'CO_65', '13co10': '13CO_10', '13co32': '13CO_32'
-
+    '12co10': 'CO_10', '12co32': 'CO_32', 'co65': 'CO_65', '13co10': '13CO_10', '13co32': '13CO_32',
+    'oi': 'OI_63', 'ci': 'CI_609',
 }
 def get_pdrt_cubeID(line_stub):
     line_stub = line_stub.replace('CONV', '').replace('APEX', '')

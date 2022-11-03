@@ -476,17 +476,26 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
     ref_wcs = WCS(ref_hdr)
     plot_ref_img = lambda ax : ax.imshow(ref_img, origin='lower', cmap='Greys_r', vmin=0.1, vmax=0.6)
 
+    preset_search_bounds = {
+        # More broad bounds just for a spectral_slab within which a search for the line is made, not  meant to be the final line integration bounds (like preset_bounds is)
+        'oiCONV': (15, 35), 'ciCONV': (15, 35),
+    }
+
     preset_bounds = {
         # All co10 entries are in reverse order because the spectral axis is reversed (high-to-low)
         '12co10CONV-broad-line': (None, 21), '12co10CONV-E-peak': (27.5, None), '12co10CONV-NE-thread': (None, 21), '12co10CONV-NW-thread': (27.5, None),
         '12co10CONV-SE-thread': (27.5, 23), '12co10CONV-S-peak': (27.5, None), '12co10CONV-SW-thread': (27, None), '12co10CONV-W-peak': (27.5, 21),
         '13co10CONV-SW-thread': (24.5, 27), '12co32-E-peak': (None, 27.5), '12co32-W-peak': (None, 27.5), '12co32-SW-thread': (None, 27.5), '12co32-S-peak': (None, 27.5), '12co32-E-peak': (None, 27.5), '12co32-SE-thread': (None, 27.5), '12co32-NW-thread': (None, 27.5), '12co32-E-peak': (None, 27.5),
+        '12co10CONV-Western-Horn': (27, None), '12co10CONV-Eastern-Horn': (27, None), '12co10CONV-Inter-horn': (27, None), '12co10CONV-Shared-Base-Mid': (None, 20), '12co10CONV-Shared-Base-W': (26, 18),
+        '12co32-Eastern-Horn': (23, 27),
     }
 
     result_list = []
     for line_stub in line_stub_list:
         cube_fn = cube_utils.cubefilenames[line_stub]
         cube = cps2.cutout_subcube(data_filename=cube_fn, length_scale_mult=None)
+        if line_stub in preset_search_bounds:
+            cube = cube.spectral_slab(preset_search_bounds[line_stub][0]*kms, preset_search_bounds[line_stub][1]*kms)
         # # TODO: subtract CII background
         if 'cii' in line_stub:
             print(f"subtracting CII background ({line_stub})")
@@ -500,24 +509,36 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
             if (regions_to_do is not None) and (reg_name not in regions_to_do):
                 # If we are specifying only SOME regions, and this is NOT one of them, skip!
                 continue
-            spectrum = cube[(slice(None), *pix_coords)]
+            try:
+                spectrum = cube[(slice(None), *pix_coords)]
+            except IndexError:
+                print("Shape", cube.shape[1:], "Pixel coord", pix_coords, "; pixel out of bounds")
+                spectrum = np.full(cube.shape[0], np.nan) * (u.K * kms)
             rest_freq = cube.header['RESTFRQ'] * u.Hz
-            # Make the 1sigma mask for line finding
-            mask_1sigma = spectrum.to_value() > channel_noise
-            line_bounding_indices = list(misc_utils.identify_longest_run(mask_1sigma))
-            preset_key = f"{line_stub}-{reg_name}"
-            if preset_key in preset_bounds:
-                for idx, vel in enumerate(preset_bounds[preset_key]):
-                    if vel:
-                        line_bounding_indices[idx] = cube.closest_spectral_channel(vel*kms)
-            line_bounding_indices = tuple(line_bounding_indices)
-            # This indexing trick cube[:, x:x+1, y:y+1].moment0()[0,0] lets us use the moment function on a single 1D spectrum
-            integrated_intensity = cube[slice_from(line_bounding_indices), thin_slice_from(pix_coords[0]), thin_slice_from(pix_coords[1])].moment0()[0, 0]
 
-            # Uncertainty calculation
-            cube_dv = np.abs(np.diff(cube.spectral_axis[:2]))[0].to(kms)
-            n_channels = line_bounding_indices[1]+1 - line_bounding_indices[0]
-            err_integrated_intensity = channel_noise*u.K * cube_dv * np.sqrt(n_channels)
+            # Check if pixel is valid (whether it's in the observed area or not)
+            if not np.all(np.isnan(spectrum)): # if spectrum has SOME valid values
+                # pixel is valid, not all NaNs
+                # Make the 1sigma mask for line finding
+                mask_1sigma = spectrum.to_value() > channel_noise
+                line_bounding_indices = list(misc_utils.identify_longest_run(mask_1sigma))
+                preset_key = f"{line_stub}-{reg_name}"
+                if preset_key in preset_bounds:
+                    for idx, vel in enumerate(preset_bounds[preset_key]):
+                        if vel:
+                            line_bounding_indices[idx] = cube.closest_spectral_channel(vel*kms)
+                line_bounding_indices = tuple(line_bounding_indices)
+                # This indexing trick cube[:, x:x+1, y:y+1].moment0()[0,0] lets us use the moment function on a single 1D spectrum
+                integrated_intensity = cube[slice_from(line_bounding_indices), thin_slice_from(pix_coords[0]), thin_slice_from(pix_coords[1])].moment0()[0, 0]
+
+                # Uncertainty calculation
+                cube_dv = np.abs(np.diff(cube.spectral_axis[:2]))[0].to(kms)
+                n_channels = line_bounding_indices[1]+1 - line_bounding_indices[0]
+                err_integrated_intensity = channel_noise*u.K * cube_dv * np.sqrt(n_channels)
+            else:
+                # pixel is invalid, spectrum all NaNs. because regions falls outside of observed area in this line
+                integrated_intensity = np.nan * u.K * kms
+                err_integrated_intensity = np.nan * u.K * kms
 
             # Add in the PDRT version of the line name
             line_ID_pdrt = cube_utils.cubeIDs_pdrt[line_stub.replace('CONV', '')]
@@ -557,15 +578,21 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
             ax_spec.plot(cube.spectral_axis.to_value(), spectrum, color=marcs_colors[0])
             for sign in (-1, 1):
                 ax_spec.axhline(channel_noise*sign, color='grey', linestyle='--', alpha=0.4)
-            for bounding_index in line_bounding_indices:
-                ax_spec.axvline(cube.spectral_axis.to_value()[bounding_index], color='k', alpha=0.6)
 
-            ax_spec.fill_between(cube.spectral_axis.to_value(), mask_1sigma.astype(float)*channel_noise*2, color='pink', alpha=0.3)
+            text_kwargs = dict(transform=ax_spec.transAxes, fontsize=10)
+
+            # Some things to only plot if it's not a NaN spectrum
+            if np.isfinite(integrated_intensity_cgs.to_value()):
+                # Mark integration range
+                for bounding_index in line_bounding_indices:
+                    ax_spec.axvline(cube.spectral_axis.to_value()[bounding_index], color='k', alpha=0.6)
+                # Mark where data exceeds noise level
+                ax_spec.fill_between(cube.spectral_axis.to_value(), mask_1sigma.astype(float)*channel_noise*2, color='pink', alpha=0.3)
+
+                ax_spec.set_title(f"{line_stub} {rest_freq:.2E} ({line_bounding_indices[0]}, {line_bounding_indices[1]})")
+                ax_spec.text(0.05, 0.95, f"({cube.spectral_axis[line_bounding_indices[0]]:.2f}, {cube.spectral_axis[line_bounding_indices[1]]:.2f})", **text_kwargs)
 
             ax_img.set_title(f"{reg_name}")
-            ax_spec.set_title(f"{line_stub} {rest_freq:.2E} ({line_bounding_indices[0]}, {line_bounding_indices[1]})")
-            text_kwargs = dict(transform=ax_spec.transAxes, fontsize=10)
-            ax_spec.text(0.05, 0.95, f"({cube.spectral_axis[line_bounding_indices[0]]:.2f}, {cube.spectral_axis[line_bounding_indices[1]]:.2f})", **text_kwargs)
             ax_spec.text(0.05, 0.85, f"{integrated_intensity:.4f}", **text_kwargs)
             if convert_units:
                 ax_spec.text(0.05, 0.75, f"{integrated_intensity_cgs:.4E}", **text_kwargs)
@@ -578,7 +605,6 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
                 metadata=catalog.utils.create_png_metadata(title="make pdrt tables diagnostic image",
                     file=__file__, func="prepare_pdrt_tables"))
             fig.clear()
-
 
     # Save data into a QTable (so don't need to specify my own units)
     names = ['data', 'uncertainty', 'identifier', 'region']
@@ -605,14 +631,16 @@ def prepare_pdrt_tables_fir(reg_filename=None):
         reg_filename = region_filenames[reg_filename]
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename))
 
-    fir_img, fir_hdr = fits.getdata(catalog.utils.search_for_file("herschel/m16-I_FIR.fits"), header=True)
+    # FIR filename, old one is "herschel/m16-I_FIR.fits" from 2021, new one was made Oct 2022
+    fir_fn_short = "herschel/M16_I_FIR_from70-160.fits" # better resolution, like 13'' instead of 18''
+    fir_img, fir_hdr = fits.getdata(catalog.utils.search_for_file(fir_fn_short), header=True)
     fir_wcs = WCS(fir_hdr)
     reg_coord_list = [tuple(round(x) for x in reg.to_pixel(fir_wcs).center.xy[::-1]) for reg in reg_list]
 
     value_list = [fir_img[i, j] for (i, j) in reg_coord_list]
     uncertainty_list = [10]*len(value_list)
     id_list = ['FIR']*len(value_list)
-    reg_name_list = [reg.meta['label'].replace(' ', '') for reg in reg_list]
+    reg_name_list = [reg.meta['label'].replace(' ', '-') for reg in reg_list]
 
 
     fig = plt.figure(figsize=(15, 15))
@@ -623,15 +651,16 @@ def prepare_pdrt_tables_fir(reg_filename=None):
     for reg_coord in reg_coord_list:
         ax.plot([reg_coord[1]], [reg_coord[0]], '+', color='r')
 
-    fig.savefig(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/diagnostic_figs/diagnostic_FIR.png",
-        metadata=catalog.utils.create_png_metadata(title="make pdrt tables diagnostic image",
+    version_stub = ""
+    fig.savefig(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/diagnostic_figs/diagnostic_FIR{version_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"from {fir_fn_short}",
             file=__file__, func="prepare_pdrt_tables_fir"))
 
     unique_run_identifier = "FIR__" + os.path.basename(reg_filename).replace('.reg', '')
 
     # Save data into a Table (put units in as dictionary)
     tab = Table([value_list, uncertainty_list, id_list, reg_name_list], names=('data', 'uncertainty', 'identifier', 'region'), units={'data': fir_hdr['BUNIT'], 'uncertainty': '%'})
-    tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{unique_run_identifier}.txt", format='ipac')
+    tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{unique_run_identifier}{version_stub}.txt", format='ipac')
 
 
 def prepare_pdrt_tables_g0(reg_filename=None):
@@ -649,7 +678,7 @@ def prepare_pdrt_tables_g0(reg_filename=None):
     if isinstance(reg_filename, int):
         reg_filename = region_filenames[reg_filename]
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename))
-    reg_name_list = [reg.meta['label'].replace(' ', '') for reg in reg_list]
+    reg_name_list = [reg.meta['label'].replace(' ', '-') for reg in reg_list]
 
     data_dir = "/home/ramsey/Documents/Research/Feedback/m16_data"
     herschel_uv_fn = "herschel/uv_m16_repro_CII.fits"
@@ -1098,9 +1127,12 @@ def setup_fitting_defaults(pillar):
     if pillar == 1:
         reg_filename_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     elif pillar == 2:
-        reg_filename_short = "catalogs/pillar2_pointsofinterest.reg"
+        reg_filename_short = "catalogs/pillar2_pointsofinterest_v2.reg"
     elif pillar == 3:
         reg_filename_short = "catalogs/pillar3_pointsofinterest.reg"
+    elif pillar == '1b':
+        reg_filename_short = "catalogs/pillar123_pointsofinterest_v1.reg"
+
     utils_dict['reg_filename_short'] = reg_filename_short
 
     utils_dict['spectrum_ylims'] = {
@@ -1122,6 +1154,8 @@ def setup_fitting_defaults(pillar):
         vel_lims = (21, 24)
     elif pillar == 3:
         vel_lims = (21, 24)
+    elif pillar == '1b':
+        vel_lims = (20, 27)
     utils_dict['vel_lims'] = vel_lims
 
     img_vmin = { # these are all for 1 km/s moment, so multiply by km/s width of moment
@@ -1151,19 +1185,25 @@ def setup_fitting_defaults(pillar):
         cutout_args = dict(length_scale_mult=3, reg_filename='catalogs/pillar2_across.reg', reg_index=2)
     elif pillar == 3:
         cutout_args = dict(length_scale_mult=1.3, reg_filename='catalogs/parallelpillars_2.reg', reg_index=5)
+    elif pillar == '1b':
+        cutout_args = dict(length_scale_mult=1.3, reg_filename='catalogs/across_all_pillars.reg', reg_index=4) # cut across shared base
     utils_dict['cutout_args'] = cutout_args
 
     def trim_cube(line_name, cube):
         if line_name.replace('CONV', '') in ('hcn', '13co10'):
             # Get rid of satellite lines and negatives
+            # Satellite line correction depends on the pillar, because it's a constant velocity offset from the main line
             full_cube = cube
             if line_name.replace('CONV', '') == 'hcn':
-                lo_lim = [None, 20, 17, 17][pillar]
+                lo_lim = [None, 20, 17, 17][pillar if isinstance(pillar, int) else 1]
+                hi_lim = [None, 27.5, 25.5, 25.5][pillar if isinstance(pillar, int) else 1]
             else:
                 lo_lim = 17
-            cube = cube.spectral_slab(lo_lim*kms, 27.5*kms)
+                hi_lim = 27.5
+            cube = cube.spectral_slab(lo_lim*kms, hi_lim*kms)
         elif line_name.replace('CONV', '') in ('12co10', '12co32'):
             # Get rid of the redshifted feature
+            # This velocity does not depend on which pillar, because the feature is at a mostly fixed velocity
             full_cube = cube
             cube = cube.spectral_slab(17*kms, 27*kms)
         else:
@@ -1186,6 +1226,8 @@ def setup_fitting_defaults(pillar):
         velocity_gridline_range = (18, 24)
     elif pillar == 3:
         velocity_gridline_range = (18, 24)
+    elif pillar == '1b':
+        velocity_gridline_range = (20, 27)
     utils_dict['velocity_gridline_range'] = velocity_gridline_range
 
     return utils_dict
@@ -1267,7 +1309,7 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
         1: N, 2: E-mid-N, 3: W-mid-N
         4: E-mid-S, 5: W-mid-S
         6: E-W, 7: W-S, 8: S
-        9: ALT-North, 10: ALT-South
+        9: Head, 10: Mid-pillar Feature
         """
         if select == 0:
             selected_region_list = [sky_regions[x-1] for x in [1, 2, 3]]
@@ -1275,12 +1317,26 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
             selected_region_list = [sky_regions[x-1] for x in [4, 5, 6, 7]]
         elif select == 2:
             selected_region_list = [sky_regions[x-1] for x in [8, 9, 10]]
+        elif select == 'head':
+            selected_region_list = [sky_regions[x-1] for x in [1, 9, 2, 3]]
     elif pillar == 3:
         """
         Order is N, S, E, Center
         I probably want N Center E S
         """
         selected_region_list = [sky_regions[x-1] for x in [1, 4, 3, 2]]
+
+    elif pillar == '1b':
+        """
+        Order is:
+        E Horn, W Horn, Inter Horn (0, 1, 2)
+        Shared Base E, Mid, W (3, 4, 5)
+        P2, P3, Shelf (not using these much)
+        """
+        if select == 0: # Horns
+            selected_region_list = [sky_regions[x] for x in [0, 1, 2]]
+        elif select == 1: # Shared Base
+            selected_region_list = [sky_regions[x] for x in [3, 4, 5]]
     if len(selected_region_list) > 1:
         pixel_name = "-and-".join([reg.meta['label'].replace(" ", '-') for reg in selected_region_list])
     else:
@@ -1340,6 +1396,12 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     elif pillar == 3:
         default_mean = 22.
         mean_bounds = (18, 24)
+    elif pillar == '1b':
+        if select == 0:
+            default_mean = 25.
+        else:
+            default_mean = 23.5
+        mean_bounds = (21, 26)
 
     stddev_hcop = 0.47
     g0 = cps2.models.Gaussian1D(amplitude=7, mean=default_mean, stddev=stddev_hcop,
@@ -1498,8 +1560,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
     # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03, 2022-05-19,
-    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24, 2022-09-08,12
-    savename = f"/home/ramsey/Pictures/2022-09-12/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
+    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24, 2022-09-08,12, 2022-10-29,31, 2022-11-01
+    savename = f"/home/ramsey/Pictures/2022-11-01/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -1611,6 +1673,10 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         # 'cii-NE-thread-2': {'m1': 23.5, 'm2': 25.6, 'm2f': False, 's1': 0.8},
         'cii-NE-thread-2': {'m1': 23.46, 'm1f': True, 'm2': 25.61, 'm2f': True, 's1': 0.8}, # based on 12CO10 towards the same location
         'cii-SE-thread-3': {'m1': 22.5, 'm1b': (22, 22.7), 'a1': 3, 'a1b': (1, 5), 'm2': 25.6, 'm2b': (25.5, 25.75), 'm3': 28.17, 'm3b': (27.5, 29)},
+
+        # P1b
+        '12co32-Shared-Base-Mid-2': {'m1': 22.2, 'm2': 24.6, 'a1': 17.5, 'a2': 17.5, 's1': 1},
+        '13co32-Shared-Base-Mid-2': {'m1': 22.2, 'm2': 24.6, 'a1': 17.5, 'a2': 17.5, 's1': 1},
     }
     def parse_and_assign_saved_params(model):
         key = f"{line_stub}-{pixel_name}-{n_components}"
@@ -1738,8 +1804,8 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
         fixedstd_stub = ''
         tiestd_stub = f"_untiedstd" if not tiestd else ''
     fixedmean_stub = f"_fixedmean" if fixedmean else ''
-    # 2022-08-22,24, 2022-09-08,09,12,15
-    savename = f"/home/ramsey/Pictures/2022-09-15/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
+    # 2022-08-22,24, 2022-09-08,09,12,15, 2022-11-01
+    savename = f"/home/ramsey/Pictures/2022-11-01/fit_{pillar_stub}{g.n_submodels}_{line_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -3124,10 +3190,87 @@ def calculate_pillar_lifetimes_from_columndensity():
             file=__file__, func='calculate_pillar_lifetimes_from_columndensity'))
 
 
+def calculate_cii_column_density():
+    """
+    November 3, 2022
+    Following Okada 2015 Sec 3.3 (pg 10)
+    Several equations and some rules on how to assume Tex
+    """
+    cii_cube = cps2.cutout_subcube(length_scale_mult=5)
+    cii_cube = cii_cube - cps2.get_cii_background()[:, np.newaxis, np.newaxis]
+
+    cii_cube = cii_cube.with_mask(cii_cube > 6*u.K).with_fill_value(0*u.K)
+    # print(cii_cube.filled_data[:])
+    # cii_cube[cii_cube < 1*u.K] = 0*u.K
+
+    print(cii_cube.shape)
+    rest_freq = cii_cube.header['RESTFREQ'] * u.Hz
+    freq_axis = cii_cube.spectral_axis.to(u.THz, equivalencies=cii_cube.velocity_convention(rest_freq))
+
+    hnu_kB = const.h * rest_freq / const.k_B
+    print("T_0 = E_u / k_B = ", hnu_kB.decompose())
+    g0, g1 = 2, 4 # lower, upper
+    A10 = 10**(-5.63437) / u.s # Einstein A
+
+    peak_T_map = cii_cube.max(axis=0).quantity
+
+
+    # Can change this; it doesn't make a huge difference between 0.5 and 1, but below 0.5 you get some major differences (high column density)
+    filling_factor = 1
+
+    """
+    !!!!!!!!!!!!!!!!!!!!!!!!
+    to switch from tau = 1 to constant Tex, switch assumed_optical_depth = 10+ (optically thick but not too high or there are floating point errors)
+    and comment in the line that makes Tex map uniform
+    """
+    assumed_optical_depth = 15 # The tau value for equation 2 if we assume optical depth and solve for Tex at each pixel
+    Tex_map = (hnu_kB / np.log((1 - np.exp(-assumed_optical_depth))*(filling_factor * hnu_kB / peak_T_map) + 1)).decompose()
+    Tex_map[:] = np.nanmax(Tex_map)
+
+    #########################
+    # dont need to change much below this
+    ####################
+
+    # This is how Tex will often be used, and it needs the extra spectral dimension at axis=0
+    hnukBTex = hnu_kB/Tex_map[np.newaxis, :]
+    exp_hnukBTex = np.exp(hnu_kB/Tex_map[np.newaxis, :])
+    # partition function?
+    Z = g0 + g1*np.exp(-hnukBTex) # hnu_kB = Eu/kB since ground is 0 energy (might also be ok if not, but it's definitely ok in this case)
+    # optical depth in a given channel
+    channel_tau = -1*np.log(1 - ((cii_cube.filled_data[:] / (filling_factor * hnu_kB)) * (exp_hnukBTex - 1)))
+    channel_column = (channel_tau * (
+        (8*np.pi * (rest_freq / const.c)**2) * (Z/(g1*A10)) * exp_hnukBTex / (1 - np.exp(-hnukBTex))
+    )).decompose()
+
+    integrated_column_map = np.trapz(channel_column[::-1, :, :], x=freq_axis[::-1], axis=0).to(u.cm**-2)
+
+
+
+    plt.subplot(221)
+    plt.imshow(peak_T_map.to_value(), origin='lower')
+    plt.title("Peak $T$")
+    plt.subplot(222)
+    plt.imshow(Tex_map.to_value(), origin='lower')
+    plt.title("$T_{\\rm ex}$")
+    # plt.subplot(223)
+    # plt.imshow(integrated_column_map.to_value(), origin='lower')
+    # plt.title("integrated CII column density")
+    plt.subplot(223)
+    plt.imshow(integrated_column_map.to_value() / 8.5e-5, origin='lower')
+    plt.title("integrated H column density (H nuc / cm2)")
+
+    plt.subplot(224)
+    plt.imshow((integrated_column_map / (8.5e-5 * 2e4*u.cm**-3)).to(u.pc).to_value(), origin='lower')
+    plt.title("size scale map (pc)")
+
+
+    plt.show()
+
 
 if __name__ == "__main__":
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
+    calculate_cii_column_density()
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
@@ -3144,15 +3287,18 @@ if __name__ == "__main__":
 
     # fit_molecular_components_with_gaussians('bluest component', cii=1, regrid=1)
 
-    # fit_molecular_and_cii_with_gaussians(1, lines=['12co10CONV', 'hcopCONV', 'cii'], pillar=3)
-    # fit_molecular_and_cii_with_gaussians(1, lines=['13co10CONV', 'hcnCONV', 'csCONV'], pillar=3)
-    # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', '12co32', 'co65CONV'], pillar=1, select=0)
-    # fit_molecular_and_cii_with_gaussians(2, lines=['hcopCONV', 'hcnCONV', 'csCONV'], pillar=1, select=0)
-    # fit_molecular_and_cii_with_gaussians(3, lines=['hcopCONV', 'cii'], pillar=1, select=0)
-    # fit_molecular_and_cii_with_gaussians(3, lines=['hcopCONV', 'cii'], pillar=1, select=1)
+    # kwargs = dict(pillar='1b', select=1)
+
+    # fit_molecular_and_cii_with_gaussians(2, lines=['12co10CONV', 'hcopCONV', 'cii'], **kwargs)
+    # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'], **kwargs)
+    # fit_molecular_and_cii_with_gaussians(2, lines=['12co32', 'co65CONV', 'n2hpCONV'], **kwargs)
+
+    # fit_molecular_and_cii_with_gaussians(1, lines=['csCONV', 'hcopCONV', 'cii'], pillar='1b', select=1)
+    # fit_molecular_and_cii_with_gaussians(1, lines=['csCONV', 'hcopCONV', 'cii'], pillar=2, select=1)
+    # fit_molecular_and_cii_with_gaussians(1, lines=['csCONV', 'hcopCONV', 'cii'], pillar=2, select=2)
 
 
-    # fit_spectrum_detailed('csCONV', n_components=3, pillar=1, reg_number=5)
+    # fit_spectrum_detailed('13co32', n_components=2, pillar='1b', reg_number=5)
     # fit_spectrum_detailed('12co32', n_components=3, pillar=1, reg_number=8)
     # fit_spectrum_detailed('hcnCONV', n_components=2, pillar=1, reg_number=3)
     # fit_spectrum_detailed('13co10CONV', n_components=2, pillar=1, reg_number=4)
@@ -3180,8 +3326,10 @@ if __name__ == "__main__":
     # test_fitting_2G_with_2G_wrapper()
 
     # plot_selected_hcop_spectra_fits()
-    # prepare_pdrt_tables('12co10CONV', regions_to_do='W-peak', convert_units=False)
-    prepare_pdrt_tables('cii', convert_units=False)
-    prepare_pdrt_tables('cii', convert_units=True)
-    # prepare_pdrt_tables('co65CONV', regions_to_do='W-peak', convert_units=False)
-    # prepare_pdrt_tables('12co32', regions_to_do='W-peak', convert_units=False)
+    # prepare_pdrt_tables('oiCONV', convert_units=True, reg_filename=1)
+    # prepare_pdrt_tables('12co32', regions_to_do=None, convert_units=True, reg_filename=1)
+    # prepare_pdrt_tables('12co10CONV', regions_to_do=None, convert_units=True, reg_filename=1)
+    # prepare_pdrt_tables('ciCONV', regions_to_do=None, convert_units=True, reg_filename=1)
+    # ##### prepare_pdrt_tables('oiCONV', regions_to_do=None, convert_units=True, reg_filename=1)
+    # prepare_pdrt_tables_fir(reg_filename=1)
+    # prepare_pdrt_tables_g0(reg_filename=1)

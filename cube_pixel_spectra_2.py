@@ -1688,7 +1688,7 @@ def smooth(cube, width=7):
     """
     # Hamming smooth the spectrum
     smooth_kernel = convolution.kernels.CustomKernel(signal.hamming(width))
-    return cube.spectral_smooth(smooth_kernel)
+    return cube.spectral_smooth(smooth_kernel, parallel=True, num_cores=6)
 
 
 def smooth_spatial(img_to_convolve, img_wcs, cube, target_beam):

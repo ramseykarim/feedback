@@ -216,6 +216,7 @@ def convolve_carma_to_sofia():
     Reused April 26, 2022 to do N2H+ and CS
     Reused August 18, 2022 to do CO6-5 (the 6-5 to 3-2 beam was in m16_pictures.compare_32_65_10)
     Reused September 8, 2022 to do the satellite line of N2H+
+    Reused October 11, 2022 to do OI and CI
     """
     filepaths = glob.glob(os.path.join(catalog.utils.m16_data_path, "carma/M16.ALL.*subpv.fits"))
     """
@@ -230,7 +231,10 @@ def convolve_carma_to_sofia():
     # cube_mol = cube_utils.CubeData([f for f in filepaths if 'n2hp' in f].pop())
     # cube_mol = cube_utils.CubeData("bima/M16.BIMA.c18o.cm.fits").convert_to_K()
     # cube_mol = cube_utils.CubeData("apex/M16_CO6-5.fits").convert_to_K()
-    cube_mol = cube_utils.CubeData("carma/n2hp_fullres_j_10_f1_01_f_12.fits")
+    # cube_mol = cube_utils.CubeData("carma/n2hp_fullres_j_10_f1_01_f_12.fits")
+
+    cube_mol = cube_utils.CubeData("sofia/m16_OI_63.SMOOTH.fits")
+    # cube_mol = cube_utils.CubeData("apex/M16_CI.SMOOTH.fits")
 
     write_path, original_mol_fn = os.path.split(cube_mol.full_path)
     write_fn = original_mol_fn.replace('.fits', '.SOFIAbeam.fits')
@@ -246,6 +250,49 @@ def convolve_carma_to_sofia():
         cube_mol.allow_huge_operations = True # spectral_cube said to do it
         cube_mol = cube_mol.convolve_to(cube_cii.beam)
     cube_mol.write(os.path.join(write_path, write_fn), format='fits')
+
+
+def save_smoothed_carma():
+    """
+    I guess I created this July 12, 2021
+    Reusing it September 21, 2021 to do it again with the SOFIAbeam versions
+    and again (same day) for c18o (1-0)
+    Reusing it July 22, 2022 for CS, CS.SOFIAbeam
+
+    October 11, 2022: Moved from pvdiagrams_2.py (since nothing else here is still used)
+    to m16_investigation.py (slightly more relevant functions)
+    Description I wrote in Oct2022 before I realized I already made this function:
+
+    Wrapper function for cube_pixel_spectra_2.smooth() so that we can smooth
+    and save easily in one go.
+    Smooth spectrally by a predetermined-width Hamming window. Width determined
+    by visual estimation (just look at the spectra in DS9 and guess and check)
+    Used for OI and CI on Oct 11, 2022
+    """
+    raise RuntimeError("Already ran this on September 21, 2021; July 22, 2022; October 11, 2022")
+    kwargs = {}
+    # line_stub = "cs"
+    # beam_stub = ".SOFIAbeam" if False else ""
+    # line_fn = catalog.utils.search_for_file(f"carma/M16.ALL.{line_stub}.sdi.cm.subpv{beam_stub}.fits")
+    # line_fn = catalog.utils.search_for_file("bima/M16.BIMA.c18o.cm.SOFIAbeam.fits")
+
+    line_fn = catalog.utils.search_for_file("sofia/m16_OI_63.fits") ; kwargs['width'] = 25
+    # line_fn = catalog.utils.search_for_file("apex/M16_CI.fits")
+
+
+    print(f"Smoothing spectal from file {line_fn}", end="")
+    history_card_maker = lambda width : f"Smoothed with {width}-spaxel Hamming window"
+    if 'width' in kwargs:
+        print(' with width = ', kwargs['width'], ' pixels')
+        history_stub = history_card_maker(kwargs['width'])
+    else:
+        print(' with default width')
+        history_stub = history_card_maker("(default) 7")
+    save_fn = line_fn.replace('.fits', '.SMOOTH.fits')
+    subcube = cps2.cutout_subcube(length_scale_mult=None, data_filename=line_fn)
+    subcube = cps2.smooth(subcube, **kwargs)
+    subcube.meta['HISTORY'] = history_stub
+    subcube.write(save_fn, format='fits')
 
 
 def compare_carma_to_sofia_crosscut(selected_region=0):
@@ -900,7 +947,7 @@ def overlaid_contours_for_offset(*file_idxs, idx_for_img=0, vel_lims=None,
 
 
 
-def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short="catalogs/pillar_samples.reg", show_positions=False):
+def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short="catalogs/pillar_samples.reg", show_positions=False, show_with_bg=False):
     """
     June 1, 2021
     In prep for the meeting with Nicola tomorrow, I want to look at spectra of CO 1-0, 3-2, 6-5, and CII towards the head of P1
@@ -918,6 +965,7 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
     to compare the relative intensities of different lines at different locations
 
     August 19, 2022: Adding CO6-5 and 3-2
+    October 29, 2022: more closely looking at P2,3, other features
     """
     reg_list_raw = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_list = []
@@ -931,7 +979,8 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
     available_short_names = {'cii',
         '12co10CONV', '13co10CONV', 'c18o10CONV',
         'co65CONV', '12co32', '13co32',
-        'hcopCONV', 'hcnCONV', 'csCONV', 'n2hpCONV'}
+        'hcopCONV', 'hcnCONV', 'csCONV', 'n2hpCONV',
+        'oiCONV', 'ciCONV'}
 
     # The lines to plot
     if short_names is None:
@@ -946,7 +995,8 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
     multiplier = {'cii': 1,
         '12co10CONV': 0.5, '13co10CONV': 4, 'c18o10CONV': 15,
         'co65CONV': 2, '12co32': 1, '13co32': 1,
-        'hcopCONV': 2, 'hcnCONV': 4, 'csCONV': 4, 'n2hpCONV': 8}
+        'hcopCONV': 2, 'hcnCONV': 4, 'csCONV': 4, 'n2hpCONV': 8,
+        'oiCONV': 2, 'ciCONV': 2}
 
     reference_filename = catalog.utils.search_for_file("hst/hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")
     reference_name = "HST F657N"
@@ -962,6 +1012,8 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
     if selected_region in preset_region_selections:
         selected_region_name = selected_region
         selected_region = preset_region_selections[selected_region_name]
+    elif isinstance(selected_region, tuple):
+        selected_region_name = "-".join(str(x) for x in selected_region)
     else:
         # Let the name be the number/index
         selected_region_name = selected_region
@@ -1052,7 +1104,10 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
         # spec_ax is the matplotlib Axis for the spectra
         pixreg = reg.to_pixel(cube[0, :, :].wcs)
         j, i = [int(round(c)) for c in pixreg.center.xy]
-        spectrum = cube[:, i, j]
+        try:
+            spectrum = cube[:, i, j]
+        except IndexError:
+            spectrum = np.full(cube.shape[0], np.nan) * cube.unit
         #### this was to try to evaluate small shifts in the  mean line velocity
         # if False: #selected_region < 4: # currently causing bug (March 2, 2022)
         #     mean_vel = np.nanmean(subcube.spectral_slab(*pillar_vel_limits).moment1().to_value())
@@ -1063,10 +1118,11 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
         if cii:
             bg_spectrum = cps2.get_cii_background()
             spectrum_bgsub = spectrum - bg_spectrum
-            # p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[line_short_name], label=f"{line_names[idx]}{multiplier_stub} (unsub.)",
-            #     linestyle='--', color=p[0].get_c())
             p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum_bgsub.to_value() * multiplier[line_short_name], label=f"{line_names[idx]}{multiplier_stub}",
                 linestyle='-')
+            if show_with_bg:
+                spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[line_short_name], label=f"{line_names[idx]}{multiplier_stub} (unsub.)",
+                    linestyle='--', color=p[0].get_c())
         else:
             p = spec_ax.plot(cube.spectral_axis.to_value(), spectrum.to_value() * multiplier[line_short_name], label=f"{line_names[idx]}{multiplier_stub}",
                 linestyle='-')
@@ -1127,7 +1183,8 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
     else:
         plt.subplots_adjust(hspace=0, wspace=0)
     # 2021-06-03 (jupiter), 2022-03-02 (laptop), 2022-03-30 (was empty until 2022-07-19!), 2022-07-19, 2022-08-19, 2022-09-12,15
-    savename = f"/home/ramsey/Pictures/2022-09-15/pillar_samples_{selected_region_name}"
+    # 2022-10-29,31
+    savename = f"/home/ramsey/Pictures/2022-10-31/pillar_samples_{selected_region_name}"
     save_as_png = True
     if save_as_png:
         fig.savefig(f"{savename}.png",
@@ -2011,13 +2068,17 @@ if __name__ == "__main__":
     # overlaid_contours_for_offset('12co10', '13co10', vel_lims=(22*kms, 24*kms), zeroth_contour_sigma=5, contour_sigma_step=5, length_scale_mult=None, reg_filename="catalogs/m16_lines_of_interest.reg", reg_index=7)
 
     # convolve_carma_to_sofia()
-    # get_noise_graph('12co10APEX')
+    # save_smoothed_carma()
+    # get_noise_graph('ciCONV')
 
-    reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
-    # reg_fn_short = "catalogs/pillar_samples_v2.reg"
-    pillar_sample_spectra('head', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
-    pillar_sample_spectra('threads', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
+    # reg_fn_short = "catalogs/pillar_samples_v2.reg" # for pillar_samples.reg: 6, 7 are Pillar 2
+    # reg_fn_short = "catalogs/pillar2_pointsofinterest_v2.reg"
+    reg_fn_short = "catalogs/pillar123_pointsofinterest_v1.reg"
+    # pillar_sample_spectra('head', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short)
     # pillar_sample_spectra('threads', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
+    for i in range(2, 6):
+        pillar_sample_spectra(i, short_names=['cii', 'ciCONV', 'oiCONV', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV',  'csCONV'], show_positions=0, reg_filename_short=reg_fn_short, show_with_bg=True)
 
     # for i in [1]:
     #     for j in range(2):
