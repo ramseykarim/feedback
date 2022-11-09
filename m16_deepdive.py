@@ -27,6 +27,8 @@ from matplotlib.colors import LogNorm
 import sys
 import os
 import glob
+import datetime
+import time
 
 from math import ceil
 from scipy import signal
@@ -1337,6 +1339,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
             selected_region_list = [sky_regions[x] for x in [0, 1, 2]]
         elif select == 1: # Shared Base
             selected_region_list = [sky_regions[x] for x in [3, 4, 5]]
+        elif select == 2: # Shelf
+            selected_region_list = [sky_regions[8]]
     if len(selected_region_list) > 1:
         pixel_name = "-and-".join([reg.meta['label'].replace(" ", '-') for reg in selected_region_list])
     else:
@@ -1397,7 +1401,7 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
         default_mean = 22.
         mean_bounds = (18, 24)
     elif pillar == '1b':
-        if select == 0:
+        if select == 0 or select == 2:
             default_mean = 25.
         else:
             default_mean = 23.5
@@ -1560,8 +1564,8 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
     lines_stub = "-".join(line_names_list)
     # plt.savefig(f'/home/ramsey/Pictures/2021-12-21-work/fit_{g.n_submodels}molecular_components_and_CII_{pixel_name}_{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedmean_stub}.png')
     # 2022-01-20, 2022-04-22, 2022-04-25, 2022-04-26, 2022-04-28, 2022-05-03, 2022-05-19,
-    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24, 2022-09-08,12, 2022-10-29,31, 2022-11-01
-    savename = f"/home/ramsey/Pictures/2022-11-01/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
+    # 2022-06-03, 2022-06-07, 2022-08-18,19,20,24, 2022-09-08,12, 2022-10-29,31, 2022-11-01,07
+    savename = f"/home/ramsey/Pictures/2022-11-07/fit_{pillar_stub}{g.n_submodels}_{lines_stub}_{pixel_name}{fixedstd_stub}{tiestd_stub}{untieciistd_stub}{fixedciistd_stub}{fixedmean_stub}"
     ###########################
     save_as_png = True
     ###########################
@@ -3196,8 +3200,9 @@ def calculate_cii_column_density():
     Following Okada 2015 Sec 3.3 (pg 10)
     Several equations and some rules on how to assume Tex
     """
-    cii_cube = cps2.cutout_subcube(length_scale_mult=5)
-    cii_cube = cii_cube - cps2.get_cii_background()[:, np.newaxis, np.newaxis]
+    lsm = 6
+    cii_cube = cps2.cutout_subcube(length_scale_mult=lsm)
+    # cii_cube = cii_cube - cps2.get_cii_background()[:, np.newaxis, np.newaxis]
 
     cii_cube = cii_cube.with_mask(cii_cube > 6*u.K).with_fill_value(0*u.K)
     # print(cii_cube.filled_data[:])
@@ -3223,9 +3228,11 @@ def calculate_cii_column_density():
     to switch from tau = 1 to constant Tex, switch assumed_optical_depth = 10+ (optically thick but not too high or there are floating point errors)
     and comment in the line that makes Tex map uniform
     """
-    assumed_optical_depth = 15 # The tau value for equation 2 if we assume optical depth and solve for Tex at each pixel
+    assumed_optical_depth = 2 # The tau value for equation 2 if we assume optical depth and solve for Tex at each pixel
     Tex_map = (hnu_kB / np.log((1 - np.exp(-assumed_optical_depth))*(filling_factor * hnu_kB / peak_T_map) + 1)).decompose()
-    Tex_map[:] = np.nanmax(Tex_map)
+    original_Tex_map = Tex_map.copy()
+    fixed_Tex_val = np.nanmax(Tex_map)
+    Tex_map[:] = fixed_Tex_val
 
     #########################
     # dont need to change much below this
@@ -3243,28 +3250,98 @@ def calculate_cii_column_density():
     )).decompose()
 
     integrated_column_map = np.trapz(channel_column[::-1, :, :], x=freq_axis[::-1], axis=0).to(u.cm**-2)
+    Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)->N(H) section
+    integrated_H_column_map = integrated_column_map / Cp_H_ratio
+
+    H_mass_amu = 1.00794
+    Hmass = const.u * H_mass_amu
+
+    integrated_mass_column_map = integrated_H_column_map * Hmass
+
+    pixel_scale = misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs)
+    pixel_area = (pixel_scale * (2000*u.pc/u.radian))**2
+
+    integrated_mass_pixel_column_map = (integrated_mass_column_map * pixel_area).to(u.solMass)
 
 
+    def make_and_fill_header():
+        # fill header with stuff, make it from WCS
+        hdr = wcs_flat.to_header()
+        hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        hdr['CREATOR'] = f"Ramsey, {__file__}"
+        hdr['HISTORY'] = "Using calculate_cii_column_density.py"
+        hdr['HISTORY'] = f"Fixed Tex {fixed_Tex_val:.2f} max Tex calculated using tau={assumed_optical_depth}"
+        hdr['HISTORY'] = f"Cutout with length scale {lsm}"
+        hdr['HISTORY'] = f"C+/H = {Cp_H_ratio:.2E}"
+        hdr['HISTORY'] = f"Hmass = {Hmass:.3E}"
+        hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
+        hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
+        return hdr
 
-    plt.subplot(221)
-    plt.imshow(peak_T_map.to_value(), origin='lower')
-    plt.title("Peak $T$")
-    plt.subplot(222)
-    plt.imshow(Tex_map.to_value(), origin='lower')
-    plt.title("$T_{\\rm ex}$")
+    phdu = fits.PrimaryHDU()
+    wcs_flat = cii_cube[0, :, :].wcs
+
+    header1 = make_and_fill_header()
+    header1['EXTNAME'] = "C+coldens"
+    header1['BUNIT'] = str(integrated_column_map.unit)
+    hdu_NCp = fits.ImageHDU(data=integrated_column_map.to_value(), header=header1)
+
+    header2 = make_and_fill_header()
+    header2['EXTNAME'] = "mass"
+    header2['BUNIT'] = str(integrated_mass_pixel_column_map.unit)
+    header2['COMMENT'] = "mass is per pixel on this image"
+    hdu_mass = fits.ImageHDU(data=integrated_mass_pixel_column_map.to_value(), header=header2)
+
+    header3 = make_and_fill_header()
+    header3['EXTNAME'] = "varyingTex"
+    header3['BUNIT'] = str(original_Tex_map.unit)
+    header3['COMMENT'] = "This is !!NOT!! the Tex used to calculate column density"
+    header3['COMMENT'] = "The fixed Tex (see above) is the max of this image"
+    hdu_Tex = fits.ImageHDU(data=original_Tex_map.to(u.K).to_value(), header=header3)
+
+    header4 = make_and_fill_header()
+    header4['EXTNAME'] = "Hcoldens"
+    header4['BUNIT'] = str(integrated_H_column_map.unit)
+    header4['COMMENT'] = "mass is per pixel on this image"
+    hdu_NH = fits.ImageHDU(data=integrated_H_column_map.to_value(), header=header4)
+
+    pdrt_density = 2e4 * u.cm**-3
+    los_distance_image = (integrated_H_column_map / pdrt_density).to(u.pc)
+
+    header5 = make_and_fill_header()
+    header5['EXTNAME'] = "scale_distance"
+    header5['BUNIT'] = str(los_distance_image.unit)
+    header5['COMMENT'] = f"calculated using PDRT density {pdrt_density:.1E}"
+    hdu_distance = fits.ImageHDU(data=los_distance_image.to_value(), header=header5)
+
+
+    hdul = fits.HDUList([phdu, hdu_NCp, hdu_NH, hdu_mass, hdu_distance, hdu_Tex])
+    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}.fits")
+    # print(savename)
+    hdul.writeto(savename)
+
+    # plt.subplot(111)
+    # plt.imshow(integrated_mass_pixel_column_map.to_value(), origin='lower')
+    # plt.show()
+
+    # plt.subplot(221)
+    # plt.imshow(peak_T_map.to_value(), origin='lower')
+    # plt.title("Peak $T$")
+    # plt.subplot(222)
+    # plt.imshow(Tex_map.to_value(), origin='lower')
+    # plt.title("$T_{\\rm ex}$")
+    # # plt.subplot(223)
+    # # plt.imshow(integrated_column_map.to_value(), origin='lower')
+    # # plt.title("integrated CII column density")
     # plt.subplot(223)
-    # plt.imshow(integrated_column_map.to_value(), origin='lower')
-    # plt.title("integrated CII column density")
-    plt.subplot(223)
-    plt.imshow(integrated_column_map.to_value() / 8.5e-5, origin='lower')
-    plt.title("integrated H column density (H nuc / cm2)")
+    # plt.imshow(integrated_column_map.to_value() / 8.5e-5, origin='lower')
+    # plt.title("integrated H column density (H nuc / cm2)")
+    #
+    # plt.subplot(224)
+    # plt.imshow((integrated_column_map / (8.5e-5 * 2e4*u.cm**-3)).to(u.pc).to_value(), origin='lower')
+    # plt.title("size scale map (pc)")
+    # plt.show()
 
-    plt.subplot(224)
-    plt.imshow((integrated_column_map / (8.5e-5 * 2e4*u.cm**-3)).to(u.pc).to_value(), origin='lower')
-    plt.title("size scale map (pc)")
-
-
-    plt.show()
 
 
 if __name__ == "__main__":
@@ -3293,7 +3370,8 @@ if __name__ == "__main__":
     # fit_molecular_and_cii_with_gaussians(2, lines=['13co10CONV', 'hcnCONV', 'csCONV'], **kwargs)
     # fit_molecular_and_cii_with_gaussians(2, lines=['12co32', 'co65CONV', 'n2hpCONV'], **kwargs)
 
-    # fit_molecular_and_cii_with_gaussians(1, lines=['csCONV', 'hcopCONV', 'cii'], pillar='1b', select=1)
+    # fit_molecular_and_cii_with_gaussians(1, lines=['cs', 'hcop', 'cii'], pillar=2, select='head')
+    # fit_molecular_and_cii_with_gaussians(1, lines=['cs', 'hcop', 'cii'], pillar=3)
     # fit_molecular_and_cii_with_gaussians(1, lines=['csCONV', 'hcopCONV', 'cii'], pillar=2, select=1)
     # fit_molecular_and_cii_with_gaussians(1, lines=['csCONV', 'hcopCONV', 'cii'], pillar=2, select=2)
 
