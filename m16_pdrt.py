@@ -256,6 +256,7 @@ def collect_measurement_from_tables(line_name, reg_name=None):
     else:
         # Use the pdrtpy function convert_integrated_intensity to convert from
         # K km/s to cgs
+        # I am not going to use this option often, use the other one (cgs tables)
         t = QTable.read(fn, format='ipac')
         # # TODO: this is untested; not sure if t[i] returns Table-like (probably should)
         if reg_name is not None:
@@ -337,24 +338,19 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
     Following the notebook: https://github.com/mpound/pdrtpy-nb/blob/master/notebooks/PDRT_Example_Find_n_G0_Single_Pixel.ipynb
     Make a spaghetti plot for a given region
     :param plot_setting: the one knob to turn. values are as follows:
-        0: regular spaghetti plot with ratios AND intensities
+        0: regular overlay plot with ratios AND intensities
         1: just the chi squared plot
-        2: spaghetti plot with only ratios
-        3: spaghetti plot with only intensities
+        2: overlay plot with only ratios
+        3: overlay plot with only intensities
     """
     if reg_name[-1].isdigit() and reg_name[-2]=='-':
         # Use the manually entered data for broad-line and E-peak
+        # I'm no longer using this option, this was when i tried modeling a single Gaussian component after a decomposition of the line profile
         meas_list = make_measurement_list_from_manual_entry(reg_name)
     else:
         # Use the regular observed tables
         meas_list = collect_all_measurements_for_region(reg_name)
 
-    """
-    # TODO: the KOSMA-tau models work a little differently, and I should make sure
-    that I am working within those bounds
-
-    I think I will have to remove the overlays of intensities (says CII_158 is not supported)
-    """
     # modelset_name = "kt2013wd01-7"
     # ms = ModelSet(modelset_name, z=1, medium='clumpy', mass=100.0)
     modelset_name = 'wk2020'

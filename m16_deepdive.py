@@ -3343,11 +3343,57 @@ def calculate_cii_column_density():
     # plt.show()
 
 
+def calculate_dust_column_densities(v=1):
+    """
+    November 15, 2022
+    Use the tau_160 maps to make N(H) maps
+    From the RCW 49 paper, Cext,160 / H = 1.9 x 10^-25 cm2/H
+    I have versions using 70--250 and 70--160, I'll check both to compare
+    """
+    raise RuntimeError("Already ran on November 15, 2022")
+    if v == 1:
+        # 250 micron version; this uses 70,160,250 and has the resolution of 250 (like 18 arcsec or something)
+        fn_v1 = catalog.utils.search_for_file('herschel/M16_2p_3BAND_beta2.0.fits')
+        tau_v1, hdr_v1 = fits.getdata(fn_v1, extname='solutiontau', header=True)
+        tau = 10**tau_v1
+        wcs_obj = WCS(hdr_v1)
+        fn_stub = fn_v1
+        summary_stub = '70-160-250'
+        comment_stub = 'Calculated using mantipython'
+    elif v == 2:
+        fn_v2 = catalog.utils.search_for_file('herschel/T-tau_colorsolution.fits')
+        tau_v2, hdr_v2 = fits.getdata(fn_v2, extname='tau', header=True)
+        tau = tau_v2
+        wcs_obj = WCS(hdr_v2)
+        fn_stub = fn_v2
+        summary_stub = '70-160'
+        comment_stub = 'Calculated using the T/tau color solution'
+    new_hdr = wcs_obj.to_header()
+    new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    new_hdr['CREATOR'] = f"Ramsey, {__file__}"
+    new_hdr['HISTORY'] = f"Created from bands {summary_stub}"
+    new_hdr['HISTORY'] = "Resolution is that of longest wavelength band"
+    new_hdr['HISTORY'] = f'From file {fn_stub}'
+    new_hdr['HISTORY'] = comment_stub
+    new_hdr['COMMENT'] = "Column density is H nucleus (divide by 2 for H2)"
+
+
+    savename = f"coldens_{summary_stub}.fits"
+    savename = os.path.join(os.path.dirname(fn_stub), savename)
+
+    Cext160 = 1.9e-25 * u.cm**2
+    N_H = (tau / Cext160).to(u.cm**-2)
+    new_hdr['BUNIT'] = str(N_H.unit)
+    hdu = fits.PrimaryHDU(data=N_H.to_value(), header=new_hdr)
+    hdu.writeto(savename)
+
+
 
 if __name__ == "__main__":
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
-    calculate_cii_column_density()
+    # calculate_cii_column_density()
+    calculate_dust_column_densities(v=1)
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
