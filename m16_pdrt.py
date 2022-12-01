@@ -280,6 +280,12 @@ def collect_measurement_from_tables(line_name, reg_name=None):
     if 'co32' in line_name:
         return_val = return_val * APEX_to_SOFIA_beam_area_ratio
 
+    # Correct FIR for background of 0.14 +/- 0.02 (added this in November 22, 2022)
+    if 'FIR' in line_name:
+        fir_background_meas = Measurement(data=0.14, uncertainty=StdDevUncertainty(0.02), unit=(u.erg/(u.s * u.sr * u.cm**2)))
+        return_val = return_val - fir_background_meas
+        return_val.identifier('FIR') # the subtraction changes the id, so we have to reset it
+
     return return_val
 
 
@@ -316,7 +322,7 @@ def get_g0_values_at_locations(reg_name):
     :return: dict(dict, dict)
         main dictionary keys 'Herschel_G0', 'Stars_G0'
         sub-dictionaries keys 'data', 'uncertainty', 'region'
-        in a tuple ordered (Herschel, Stars)
+        in a tuple ordered (Herschel, Stars)(? was this line left in?)
     """
     if reg_name[-1].isdigit() and reg_name[-2]=='-':
         # Assume we're doing something like 'broad-line-1' and get rid of '-1'
@@ -329,6 +335,9 @@ def get_g0_values_at_locations(reg_name):
         reg_name_list = t['region']
         reg_i = list(reg_name_list).index(reg_name)
         result[t['identifier'][reg_i]] = dict(t[reg_i])
+
+    # Correct the Herschel_G0 for the background of ~620
+    result['Herschel_G0']['data'] = result['Herschel_G0']['data'] - 620
     return result
 
 
@@ -411,8 +420,8 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
     plot._plt.xlim([10, 1e7])
     plot._plt.ylim([0.3, 3e6])
 
-    # 2022-09-28, (27 ?), 29, 10-05,6,7,11,12,13,14,17
-    save_path = f"/home/ramsey/Pictures/2022-10-17" # removed modelset name because we won't do anymore kosma-tau models
+    # 2022-09-28, (27 ?), 29, 10-05,6,7,11,12,13,14,17, 11-22
+    save_path = f"/home/ramsey/Pictures/2022-11-22" # removed modelset name because we won't do anymore kosma-tau models
     if not os.path.exists(save_path):
         print("Creating directory ", save_path)
         os.makedirs(save_path)
@@ -445,9 +454,9 @@ if __name__ == "__main__":
     #     for i in range(0, 4):
     #         make_spaghetti_plot(d+'-peak', plot_setting=i)
 
-    reg_name_list = ['Eastern-Horn', 'Western-Horn', 'Inter-horn']
+    reg_name_list = ['Eastern-Horn', 'Western-Horn', 'Inter-horn', 'P2', 'Shared-Base-E']
     for reg_name in reg_name_list:
-        for i in range(1, 4):
+        for i in [1, 2]:
             make_spaghetti_plot(reg_name, plot_setting=i)
 
     # r = 'broad-line'

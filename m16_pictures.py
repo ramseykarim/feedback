@@ -919,9 +919,9 @@ def background_samples_figure():
     average
     """
     cii_cube = cps2.cutout_subcube(length_scale_mult=7)
-    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_4.reg"
+    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_5_v2.reg"
     bg_reg = regions.read_ds9(catalog.utils.search_for_file(bg_reg_filename_short))
-    cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg).mean(axis=(1, 2))
+    cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg[:-1]).mean(axis=(1, 2))
     kwargs = {'fill': False}
     fig = plt.figure(figsize=(14, 6))
     ax_img = plt.subplot2grid((1, 3), (0, 0), projection=cii_cube[0, :, :].wcs)
@@ -930,13 +930,24 @@ def background_samples_figure():
     ax_img.imshow(cii_cube.spectral_slab(*vel_lims).moment0().to_value(), origin='lower')
     ax_spec.plot(cii_cube.spectral_axis.to_value(), cii_bg_spectrum.to_value(), color='k', lw=4, label='Average background', alpha=0.6)
     for idx, reg in enumerate(bg_reg):
+        if idx == len(bg_reg)-1:
+            color = 'k'
+            ls = ':'
+            lw = 3
+            label = 'Southern background'
+            short_label = "Southern"
+            line_kwargs = dict(ls=ls, lw=lw, label=label, color=color)
+        else:
+            short_label = str(idx+1)
+            color = marcs_colors[idx]
+            line_kwargs = dict(label=f'{idx+1}', color=color)
         reg_pixel = reg.to_pixel(cii_cube[0, :, :].wcs)
-        artist = reg_pixel.as_artist(**kwargs, color=marcs_colors[idx])
+        artist = reg_pixel.as_artist(**kwargs, color=color)
         ax_img.add_artist(artist)
         x, y = reg_pixel.center.xy
-        ax_img.text(x, y, str(idx+1), color=marcs_colors[idx], ha='center', va='center', fontsize=12)
+        ax_img.text(x, y, short_label, color=color, ha='center', va='center', fontsize=12)
         spectrum = cii_cube.subcube_from_regions([reg]).mean(axis=(1, 2)).to_value()
-        ax_spec.plot(cii_cube.spectral_axis.to_value(), spectrum, color=marcs_colors[idx], label=f'{idx+1}')
+        ax_spec.plot(cii_cube.spectral_axis.to_value(), spectrum, **line_kwargs)
     beam_patch_coords = [0.06, 0.94] # Axes coords
     beam_patch = cii_cube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform(beam_patch_coords), misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs))
     beam_patch.set_alpha(0.9)
@@ -953,7 +964,8 @@ def background_samples_figure():
     ax_spec.set_ylabel("CII line intensity (K)")
     ax_spec.legend()
     plt.tight_layout()
-    fig.savefig("/home/ramsey/Pictures/2022-01-14-work/cii_background_spectra.png",
+    # 2022-01-14, 2022-11-29
+    fig.savefig("/home/ramsey/Pictures/2022-11-29/cii_background_spectra.png",
         metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}',
             file=__file__, func='background_samples_figure'))
 
@@ -1522,6 +1534,38 @@ def try_component_velocity_figure():
         fig.savefig(f"{savename}.pdf")
 
 
+def column_density_figure():
+    """
+    November 22, 2022
+    Side-by-side of the column density figures
+    I will try interpolating-nearest to keep the pixelization of the lower-resolution maps
+    """
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0.fits",
+        'co': "bima/13co10_column_density_and_more_unmasked.fits",
+        'dust': "herschel/coldens_70-160.fits",
+        'dust250': "herschel/coldens_70-160-250.fits",
+    }
+    column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens', 'dust': 'Hcoldens', 'dust250': 'Hcoldens'}
+
+    # The map whose WCS we will use for the image
+    reference_name = 'co'
+    ref_hdr = fits.getheader(catalog.utils.search_for_file(filenames_dict[reference_name]), extname=column_extnames[reference_name])
+    ref_wcs = WCS(ref_hdr)
+
+    fig = plt.figure(figsize=(10, 5))
+    axes = [plt.subplot(x, projection=ref_wcs) for x in range(141, 145)]
+
+    for i, line_name in enumerate(['cii', 'co', 'dust', 'dust250']):
+        img_raw, hdr_raw = fits.getdata(catalog.utils.search_for_file(filenames_dict[line_name]), extname=column_extnames[line_name], header=True)
+        if line_name == reference_name:
+            img = img_raw
+        else:
+            img = reproject_interp((img_raw, hdr_raw), ref_hdr, order='nearest-neighbor', return_footprint=False)
+        im = axes[i].imshow(img, origin='lower', vmin=0, vmax=1e23, cmap='nipy_spectral')
+        axes[i].set_title(line_name)
+    fig.colorbar(im, ax=axes[3])
+    plt.show()
+
 
 if __name__ == "__main__":
     # m16_channel_maps()
@@ -1531,6 +1575,7 @@ if __name__ == "__main__":
     # simple_mom0_carma_molecules('cii')
     # advanced_mom0_carma_molecules()
 
-    # compare_32_65_10()
+    background_samples_figure()
 
-    try_component_velocity_figure()
+    # try_component_velocity_figure()
+    # column_density_figure()

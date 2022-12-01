@@ -70,6 +70,21 @@ make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
+ratio_12co_to_H2 = 8.5e-5
+Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)->N(H) section
+
+ratio_12co_to_13co = 44.65 # call it 45 in paper, the difference will be miniscule
+
+los_distance_M16 = 1740 * u.pc # Kuhn et al 2019
+
+H2_mass_permole = 2.016 * u.g / u.mol
+H2_mass = (H2_mass_permole / const.N_A).decompose()
+
+H_mass_amu = 1.00794
+Hmass = const.u * H_mass_amu
+# H2_mass is 1/1e4 larger than 2x Hmass. All of these ignore He
+
+
 # Let us begin with a rewrite of m16_investigation.compare_carma_to_sofia_pv
 def easy_pv():
     """
@@ -3038,6 +3053,11 @@ def calculate_co_column_density():
     May 30, 2022
     Putting this all together and trying to calculate 13CO column density
     I could extend this to C18O later, but I'll start with the easier one
+
+    Updated Nov 29, 2022:
+    Propagating statistical uncertanties through the calculation
+
+    Equations:
     N(13CO) = 4pi epsilon0 *
         (3 kB / 8pi^3 nu S mu^2) *
         (Qrot / g) *
@@ -3078,31 +3098,39 @@ def calculate_co_column_density():
     integrated_intensity = integrated_intensity_unitless*u.K*kms
     # Rotational partition function
     Qrot = (const.k_B * Tex / (const.h * B0)).decompose() + (1./3.)
+    err_Qrot = (const.k_B * err_Tex / (const.h * B0)).decompose() # constant falls off from derivative
     # exponential term
     exp_term = np.exp(Eu / Tex)
+    err_exp_term = err_Tex * exp_term * Eu/(Tex**2) # d(e^(a/x)) = (a dx / x^2) e^(a/x)
     # All together
     N13CO = ((prefactor_numerator/prefactor_denominator) * (Qrot/g) * exp_term * integrated_intensity).to(u.cm**-2)
-    # Save
-    if False: # already saved
-        savedir = os.path.dirname(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"))
-        savename = os.path.join(savedir, "13co10_column_density.fits")
-        hdr = WCS(intT_hdr).to_header()
-        hdr['AUTHOR'] = "Ramsey Karim"
-        hdr['DATE'] = "May 31, 2022"
-        hdr['BUNIT'] = str(N13CO.unit)
-        hdr['CREATOR'] = "m16_deepdive.calculate_co_column_density"
-        hdu = fits.PrimaryHDU(data=N13CO.to_value(), header=hdr)
-        hdu.writeto(savename)
+    # Uncertainty! d(cxyz) = cyz dx + cxz dy + cxy dz. But you gotta do quadrature sum instead of regular sum
+    helper_1 = (Qrot * exp_term * err_intT)**2
+    helper_2 = (Qrot * err_exp_term * integrated_intensity)**2
+    helper_3 = (err_Qrot * exp_term * integrated_intensity)**2
+    err_N13CO = (np.sqrt(helper_1 + helper_2 + helper_3) * (prefactor_numerator / prefactor_denominator) / g).to(u.cm**-2)
+
 
     # Mask on 2*integrated intensity error
     masking_by_error = True
     if masking_by_error:
+        unmasked_N13CO = N13CO.copy()
         N13CO[integrated_intensity_unitless < 1.*err_intT.to_value()] = np.nan
+        err_N13CO[integrated_intensity_unitless < 1.*err_intT.to_value()] = np.nan
+    else:
+        unmasked_N13CO = None
 
-    ratio_12co_to_13co = 52
-    ratio_12co_to_H2 = 8.5e-5
 
-    NH2 = N13CO * ratio_12co_to_13co / ratio_12co_to_H2
+    N12CO = N13CO * ratio_12co_to_13co
+    NH2 = N12CO / ratio_12co_to_H2
+
+    err_N12CO = err_N13CO * ratio_12co_to_13co
+    err_NH2 = err_N12CO / ratio_12co_to_H2
+
+    if unmasked_N13CO is not None:
+        unmasked_NH2 = unmasked_N13CO * ratio_12co_to_13co / ratio_12co_to_H2
+    else:
+        unmasked_NH2 = None
 
     if False:
         crop = { # i, j
@@ -3117,7 +3145,7 @@ def calculate_co_column_density():
         cutout = (slice(*crop[selected_cutout][0]), slice(*crop[selected_cutout][1]))
         NH2_cropped = NH2[cutout]
         wcs_cropped = WCS(intT_hdr)[cutout]
-    else:
+    elif False:
         selected_box_type = 'threads' # or pillars
         if selected_box_type == 'pillars':
             boxes_reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/p123_boxes.reg"))
@@ -3134,24 +3162,108 @@ def calculate_co_column_density():
         wcs_cropped = WCS(intT_hdr)
 
     from .dust_mass import get_physical_area_pixel
-    H2_mass_permole = 2.016 * u.g / u.mol
-    H2_mass = (H2_mass_permole / const.N_A).decompose()
+    """
+    Save a FITS file of:
+    13CO column density
+    12CO column density implied from that
+    H2 column density implied from that
+    H2 mass per pixel
+    """
+    wcs_object = WCS(intT_hdr)
+
+    pixel_scale = misc_utils.get_pixel_scale(wcs_object)
+    pixel_area = get_physical_area_pixel(NH2, wcs_object, los_distance_M16.to(u.pc).to_value())
+    # These two methods are the same within 1e-16
+    # pixel_area_2 = (misc_utils.get_pixel_scale(WCS(intT_hdr)) * (los_distance_M16/u.radian))**2
+    mass_per_pixel_map = (pixel_area * NH2 * H2_mass).to(u.solMass)
+    err_mass_per_pixel = (pixel_area * err_NH2 * H2_mass).to(u.solMass)
+
+    def make_and_fill_header():
+        # fill header with stuff, make it from WCS
+        hdr = wcs_object.to_header()
+        hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        hdr['CREATOR'] = f"Ramsey, {__file__}.calculate_co_column_density"
+        hdr['HISTORY'] = f"12CO/H2 = {ratio_12co_to_H2:.2E}"
+        hdr['HISTORY'] = f"12C/13C = {ratio_12co_to_13co:.2f}"
+        hdr['HISTORY'] = f"H2_mass = {H2_mass:.3E}"
+        hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
+        hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
+        hdr['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f}"
+        return hdr
+
+    savedir = os.path.dirname(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"))
+    savename = os.path.join(savedir, "13co10_column_density_and_more_with_uncertainty.fits")
+
+    phdu = fits.PrimaryHDU()
+
+    header1 = make_and_fill_header()
+    header1['EXTNAME'] = "13COcoldens"
+    header1['BUNIT'] = str(N13CO.unit)
+    hdu_13co = fits.ImageHDU(data=N13CO.to_value(), header=header1)
+
+    header2 = make_and_fill_header()
+    header2['EXTNAME'] = "12COcoldens"
+    header2['BUNIT'] = str(N12CO.unit)
+    hdu_12co = fits.ImageHDU(data=N12CO.to_value(), header=header2)
+
+    header3 = make_and_fill_header()
+    header3['EXTNAME'] = "H2coldens"
+    header3['BUNIT'] = str(NH2.unit)
+    header3['COMMENT'] = "This is MOLECULAR hydrogen (H2)"
+    hdu_H2 = fits.ImageHDU(data=NH2.to_value(), header=header3)
+
+    header4 = make_and_fill_header()
+    header4['EXTNAME'] = "mass"
+    header4['BUNIT'] = str(mass_per_pixel_map.unit)
+    header4['COMMENT'] = "mass is per pixel on this image"
+    hdu_mass = fits.ImageHDU(data=mass_per_pixel_map.to_value(), header=header4)
 
 
-    pixel_area = get_physical_area_pixel(NH2_cropped, wcs_cropped, 2e3)
-    total_mass = pixel_area * np.sum(NH2_cropped[np.isfinite(NH2_cropped)]) * H2_mass
+    header5 = make_and_fill_header()
+    header5['EXTNAME'] = "err_13COcoldens"
+    header5['BUNIT'] = str(err_N13CO.unit)
+    hdu_e13co = fits.ImageHDU(data=err_N13CO.to_value(), header=header5)
 
-    print(f"mass in cutout: {total_mass.to(u.solMass):.3f}")
+    header6 = make_and_fill_header()
+    header6['EXTNAME'] = "err_12COcoldens"
+    header6['BUNIT'] = str(err_N12CO.unit)
+    hdu_e12co = fits.ImageHDU(data=err_N12CO.to_value(), header=header6)
 
-    img = NH2_cropped.to_value()
-    vlims = dict(vmin=2e21, vmax=2e23)
-    # vlims = dict(vmin=21, vmax=23.5)
-    # vlims = dict()
-    plt.imshow(img, origin='lower', **vlims)
-    plt.colorbar()
+    header7 = make_and_fill_header()
+    header7['EXTNAME'] = "err_H2coldens"
+    header7['BUNIT'] = str(err_NH2.unit)
+    header7['COMMENT'] = "This is MOLECULAR hydrogen (H2)"
+    hdu_eH2 = fits.ImageHDU(data=err_NH2.to_value(), header=header7)
 
-    # plt.contour(integrated_intensity_unitless, levels=[2*err_intT.to_value()], colors='r')
-    # plt.contour(Tex_unitless, levels=[2*err_Tex.to_value()], colors='k')
+    header8 = make_and_fill_header()
+    header8['EXTNAME'] = "err_mass"
+    header8['BUNIT'] = str(err_mass_per_pixel.unit)
+    header8['COMMENT'] = "mass is per pixel on this image"
+    hdu_emass = fits.ImageHDU(data=err_mass_per_pixel.to_value(), header=header8)
+
+
+
+    list_of_hdus = [phdu, hdu_13co, hdu_12co, hdu_H2, hdu_mass,
+        hdu_e13co, hdu_e12co, hdu_eH2, hdu_emass]
+
+    if masking_by_error:
+        header1a = make_and_fill_header()
+        header1a['EXTNAME'] = "13COcoldens_all"
+        header1a['BUNIT'] = str(unmasked_N13CO.unit)
+        header1a['COMMENT'] = "all values"
+        hdu_13co_all = fits.ImageHDU(data=unmasked_N13CO.to_value(), header=header1a)
+
+        header2a = make_and_fill_header()
+        header2a['EXTNAME'] = "H2coldens_all"
+        header2a['BUNIT'] = str(unmasked_NH2.unit)
+        header2a['COMMENT'] = "all values"
+        hdu_H2_all = fits.ImageHDU(data=unmasked_NH2.to_value(), header=header2a)
+
+        list_of_hdus.extend([hdu_13co_all, hdu_H2_all])
+
+
+    hdul = fits.HDUList(list_of_hdus)
+    hdul.writeto(savename, overwrite=True)
 
     plt.show()
 
@@ -3165,8 +3277,6 @@ def calculate_pillar_lifetimes_from_columndensity():
     co_column_fn = catalog.utils.search_for_file("bima/13co10_column_density.fits")
     N13CO, n13co_hdr = fits.getdata(co_column_fn, header=True)
     # Convert 13CO to H2 column using numbers from Tiwari 2021
-    ratio_12co_to_13co = 52
-    ratio_12co_to_H2 = 8.5e-5
     NH2 = (N13CO * ratio_12co_to_13co / ratio_12co_to_H2) * u.cm**-2
     """
     Estimate mass loss rate (in terms of H2 molecules / time)
@@ -3208,6 +3318,8 @@ def calculate_cii_column_density():
     # print(cii_cube.filled_data[:])
     # cii_cube[cii_cube < 1*u.K] = 0*u.K
 
+    channel_noise = cube_utils.onesigmas['cii']
+
     print(cii_cube.shape)
     rest_freq = cii_cube.header['RESTFREQ'] * u.Hz
     freq_axis = cii_cube.spectral_axis.to(u.THz, equivalencies=cii_cube.velocity_convention(rest_freq))
@@ -3221,18 +3333,27 @@ def calculate_cii_column_density():
 
 
     # Can change this; it doesn't make a huge difference between 0.5 and 1, but below 0.5 you get some major differences (high column density)
-    filling_factor = 1
+    filling_factor = 0.1
 
     """
     !!!!!!!!!!!!!!!!!!!!!!!!
     to switch from tau = 1 to constant Tex, switch assumed_optical_depth = 10+ (optically thick but not too high or there are floating point errors)
     and comment in the line that makes Tex map uniform
     """
-    assumed_optical_depth = 2 # The tau value for equation 2 if we assume optical depth and solve for Tex at each pixel
+    assumed_optical_depth = 1.3 # The tau value for equation 2 if we assume optical depth and solve for Tex at each pixel
+    # tau = 1.3 is the latest "upper limit" based on no detection of 13cii with 1 K noise and 40 K 12CII and the latest 12/13 ratio of ~45 (11/18/22)
+    # the tau upper limit is calculated by hand (see my notes, or Guevara paper)
     Tex_map = (hnu_kB / np.log((1 - np.exp(-assumed_optical_depth))*(filling_factor * hnu_kB / peak_T_map) + 1)).decompose()
+
     original_Tex_map = Tex_map.copy()
     fixed_Tex_val = np.nanmax(Tex_map)
     Tex_map[:] = fixed_Tex_val
+
+    # Error on Tex
+    # d/dx (a / log(b/x + 1)) = ab / (x(b+x)log*2((b+x)/x))
+    helper_a = hnu_kB
+    helper_b = (1 - np.exp(-assumed_optical_depth))*filling_factor*hnu_kB
+    err_Tex_map = (helper_a * helper_b) / (Tex_map * (helper_b + Tex_map) * np.log((helper_b/Tex_map) + 1)**2)
 
     #########################
     # dont need to change much below this
@@ -3240,26 +3361,34 @@ def calculate_cii_column_density():
 
     # This is how Tex will often be used, and it needs the extra spectral dimension at axis=0
     hnukBTex = hnu_kB/Tex_map[np.newaxis, :]
-    exp_hnukBTex = np.exp(hnu_kB/Tex_map[np.newaxis, :])
+    err_hnukBTex = (err_Tex_map * hnu_kB / Tex_map**2)[np.newaxis, :]
+
+    exp_hnukBTex = np.exp(hnukBTex)
+    err_exp_hnukBTex = err_hnukBTex * exp_hnukBTex # d(e^(a/x)) = (a dx / x^2) e^(a/x)
+
     # partition function?
     Z = g0 + g1*np.exp(-hnukBTex) # hnu_kB = Eu/kB since ground is 0 energy (might also be ok if not, but it's definitely ok in this case)
+    err_Z = g1 * err_hnukBTex * np.exp(-hnukBTex)
     # optical depth in a given channel
-    channel_tau = -1*np.log(1 - ((cii_cube.filled_data[:] / (filling_factor * hnu_kB)) * (exp_hnukBTex - 1)))
+    channel_tau = -1*np.log(1 - ((cii_cube.filled_data[:] / (filling_factor * hnu_kB)) * (exp_hnukBTex - 1))) # 3d cube
     channel_column = (channel_tau * (
         (8*np.pi * (rest_freq / const.c)**2) * (Z/(g1*A10)) * exp_hnukBTex / (1 - np.exp(-hnukBTex))
     )).decompose()
 
-    integrated_column_map = np.trapz(channel_column[::-1, :, :], x=freq_axis[::-1], axis=0).to(u.cm**-2)
-    Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)->N(H) section
-    integrated_H_column_map = integrated_column_map / Cp_H_ratio
+    # uncertainties of these quantities
+    helper_a = (exp_hnukBTex - 1) / (filling_factor * hnu_kB)
+    err_channel_tau_from_Tb = channel_noise * helper_a / (1 - helper_a*cii_cube.filled_data[:])
+    err_channel_tau_from_Tex = ...
+    # finish writing err_ from both sources
 
-    H_mass_amu = 1.00794
-    Hmass = const.u * H_mass_amu
+
+    integrated_column_map = np.trapz(channel_column[::-1, :, :], x=freq_axis[::-1], axis=0).to(u.cm**-2)
+    integrated_H_column_map = integrated_column_map / Cp_H_ratio
 
     integrated_mass_column_map = integrated_H_column_map * Hmass
 
     pixel_scale = misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs)
-    pixel_area = (pixel_scale * (2000*u.pc/u.radian))**2
+    pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
 
     integrated_mass_pixel_column_map = (integrated_mass_column_map * pixel_area).to(u.solMass)
 
@@ -3276,6 +3405,7 @@ def calculate_cii_column_density():
         hdr['HISTORY'] = f"Hmass = {Hmass:.3E}"
         hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
         hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
+        hdr['HISTORY'] = f"filling factor = {filling_factor:.2f}"
         return hdr
 
     phdu = fits.PrimaryHDU()
@@ -3316,7 +3446,7 @@ def calculate_cii_column_density():
 
 
     hdul = fits.HDUList([phdu, hdu_NCp, hdu_NH, hdu_mass, hdu_distance, hdu_Tex])
-    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}.fits")
+    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}.fits")
     # print(savename)
     hdul.writeto(savename)
 
@@ -3349,25 +3479,39 @@ def calculate_dust_column_densities(v=1):
     Use the tau_160 maps to make N(H) maps
     From the RCW 49 paper, Cext,160 / H = 1.9 x 10^-25 cm2/H
     I have versions using 70--250 and 70--160, I'll check both to compare
+    Nov 18: added a mass/pixel map so I can integrate in DS9
     """
-    raise RuntimeError("Already ran on November 15, 2022")
+    raise RuntimeError("Already ran on November 21, 2022")
+    cutout_center_coord = SkyCoord("18:18:55.9969 -13:50:56.169", unit=(u.hourangle, u.deg), frame=FK5)
+    cutout_size = (575*u.arcsec, 658*u.arcsec)
     if v == 1:
         # 250 micron version; this uses 70,160,250 and has the resolution of 250 (like 18 arcsec or something)
         fn_v1 = catalog.utils.search_for_file('herschel/M16_2p_3BAND_beta2.0.fits')
         tau_v1, hdr_v1 = fits.getdata(fn_v1, extname='solutiontau', header=True)
-        tau = 10**tau_v1
-        wcs_obj = WCS(hdr_v1)
+        tau_large = 10**tau_v1
+        wcs_obj_large = WCS(hdr_v1)
         fn_stub = fn_v1
         summary_stub = '70-160-250'
         comment_stub = 'Calculated using mantipython'
     elif v == 2:
         fn_v2 = catalog.utils.search_for_file('herschel/T-tau_colorsolution.fits')
         tau_v2, hdr_v2 = fits.getdata(fn_v2, extname='tau', header=True)
-        tau = tau_v2
-        wcs_obj = WCS(hdr_v2)
+        tau_large = tau_v2
+        wcs_obj_large = WCS(hdr_v2)
         fn_stub = fn_v2
         summary_stub = '70-160'
         comment_stub = 'Calculated using the T/tau color solution'
+
+    tau_cutout = Cutout2D(tau_large, cutout_center_coord, cutout_size, wcs=wcs_obj_large)
+    tau = tau_cutout.data
+    wcs_obj = tau_cutout.wcs
+
+
+    savename = f"coldens_{summary_stub}.fits"
+    savename = os.path.join(os.path.dirname(fn_stub), savename)
+
+    Cext160 = 1.9e-25 * u.cm**2
+
     new_hdr = wcs_obj.to_header()
     new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
     new_hdr['CREATOR'] = f"Ramsey, {__file__}"
@@ -3375,25 +3519,218 @@ def calculate_dust_column_densities(v=1):
     new_hdr['HISTORY'] = "Resolution is that of longest wavelength band"
     new_hdr['HISTORY'] = f'From file {fn_stub}'
     new_hdr['HISTORY'] = comment_stub
+    new_hdr['HISTORY'] = f"Cext160/H = {Cext160:.2E}"
     new_hdr['COMMENT'] = "Column density is H nucleus (divide by 2 for H2)"
 
+    phdu = fits.PrimaryHDU()
 
-    savename = f"coldens_{summary_stub}.fits"
-    savename = os.path.join(os.path.dirname(fn_stub), savename)
+    new_hdr2 = new_hdr.copy()
 
-    Cext160 = 1.9e-25 * u.cm**2
     N_H = (tau / Cext160).to(u.cm**-2)
+    new_hdr['EXTNAME'] = "Hcoldens"
     new_hdr['BUNIT'] = str(N_H.unit)
-    hdu = fits.PrimaryHDU(data=N_H.to_value(), header=new_hdr)
-    hdu.writeto(savename)
+    hdu = fits.ImageHDU(data=N_H.to_value(), header=new_hdr)
+
+    pixel_scale = misc_utils.get_pixel_scale(wcs_obj)
+    pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
+    mass_per_pixel_map = (pixel_area * N_H * Hmass).to(u.solMass)
+    new_hdr2['EXTNAME'] = "mass"
+    new_hdr2['BUNIT'] = str(mass_per_pixel_map.unit)
+    new_hdr2['HISTORY'] = f"Hmass = {Hmass:.3E}"
+    new_hdr2['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
+    new_hdr2['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
+    new_hdr2['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f}"
+    hdu2 = fits.ImageHDU(data=mass_per_pixel_map.to_value(), header=new_hdr2)
+
+    hdul = fits.HDUList([phdu, hdu, hdu2])
+    hdul.writeto(savename, overwrite=True)
+
+
+def calculate_galactocentric_distance_and_12c13c_ratio():
+    """
+    November 18, 2022
+    Use the best constants we have to get galactocentric distance and 12/13 C
+    ratio
+    """
+    coord = SkyCoord("18:18:55.1692 -13:50:08.828", frame=FK5, unit=(u.hourangle, u.deg)) # P1b
+    l = coord.galactic.l.rad
+    b = coord.galactic.b.rad
+    galactocentric_distance_of_sun = 8.1 * u.kpc # +- 0.1 kpc, Bobylev + Bajkova 2021
+    # switch to notation of Brand & Blitz 1993 Equation 2
+    d = los_distance_M16
+    R = galactocentric_distance_of_sun
+    term_1 = (d*np.cos(b))**2
+    term_2 = R**2
+    term_3 = -2 * R*d * np.cos(b) * np.cos(l)
+    galactocentric_M16 = np.sqrt(term_1 + term_2 + term_3)
+    print(f"Galactocentric radius of M16: {galactocentric_M16.to(u.kpc):.2f}")
+
+    # 12 to 13 C ratio, Yan et al 2019
+    ratio = 5.08*galactocentric_M16.to(u.kpc).to_value() + 11.86
+    print(f"12C/13C = {ratio:.2f}")
+
+
+
+def estimate_uncertainty_mass_and_coldens(type='cii'):
+    """
+    November 21, 2022
+    Per Marc's comment on my section draft, I will make uncertainty estimates
+    for mass and column density. I have taken regions for each
+    """
+    print("MASS AND COLUMN DENSITIES BASED ON", type)
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0.fits",
+        'co': "bima/13co10_column_density_and_more_unmasked.fits",
+        'dust': "herschel/coldens_70-160.fits",
+        'dust250': "herschel/coldens_70-160-250.fits",
+    }
+    column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens', 'dust': 'Hcoldens', 'dust250': 'Hcoldens'}
+    mass_extname = 'mass'
+
+    reg_filename_short = "catalogs/mass_boxes.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    reg_dict = {reg.meta['label']: reg for reg in reg_list}
+
+    noise_boxes = [reg for reg in reg_dict if 'noise' in reg]
+
+    noise_box_labels = ['top box', 'bottom box', 'ellipse']
+
+    with fits.open(catalog.utils.search_for_file(filenames_dict[type])) as hdul:
+        column_map = hdul[column_extnames[type]].data
+        hdr = hdul[column_extnames[type]].header
+        mass_map = hdul[mass_extname].data
+
+    wcs_object = WCS(hdr)
+
+    plt.figure(figsize=(10,10))
+    ax_col = plt.subplot(221, projection=wcs_object)
+    plt.imshow(column_map, origin='lower')
+    plt.title("N(Hydrogen)")
+    ax_mass = plt.subplot(223, projection=wcs_object)
+    plt.imshow(mass_map, origin='lower')
+    plt.title("Mass/pixel")
+    axes_hist = [plt.subplot(222), plt.subplot(224)]
+
+    col_mean_vals = []
+    col_stddev_vals = []
+    mass_mean_vals = []
+    mass_stddev_vals = []
+
+    for i, noise_box_name in enumerate(noise_boxes):
+        pix_box = reg_dict[noise_box_name].to_pixel(wcs_object)
+        ax_col.add_artist(pix_box.as_artist(fill=False))
+        ax_mass.add_artist(pix_box.as_artist(fill=False))
+
+        mask = pix_box.to_mask()
+        col_values = mask.get_values(column_map)
+        col_values = col_values[np.isfinite(col_values)]
+        mass_values = mask.get_values(mass_map)
+        len_in_box = len(mass_values)
+        mass_values = mass_values[np.isfinite(mass_values)]
+
+        mean_col = np.mean(col_values)
+        std_col = np.std(col_values)
+
+
+        sum_bg_mass = np.sum(mass_values)
+        mean_bg_mass = np.mean(mass_values)
+        std_bg_mass = np.std(mass_values)
+        n_pixels = len(mass_values)
+
+        col_mean_vals.append(mean_col)
+        col_stddev_vals.append(std_col)
+        mass_mean_vals.append(mean_bg_mass)
+        mass_stddev_vals.append(std_bg_mass)
+
+        print(f"NOISE BOX {noise_box_name}")
+
+        print("Pixels in mask (NaN and real)", len_in_box)
+        print("Pixels in mask (real)", n_pixels)
+        print("Pixels in image", column_map.size)
+
+        print(f"Mean/STD column: {mean_col:.2E} +/- {std_col:.2E}")
+        print(f"Sum background: {sum_bg_mass:.1f}")
+        stat_background = mean_bg_mass * n_pixels
+        unc_background = (n_pixels) * std_bg_mass
+        print(f"Stat background: {stat_background:.1f} +/- {unc_background:.1f}")
+        print(f"Mean/STD mass/pixel: {mean_bg_mass:.2E} +/- {std_bg_mass:.2E}")
+
+        axes_hist[0].hist(col_values, bins=32, histtype='step', density=True, label=noise_box_labels[i])
+        axes_hist[1].hist(mass_values, bins=32, histtype='step', density=True, label=noise_box_labels[i])
+
+        print('='*8)
+
+    axes_hist[0].legend()
+    plt.savefig(f"/home/ramsey/Pictures/2022-11-21/coldens_and_mass_noise_{type}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
+            file=__file__, func='estimate_uncertainty_mass_and_coldens'))
+
+    print("\n\n")
+
+    for reg in reg_dict:
+        if reg in noise_boxes:
+            # Pillars only
+            continue
+        print(f"REGION {reg}")
+        pix_reg = reg_dict[reg].to_pixel(wcs_object)
+        mask = pix_reg.to_mask()
+        col_values = mask.get_values(column_map)
+        col_values = col_values[np.isfinite(col_values)]
+        mass_values = mask.get_values(mass_map)
+        mass_values = mass_values[np.isfinite(mass_values)]
+
+        max_col = np.max(col_values)
+
+        sum_mass = np.sum(mass_values)
+        n_pixels = len(mass_values)
+
+        select_index = (1 if reg=='p1b' else 0)
+        if type=='co':
+            select_index = 2
+        col_mean_bg = col_mean_vals[select_index]
+        col_unc = col_stddev_vals[select_index]
+        mass_pixel_bg = mass_mean_vals[select_index]
+        mass_pixel_unc = mass_stddev_vals[select_index]
+
+        mass_bg = n_pixels * mass_pixel_bg
+        mass_unc = (n_pixels) * mass_pixel_unc
+
+        subtracted_column = max_col - col_mean_bg
+        subtracted_column_uncertainty = np.sqrt(2)*col_unc
+
+        subtracted_mass = sum_mass - mass_bg
+        subtracted_mass_uncertainty = np.sqrt(2)*mass_unc
+
+        print(f"Max Col (no sub): {max_col:.2E} +/- {col_unc:.2E}")
+        print(f"Max Col (corrected): {subtracted_column:.2E} +/- {subtracted_column_uncertainty:.2E}")
+        print(f"Mass (no sub): {sum_mass:2f} +/- {mass_unc:.2f}")
+        print(f"Mass (corrected) {subtracted_mass:.2f} +/- {subtracted_mass_uncertainty:.2f}")
+        print(f"Background used: {mass_bg:.2f} +/- {mass_unc:.2f}")
+
+        print("-"*5)
+        print(f"{subtracted_column:.2E} {subtracted_column_uncertainty:.2E} {subtracted_mass:.2f} {subtracted_mass_uncertainty:.2f}")
+        print("-"*5)
+
+        print("="*10)
+        print("\n")
+
+    # plt.show()
+
+"""
+The column density figure for the paper will be made in m16_pictures.column_density_figure() (2022-11-22)
+"""
+
 
 
 
 if __name__ == "__main__":
-    # calculate_co_column_density()
+    calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
     # calculate_cii_column_density()
-    calculate_dust_column_densities(v=1)
+    # calculate_dust_column_densities(v=1)
+    # estimate_uncertainty_mass_and_coldens(type='co')
+    # estimate_uncertainty_mass_and_coldens(type='cii')
+    # estimate_uncertainty_mass_and_coldens(type='dust')
+    # estimate_uncertainty_mass_and_coldens(type='dust250')
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
