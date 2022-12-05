@@ -3105,6 +3105,7 @@ def calculate_co_column_density():
     # All together
     N13CO = ((prefactor_numerator/prefactor_denominator) * (Qrot/g) * exp_term * integrated_intensity).to(u.cm**-2)
     # Uncertainty! d(cxyz) = cyz dx + cxz dy + cxy dz. But you gotta do quadrature sum instead of regular sum
+    # Collected all constants (prefactor_numerator/prefactor_denominator and 1/g) at the end, outside the derivatives and quad sum
     helper_1 = (Qrot * exp_term * err_intT)**2
     helper_2 = (Qrot * err_exp_term * integrated_intensity)**2
     helper_3 = (err_Qrot * exp_term * integrated_intensity)**2
@@ -3318,7 +3319,7 @@ def calculate_cii_column_density():
     # print(cii_cube.filled_data[:])
     # cii_cube[cii_cube < 1*u.K] = 0*u.K
 
-    channel_noise = cube_utils.onesigmas['cii']
+    channel_noise = cube_utils.onesigmas['cii'] * u.K
 
     print(cii_cube.shape)
     rest_freq = cii_cube.header['RESTFREQ'] * u.Hz
@@ -3333,7 +3334,7 @@ def calculate_cii_column_density():
 
 
     # Can change this; it doesn't make a huge difference between 0.5 and 1, but below 0.5 you get some major differences (high column density)
-    filling_factor = 0.1
+    filling_factor = 0.5
 
     """
     !!!!!!!!!!!!!!!!!!!!!!!!
@@ -3353,7 +3354,7 @@ def calculate_cii_column_density():
     # d/dx (a / log(b/x + 1)) = ab / (x(b+x)log*2((b+x)/x))
     helper_a = hnu_kB
     helper_b = (1 - np.exp(-assumed_optical_depth))*filling_factor*hnu_kB
-    err_Tex_map = (helper_a * helper_b) / (Tex_map * (helper_b + Tex_map) * np.log((helper_b/Tex_map) + 1)**2)
+    err_Tex_map = (channel_noise * (helper_a * helper_b) / (Tex_map * (helper_b + Tex_map) * np.log((helper_b/Tex_map) + 1)**2)).decompose()
 
     #########################
     # dont need to change much below this
@@ -3369,28 +3370,57 @@ def calculate_cii_column_density():
     # partition function?
     Z = g0 + g1*np.exp(-hnukBTex) # hnu_kB = Eu/kB since ground is 0 energy (might also be ok if not, but it's definitely ok in this case)
     err_Z = g1 * err_hnukBTex * np.exp(-hnukBTex)
+
     # optical depth in a given channel
     channel_tau = -1*np.log(1 - ((cii_cube.filled_data[:] / (filling_factor * hnu_kB)) * (exp_hnukBTex - 1))) # 3d cube
-    channel_column = (channel_tau * (
-        (8*np.pi * (rest_freq / const.c)**2) * (Z/(g1*A10)) * exp_hnukBTex / (1 - np.exp(-hnukBTex))
-    )).decompose()
+    print(channel_tau.unit)
 
-    # uncertainties of these quantities
+    # Uncertainty on optical depth in channel
     helper_a = (exp_hnukBTex - 1) / (filling_factor * hnu_kB)
     err_channel_tau_from_Tb = channel_noise * helper_a / (1 - helper_a*cii_cube.filled_data[:])
-    err_channel_tau_from_Tex = ...
-    # finish writing err_ from both sources
+    del helper_a
+    # reset the definition of "a"! not the same!
+    helper_a = (cii_cube.filled_data[:] / (filling_factor * hnu_kB))
+    helper_numerator = helper_a * err_exp_hnukBTex
+    helper_denominator = 1. - helper_a*(exp_hnukBTex - 1)
+    err_channel_tau_from_Tex = helper_numerator / helper_denominator
+    # quick analysis shows approximately equal contributions from each source of uncertainty
+    err_channel_tau = np.sqrt(err_channel_tau_from_Tex**2 + err_channel_tau_from_Tb**2).decompose()
+    # relatively small percentage of channel_tau values
+
+
+    # Column density in a given channel
+    column_constants = (8*np.pi * (rest_freq / const.c)**2) / (g1*A10)
+    channel_column = (
+        column_constants * channel_tau * Z * (exp_hnukBTex / (1 - np.exp(-hnukBTex)))
+    ).decompose()
+
+    # Uncertainty on column density in channel
+    helper_1 = (err_channel_tau * Z * (exp_hnukBTex / (1 - np.exp(-hnukBTex))))**2
+    helper_2 = (channel_tau * err_Z * (exp_hnukBTex / (1 - np.exp(-hnukBTex))))**2
+    helper_3 = (channel_tau * Z * (err_exp_hnukBTex * exp_hnukBTex * (exp_hnukBTex - 2) / (exp_hnukBTex - 1)**2.))**2
+    # Quick analysis shows channel_tau error dominates: factor of 40 over Z err, but only factor of 4 over Tex err
+    err_channel_column = (np.sqrt(helper_1 + helper_2 + helper_3) * column_constants).decompose()
 
 
     integrated_column_map = np.trapz(channel_column[::-1, :, :], x=freq_axis[::-1], axis=0).to(u.cm**-2)
+    # Let's just do quadrature sum * dnu for the integral uncertainty propagation
+    dnu = np.median(np.diff(freq_axis[::-1]))
+    err_integrated_column_map = (np.sqrt(np.sum(err_channel_column**2, axis=0))*dnu).to(u.cm**-2)
+    # looking like a 10% error
+
+
     integrated_H_column_map = integrated_column_map / Cp_H_ratio
+    err_integrated_H_column_map = err_integrated_column_map / Cp_H_ratio
 
     integrated_mass_column_map = integrated_H_column_map * Hmass
+    err_integrated_mass_column_map = err_integrated_H_column_map * Hmass
 
     pixel_scale = misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs)
     pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
 
     integrated_mass_pixel_column_map = (integrated_mass_column_map * pixel_area).to(u.solMass)
+    err_integrated_mass_pixel_column_map = (err_integrated_mass_column_map * pixel_area).to(u.solMass)
 
 
     def make_and_fill_header():
@@ -3445,9 +3475,30 @@ def calculate_cii_column_density():
     hdu_distance = fits.ImageHDU(data=los_distance_image.to_value(), header=header5)
 
 
-    hdul = fits.HDUList([phdu, hdu_NCp, hdu_NH, hdu_mass, hdu_distance, hdu_Tex])
-    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}.fits")
-    # print(savename)
+    # error maps
+    header6 = make_and_fill_header()
+    header6['EXTNAME'] = "err_C+coldens"
+    header6['BUNIT'] = str(err_integrated_column_map.unit)
+    header6['COMMENT'] = "uncertainty propagated"
+    hdu_eNCp = fits.ImageHDU(data=err_integrated_column_map.to_value(), header=header6)
+
+    header7 = make_and_fill_header()
+    header7['EXTNAME'] = "err_mass"
+    header7['BUNIT'] = str(err_integrated_mass_pixel_column_map.unit)
+    header7['COMMENT'] = "uncertainty propagated"
+    hdu_emass = fits.ImageHDU(data=err_integrated_mass_pixel_column_map.to_value(), header=header7)
+
+    header8 = make_and_fill_header()
+    header8['EXTNAME'] = "err_Hcoldens"
+    header8['BUNIT'] = str(err_integrated_H_column_map.unit)
+    header8['COMMENT'] = "uncertainty propagated"
+    hdu_eNH = fits.ImageHDU(data=err_integrated_H_column_map.to_value(), header=header8)
+
+
+    hdul = fits.HDUList([phdu, hdu_NCp, hdu_NH, hdu_mass, hdu_distance, hdu_Tex,
+        hdu_eNCp, hdu_emass, hdu_eNH])
+    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}_with_uncertainty.fits")
+    print(savename)
     hdul.writeto(savename)
 
     # plt.subplot(111)
@@ -3723,9 +3774,9 @@ The column density figure for the paper will be made in m16_pictures.column_dens
 
 
 if __name__ == "__main__":
-    calculate_co_column_density()
+    # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
-    # calculate_cii_column_density()
+    calculate_cii_column_density()
     # calculate_dust_column_densities(v=1)
     # estimate_uncertainty_mass_and_coldens(type='co')
     # estimate_uncertainty_mass_and_coldens(type='cii')
