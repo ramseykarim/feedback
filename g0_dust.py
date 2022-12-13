@@ -20,6 +20,8 @@ from .parse_FIR_fits import open_FIR_pickle, open_FIR_fits, herschel_path
 from . import catalog
 from . import misc_utils
 
+from . import cube_pixel_spectra_2 as cps2
+
 from .mantipython.physics import greybody, dust, instrument
 """
 Currently unknown creation date (while back though)
@@ -226,60 +228,79 @@ def fir_intensity_2():
     Then, use the T-tau solution to integrate intensity between 40 and 500 micron
     for use in PDRToolbox (following the method of fir_intensity())
     """
-    # Copying this part from fir_intensity() (function above)
-    solution_path = catalog.utils.search_for_file("herschel/T-tau_colorsolution.fits")
-    with fits.open(solution_path) as hdul:
-        T_img = hdul['T'].data
-        tau_img = hdul['tau'].data
-        hdr = hdul['T'].header
-        original_w = WCS(hdr)
-    # Extract subimage centered at (XY) (2867, 1745) with width (XY) (1192, 873)
-    # try again with quarter width, lower Y
-    # Cutout2D uses XY for position and YX for size
-    center = (2867, 1745-30)
-    size = (1192//4, 873//4)
-    T_img_cutout = Cutout2D(T_img, center, size[::-1], wcs=original_w)
-    T_img = T_img_cutout.data
-    tau_img = tau_img[T_img_cutout.slices_original]
-    new_w = T_img_cutout.wcs
+    calculate_FIR = True
+    if calculate_FIR:
+        # Copying this part from fir_intensity() (function above)
+        # Remove "_fluxbgsub" to use the normal version with Planck zero-point offset
+        solution_path = catalog.utils.search_for_file("herschel/T-tau_colorsolution_fluxbgsub.fits")
+        with fits.open(solution_path) as hdul:
+            T_img = hdul['T'].data
+            tau_img = hdul['tau'].data
+            hdr = hdul['T'].header
+            original_w = WCS(hdr)
+        # Extract subimage centered at (XY) (2867, 1745) with width (XY) (1192, 873)
+        # try again with quarter width, lower Y
+        # Cutout2D uses XY for position and YX for size
 
-    # plt.subplot(121, projection=new_w)
-    # plt.imshow(T_img, origin='lower', vmin=15, vmax=35)
-    # plt.subplot(122, projection=new_w)
-    # plt.imshow(np.log10(tau_img), origin='lower', vmin=-3.5, vmax=-1.5)
-    # plt.show()
-    # return
+        already_cutout = True
+        if not already_cutout:
+            center = (2867, 1745-30)
+            size = (1192//4, 873//4)
+            T_img_cutout = Cutout2D(T_img, center, size[::-1], wcs=original_w)
+            T_img = T_img_cutout.data
+            tau_img = tau_img[T_img_cutout.slices_original]
+            new_w = T_img_cutout.wcs
+        else:
+            new_w = original_w
 
-    bb = models.BlackBody(T_img[:, :, np.newaxis]*u.K)
-    wl_lims = np.array([40., 500.]) * u.micron
-    nu_lims = wl_lims.to(u.Hz, equivalencies=u.spectral())
-    nu_array = np.linspace(nu_lims[1].to_value(), nu_lims[0].to_value(), 1000) * u.Hz
-    S_array = bb(nu_array[np.newaxis, np.newaxis, :])
-    # tau(nu) = tau_160 * (nu / nu_160)**2 (using beta = 2)
-    tau_array = tau_img[:, :, np.newaxis] * (nu_array[np.newaxis, np.newaxis, :] / (160*u.micron).to(u.Hz, equivalencies=u.spectral()))**2.
-    I_array = S_array * (1. - np.exp(-tau_array))
-    F_array = np.trapz(x=nu_array, y=I_array).to('erg s-1 cm-2 sr-1')
+        finite_mask = np.isfinite(T_img) & np.isfinite(tau_img) & (T_img > 0)
+        T_img[~finite_mask] = np.nan
+        tau_img[~finite_mask] = np.nan
+        # plt.subplot(121, projection=new_w)
+        # plt.imshow(T_img, origin='lower', vmin=15, vmax=35)
+        # plt.subplot(122, projection=new_w)
+        # plt.imshow(np.log10(tau_img), origin='lower', vmin=-3.5, vmax=-1.5)
+        # plt.show()
+        # return
 
-    # plt.subplot(111, projection=new_w)
-    # plt.imshow(F_array.to_value(), origin='lower')
-    # plt.show()
+        bb = models.BlackBody(T_img[:, :, np.newaxis]*u.K)
+        wl_lims = np.array([40., 500.]) * u.micron
+        nu_lims = wl_lims.to(u.Hz, equivalencies=u.spectral())
+        nu_array = np.linspace(nu_lims[1].to_value(), nu_lims[0].to_value(), 1000) * u.Hz
+        S_array = bb(nu_array[np.newaxis, np.newaxis, :])
+        # tau(nu) = tau_160 * (nu / nu_160)**2 (using beta = 2)
+        tau_array = tau_img[:, :, np.newaxis] * (nu_array[np.newaxis, np.newaxis, :] / (160*u.micron).to(u.Hz, equivalencies=u.spectral()))**2.
+        I_array = S_array * (1. - np.exp(-tau_array))
+        F_array = np.trapz(x=nu_array, y=I_array).to('erg s-1 cm-2 sr-1')
 
-    hdr.update(new_w.to_header())
-    hdr['HISTORY'] = f"using {solution_path}"
-    hdr['HISTORY'] = f"cutout center XY {center[0]},{center[1]} size {size[0]},{size[1]}"
-    hdr['HISTORY'] = "integrated 40-500 micron beta=2"
-    hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
-    hdr['CREATOR'] = f"rkarim, via {__file__}.fir_intensity_2"
-    hdr['BUNIT'] = str(F_array.unit)
-    del hdr['EXTNAME']
-    hdu = fits.PrimaryHDU(data=F_array.to_value(), header=hdr)
-    hdu.writeto(os.path.join(os.path.dirname(solution_path), "M16_I_FIR_from70-160.fits"), overwrite=True)
+        # plt.subplot(111, projection=new_w)
+        # plt.imshow(F_array.to_value(), origin='lower')
+        # plt.show()
+
+        hdr.update(new_w.to_header())
+        hdr['HISTORY'] = f"using {solution_path}"
+        if not already_cutout:
+            hdr['HISTORY'] = f"cutout center XY {center[0]},{center[1]} size {size[0]},{size[1]}"
+        hdr['HISTORY'] = "integrated 40-500 micron beta=2"
+        hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        hdr['CREATOR'] = f"rkarim, via {__file__}.fir_intensity_2"
+        hdr['BUNIT'] = str(F_array.unit)
+        del hdr['EXTNAME']
+        hdu = fits.PrimaryHDU(data=F_array.to_value(), header=hdr)
+        hdu.writeto(os.path.join(os.path.dirname(solution_path), "M16_I_FIR_from70-160_fluxbgsub.fits"), overwrite=True)
 
 
     calculate_T_and_tau = False # Done on October 10, 2022, saved as T-tau_colorsolution.fits
     if calculate_T_and_tau:
-        p70_correction = 268
-        p160_correction = 1055
+        regular_background_correction = False
+        if regular_background_correction:
+            # positive offsets from Planck
+            p70_correction = 268
+            p160_correction = 1055
+        else:
+            # Negative offsets, subtracting local background near pillars
+            p70_correction = -2836.24 # +/- 417.06
+            p160_correction = -1365.62 # +/- 229.34
 
         # Set up T vs 70/160 ratio spline model using the bandpass filters
         # Following the code in color_temperature_comparison.ipynb
@@ -326,6 +347,19 @@ def fir_intensity_2():
         p160_img, p160_hdr = fits.getdata(p160_fn, header=True)
         p160_img += p160_correction
 
+        use_cutout = True
+        if use_cutout:
+            center = (2867, 1745-30)
+            size = (1192//4, 873//4)
+            p70_cutout = Cutout2D(p70_img, center, size[::-1], wcs=WCS(p70_hdr))
+            p70_img = p70_cutout.data
+            p160_img = p160_img[p70_cutout.slices_original]
+            new_w = p70_cutout.wcs
+        else:
+            new_w = WCS(p70_hdr)
+
+
+
         observed_br_ratio = p70_img / p160_img
         T_solution = model_bandpass_br_spline(observed_br_ratio)
         tau_solution = p160_img / zerotau_I_spline(T_solution)
@@ -339,14 +373,19 @@ def fir_intensity_2():
         # fig.colorbar(im, ax=axtau)
         # plt.show()
 
-        new_hdr = WCS(p70_hdr).to_header()
+        new_hdr = new_w.to_header()
         new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
         new_hdr['CREATOR'] = f"rkarim, via {__file__}.fir_intensity_2"
         new_hdr['AUTHOR'] = "Ramsey Karim"
         new_hdr['OBJECT'] = "M16"
         new_hdr['HISTORY'] = "Herschel PACS 70 and 160, obsID 1342218995, 160 grid and beam"
         new_hdr['HISTORY'] = f"Zero-point offsets: {p70_correction} (70), {p160_correction} (160)"
-        new_hdr['HISTORY'] = "Zero-point offsets from fit_FIR.py, calculated long ago"
+        if regular_background_correction:
+            new_hdr['HISTORY'] = "Zero-point offsets from fit_FIR.py, calculated long ago"
+        else:
+            new_hdr['HISTORY'] = "Flux background subtracted instead of zero-point correction"
+        if use_cutout:
+            new_hdr['HISTORY'] = f"Cutout center xy {center} size {size}"
         new_hdr['COMMENT'] = "T,tau calc'd using bandpasses; see color_temperature_comparison.ipynb"
         hdul = fits.HDUList([fits.PrimaryHDU(),
             fits.ImageHDU(data=T_solution, header=new_hdr.copy()),
@@ -355,10 +394,51 @@ def fir_intensity_2():
         hdul[1].header['BUNIT'] = 'K'
         hdul[2].header['EXTNAME'] = 'tau'
         hdul[2].header['BUNIT'] = 'optical depth at 160 micron'
-        savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution.fits")
+        savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution_fluxbgsub.fits")
         print("SAVING TO", savepath)
         hdul.writeto(savepath)
 
+
+def find_pacs_background_near_pillars():
+    """
+    December 13, 2022
+    Per Xander and Marc's recommendation, try subtracting the flux out of the map
+    rather than zero-point correcting with Planck and subtracting a column density background
+    I'll use the regions in catalogs/pillar_background_sample_multiple_5.reg
+    """
+    bg_types = ['north', 'south', 'all']
+
+    pacs_obs_dir = catalog.utils.search_for_file("herschel/processed/1342218995_reproc160")
+    make_pacs_fn = lambda band : os.path.join(pacs_obs_dir, f"PACS{band}um-image-remapped-conv.fits")
+    p70_fn, p160_fn = make_pacs_fn(70), make_pacs_fn(160)
+    # Load
+    bands = [70, 160]
+    imgs, hdrs = [], []
+    for i, b in enumerate(bands):
+        fn = make_pacs_fn(b)
+        print(f"--- For {b:3} micron band ---")
+        # Load
+        img, hdr = fits.getdata(fn, header=True)
+        w = WCS(hdr)
+        finite_mask = np.isfinite(img)
+        # Try each combination of background regions
+        for j, t in enumerate(bg_types):
+            # Get background region list
+            bg_reg_list = cps2.get_background_regions(t)
+            # Combine region masks for this combination of background regions
+            mask_list = [reg.to_pixel(w).to_mask().to_image(w.array_shape) for reg in bg_reg_list]
+            bg_mask = np.any(mask_list, axis=0)
+            # Apply mask to data
+            bg_vals = img[finite_mask & bg_mask]
+            # Get stats
+            mean_bg = np.mean(bg_vals)
+            median_bg = np.median(bg_vals)
+            std_bg = np.std(bg_vals)
+            print(f"Background {t}:")
+            print(f"Mean {mean_bg:8.2f}, Median {median_bg:8.2f}")
+            print(f"StdDev {std_bg:8.2f}")
+            print("-"*16)
+        print("---                      ---")
 
 
 def check_I_FIR_G0():
@@ -377,3 +457,4 @@ if __name__ == "__main__":
     # check_I_FIR_G0()
     # make_plot_g0()
     fir_intensity_2()
+    # find_pacs_background_near_pillars()

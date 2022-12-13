@@ -3564,8 +3564,13 @@ def calculate_dust_column_densities(v=1):
         fn_stub = fn_v1
         summary_stub = '70-160-250'
         comment_stub = 'Calculated using mantipython'
-    elif v == 2:
-        fn_v2 = catalog.utils.search_for_file('herschel/T-tau_colorsolution.fits')
+        suffix = ''
+    elif v in [2, 3]:
+        if v == 2:
+            suffix = ''
+        elif v == 3:
+            suffix = '_fluxbgsub'
+        fn_v2 = catalog.utils.search_for_file(f'herschel/T-tau_colorsolution{suffix}.fits')
         tau_v2, hdr_v2 = fits.getdata(fn_v2, extname='tau', header=True)
         tau_large = tau_v2
         wcs_obj_large = WCS(hdr_v2)
@@ -3577,8 +3582,7 @@ def calculate_dust_column_densities(v=1):
     tau = tau_cutout.data
     wcs_obj = tau_cutout.wcs
 
-
-    savename = f"coldens_{summary_stub}.fits"
+    savename = f"coldens_{summary_stub}{suffix}.fits"
     savename = os.path.join(os.path.dirname(fn_stub), savename)
 
     Cext160 = 1.9e-25 * u.cm**2
@@ -3651,7 +3655,14 @@ def calculate_galactocentric_distance_and_12c13c_ratio():
 
 
 
-def estimate_uncertainty_mass_and_coldens(type='cii'):
+def estimate_uncertainty_mass_and_coldens(type='cii', setting=2):
+    """
+    TODO!!!!!!!!!!!!!!!!! (dec 13 2022)
+    rename type (maybe)
+    use setting=2 to add _fluxbgsub to dust (not dust250)
+    see what the results are
+    """
+
     """
     November 21, 2022
     Per Marc's comment on my section draft, I will make uncertainty estimates
@@ -3663,6 +3674,7 @@ def estimate_uncertainty_mass_and_coldens(type='cii'):
         'dust': "herschel/coldens_70-160.fits",
         'dust250': "herschel/coldens_70-160-250.fits",
     }
+    if
     column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens', 'dust': 'Hcoldens', 'dust250': 'Hcoldens'}
     column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens'}
     mass_extname = 'mass'
@@ -3844,12 +3856,12 @@ if __name__ == "__main__":
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
     # calculate_cii_column_density(filling_factor=1.0)
-    # calculate_dust_column_densities(v=2)
+    calculate_dust_column_densities(v=3)
 
     # estimate_uncertainty_mass_and_coldens(type='co')
     # estimate_uncertainty_mass_and_coldens(type='cii')
     # estimate_uncertainty_mass_and_coldens(type='dust')
-    estimate_uncertainty_mass_and_coldens(type='dust250')
+    # estimate_uncertainty_mass_and_coldens(type='dust250')
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
