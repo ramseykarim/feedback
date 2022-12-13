@@ -76,6 +76,7 @@ Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)
 ratio_12co_to_13co = 44.65 # call it 45 in paper, the difference will be miniscule
 
 los_distance_M16 = 1740 * u.pc # Kuhn et al 2019
+err_los_distance_M16 = 130 * u.pc # Kuhn et al 2019; it was +130, -120, so for a symmetric error bar I'll take +/- 130
 
 H2_mass_permole = 2.016 * u.g / u.mol
 H2_mass = (H2_mass_permole / const.N_A).decompose()
@@ -3093,7 +3094,12 @@ def calculate_co_column_density():
     err_Tex = u.Quantity(extract_noise_from_hdr(Texhdr))
     # Tex more often used as kTex (and put units)
     Tex = Tex_unitless*u.K
-    integrated_intensity_unitless, intT_hdr = fits.getdata(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"), header=True)
+
+    fn_13co = catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits")
+
+
+    integrated_intensity_unitless, intT_hdr = fits.getdata(fn_13co, header=True)
+    beam_13co = cube_utils.Beam.from_fits_header(intT_hdr)
     err_intT = u.Quantity(extract_noise_from_hdr(intT_hdr))
     integrated_intensity = integrated_intensity_unitless*u.K*kms
     # Rotational partition function
@@ -3173,11 +3179,17 @@ def calculate_co_column_density():
     wcs_object = WCS(intT_hdr)
 
     pixel_scale = misc_utils.get_pixel_scale(wcs_object)
-    pixel_area = get_physical_area_pixel(NH2, wcs_object, los_distance_M16.to(u.pc).to_value())
+    # pixel_area = get_physical_area_pixel(NH2, wcs_object, los_distance_M16.to(u.pc).to_value())
     # These two methods are the same within 1e-16
-    # pixel_area_2 = (misc_utils.get_pixel_scale(WCS(intT_hdr)) * (los_distance_M16/u.radian))**2
+    pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
+    err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16
+
     mass_per_pixel_map = (pixel_area * NH2 * H2_mass).to(u.solMass)
-    err_mass_per_pixel = (pixel_area * err_NH2 * H2_mass).to(u.solMass)
+    # Include both error from column density as well as from LOS distance
+    err_mass_per_pixel_raw = np.sqrt((pixel_area * err_NH2 * H2_mass)**2 + (err_pixel_area * NH2 * H2_mass)**2).to(u.solMass)
+    pixels_per_beam = (beam_13co.sr / pixel_scale**2).decompose()
+    # sqrt(oversample_factor) to correct for correlated pixels
+    err_mass_per_pixel = np.sqrt(pixels_per_beam) * err_mass_per_pixel_raw
 
     def make_and_fill_header():
         # fill header with stuff, make it from WCS
@@ -3189,6 +3201,7 @@ def calculate_co_column_density():
         hdr['HISTORY'] = f"H2_mass = {H2_mass:.3E}"
         hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
         hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
+        hdr['HISTORY'] = f"sqrt(pixels/beam) oversample = {np.sqrt(pixels_per_beam):.2f}"
         hdr['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f}"
         return hdr
 
@@ -3305,7 +3318,7 @@ def calculate_pillar_lifetimes_from_columndensity():
             file=__file__, func='calculate_pillar_lifetimes_from_columndensity'))
 
 
-def calculate_cii_column_density():
+def calculate_cii_column_density(filling_factor=1.0):
     """
     November 3, 2022
     Following Okada 2015 Sec 3.3 (pg 10)
@@ -3334,7 +3347,7 @@ def calculate_cii_column_density():
 
 
     # Can change this; it doesn't make a huge difference between 0.5 and 1, but below 0.5 you get some major differences (high column density)
-    filling_factor = 0.5
+    # filling_factor = 1.0 # this is an argument now
 
     """
     !!!!!!!!!!!!!!!!!!!!!!!!
@@ -3418,9 +3431,15 @@ def calculate_cii_column_density():
 
     pixel_scale = misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs)
     pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
+    err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16
 
     integrated_mass_pixel_column_map = (integrated_mass_column_map * pixel_area).to(u.solMass)
-    err_integrated_mass_pixel_column_map = (err_integrated_mass_column_map * pixel_area).to(u.solMass)
+    # Include error from column density and from LOS distance
+    err_integrated_mass_pixel_column_map_raw = np.sqrt((err_integrated_mass_column_map * pixel_area)**2 + (integrated_mass_column_map * err_pixel_area)**2).to(u.solMass)
+    pixels_per_beam = (cii_cube.beam.sr / pixel_scale**2).decompose()
+    # sqrt(oversample_factor) to correct for correlated pixels
+    err_integrated_mass_pixel_column_map = np.sqrt(pixels_per_beam) * err_integrated_mass_pixel_column_map_raw
+
 
 
     def make_and_fill_header():
@@ -3435,6 +3454,7 @@ def calculate_cii_column_density():
         hdr['HISTORY'] = f"Hmass = {Hmass:.3E}"
         hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
         hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
+        hdr['HISTORY'] = f"sqrt(pixels/beam) oversample = {np.sqrt(pixels_per_beam):.2f}"
         hdr['HISTORY'] = f"filling factor = {filling_factor:.2f}"
         return hdr
 
@@ -3499,7 +3519,7 @@ def calculate_cii_column_density():
         hdu_eNCp, hdu_emass, hdu_eNH])
     savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}_with_uncertainty.fits")
     print(savename)
-    hdul.writeto(savename)
+    hdul.writeto(savename, overwrite=True)
 
     # plt.subplot(111)
     # plt.imshow(integrated_mass_pixel_column_map.to_value(), origin='lower')
@@ -3532,7 +3552,7 @@ def calculate_dust_column_densities(v=1):
     I have versions using 70--250 and 70--160, I'll check both to compare
     Nov 18: added a mass/pixel map so I can integrate in DS9
     """
-    raise RuntimeError("Already ran on November 21, 2022")
+    # raise RuntimeError("Already ran on November 21, 2022")
     cutout_center_coord = SkyCoord("18:18:55.9969 -13:50:56.169", unit=(u.hourangle, u.deg), frame=FK5)
     cutout_size = (575*u.arcsec, 658*u.arcsec)
     if v == 1:
@@ -3583,17 +3603,26 @@ def calculate_dust_column_densities(v=1):
     hdu = fits.ImageHDU(data=N_H.to_value(), header=new_hdr)
 
     pixel_scale = misc_utils.get_pixel_scale(wcs_obj)
+
     pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
+    err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16 # d((p * L  / 1rad)^2) = p^2 * L dL / (1rad)^2
+
     mass_per_pixel_map = (pixel_area * N_H * Hmass).to(u.solMass)
+    err_mass_per_pixel_map = (err_pixel_area * N_H * Hmass).to(u.solMass)
+
     new_hdr2['EXTNAME'] = "mass"
     new_hdr2['BUNIT'] = str(mass_per_pixel_map.unit)
     new_hdr2['HISTORY'] = f"Hmass = {Hmass:.3E}"
     new_hdr2['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
     new_hdr2['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
-    new_hdr2['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f}"
+    new_hdr2['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f} +/- {err_los_distance_M16.to(u.pc):.2f}"
     hdu2 = fits.ImageHDU(data=mass_per_pixel_map.to_value(), header=new_hdr2)
 
-    hdul = fits.HDUList([phdu, hdu, hdu2])
+    new_hdr3 = new_hdr2.copy()
+    new_hdr3['EXTNAME'] = "err_mass"
+    hdu3 = fits.ImageHDU(data=err_mass_per_pixel_map.to_value(), header=new_hdr3)
+
+    hdul = fits.HDUList([phdu, hdu, hdu2, hdu3])
     hdul.writeto(savename, overwrite=True)
 
 
@@ -3629,26 +3658,30 @@ def estimate_uncertainty_mass_and_coldens(type='cii'):
     for mass and column density. I have taken regions for each
     """
     print("MASS AND COLUMN DENSITIES BASED ON", type)
-    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0.fits",
-        'co': "bima/13co10_column_density_and_more_unmasked.fits",
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty.fits",
         'dust': "herschel/coldens_70-160.fits",
         'dust250': "herschel/coldens_70-160-250.fits",
     }
     column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens', 'dust': 'Hcoldens', 'dust250': 'Hcoldens'}
+    column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens'}
     mass_extname = 'mass'
+    mass_err_extname = 'err_mass'
 
     reg_filename_short = "catalogs/mass_boxes.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
-    reg_dict = {reg.meta['label']: reg for reg in reg_list}
-
-    noise_boxes = [reg for reg in reg_dict if 'noise' in reg]
-
-    noise_box_labels = ['top box', 'bottom box', 'ellipse']
+    reg_dict = {reg.meta['label']: reg for reg in reg_list if 'noise' not in reg.meta['label']}
 
     with fits.open(catalog.utils.search_for_file(filenames_dict[type])) as hdul:
         column_map = hdul[column_extnames[type]].data
         hdr = hdul[column_extnames[type]].header
         mass_map = hdul[mass_extname].data
+        if type in column_err_extnames:
+            err_column_map = hdul[column_err_extnames[type]].data
+        else:
+            err_column_map = None
+        err_mass_map = hdul[mass_err_extname].data # all data have mass error maps now, from LOS uncertainty
+    finite_mask = np.isfinite(column_map)
 
     wcs_object = WCS(hdr)
 
@@ -3661,104 +3694,138 @@ def estimate_uncertainty_mass_and_coldens(type='cii'):
     plt.title("Mass/pixel")
     axes_hist = [plt.subplot(222), plt.subplot(224)]
 
-    col_mean_vals = []
-    col_stddev_vals = []
-    mass_mean_vals = []
-    mass_stddev_vals = []
+    col_mean_vals = {}
+    col_stddev_vals = {}
+    col_mean_stat_unc = {}
+    mass_mean_vals = {}
+    mass_stddev_vals = {}
+    mass_mean_stat_unc = {}
 
-    for i, noise_box_name in enumerate(noise_boxes):
-        pix_box = reg_dict[noise_box_name].to_pixel(wcs_object)
-        ax_col.add_artist(pix_box.as_artist(fill=False))
-        ax_mass.add_artist(pix_box.as_artist(fill=False))
+    noise_box_lists = [cps2.get_background_regions('north'), cps2.get_background_regions('south')]
+    noise_box_lists_labels = ['north', 'south']
+    noise_box_colors = [marcs_colors[0], marcs_colors[1]]
 
-        mask = pix_box.to_mask()
-        col_values = mask.get_values(column_map)
-        col_values = col_values[np.isfinite(col_values)]
-        mass_values = mask.get_values(mass_map)
-        len_in_box = len(mass_values)
-        mass_values = mass_values[np.isfinite(mass_values)]
+    for i, noise_reg_list in enumerate(noise_box_lists):
+
+        pix_reg_list = [reg.to_pixel(wcs_object) for reg in noise_reg_list]
+        mask_list = []
+        for pix_reg in pix_reg_list:
+            ax_col.add_artist(pix_reg.as_artist(fill=False, edgecolor=noise_box_colors[i]))
+            ax_mass.add_artist(pix_reg.as_artist(fill=False, edgecolor=noise_box_colors[i]))
+
+            mask_list.append(pix_reg.to_mask().to_image(wcs_object.array_shape)) # you have to use .to_image() since .to_mask() returns a RegionMask object, which behaves strangely
+        noise_mask = np.any(mask_list, axis=0)
+
+        col_values = column_map[noise_mask & finite_mask]
+        mass_values = mass_map[noise_mask & finite_mask]
+        if err_column_map is None:
+            err_col_values = 0
+        else:
+            err_col_values = err_column_map[noise_mask & finite_mask]
+        err_mass_values = err_mass_map[noise_mask & finite_mask]
+        n_pixels = len(col_values)
 
         mean_col = np.mean(col_values)
         std_col = np.std(col_values)
-
+        # error on mean: (1/N) * sum(e**2 for e in errors)
+        mean_col_stat_err = np.sqrt(np.sum(err_col_values**2)) / n_pixels
 
         sum_bg_mass = np.sum(mass_values)
         mean_bg_mass = np.mean(mass_values)
         std_bg_mass = np.std(mass_values)
-        n_pixels = len(mass_values)
+        mean_bg_mass_stat_err = np.sqrt(np.sum(err_mass_values**2)) / n_pixels
 
-        col_mean_vals.append(mean_col)
-        col_stddev_vals.append(std_col)
-        mass_mean_vals.append(mean_bg_mass)
-        mass_stddev_vals.append(std_bg_mass)
+        col_mean_vals[noise_box_lists_labels[i]] = mean_col
+        col_stddev_vals[noise_box_lists_labels[i]] = std_col
+        col_mean_stat_unc[noise_box_lists_labels[i]] = mean_col_stat_err
+        mass_mean_vals[noise_box_lists_labels[i]] = mean_bg_mass
+        mass_stddev_vals[noise_box_lists_labels[i]] = std_bg_mass
+        mass_mean_stat_unc[noise_box_lists_labels[i]] = mean_bg_mass_stat_err
 
-        print(f"NOISE BOX {noise_box_name}")
+        print(f"NOISE FROM {noise_box_lists_labels[i]}")
 
-        print("Pixels in mask (NaN and real)", len_in_box)
         print("Pixels in mask (real)", n_pixels)
         print("Pixels in image", column_map.size)
 
-        print(f"Mean/STD column: {mean_col:.2E} +/- {std_col:.2E}")
-        print(f"Sum background: {sum_bg_mass:.1f}")
-        stat_background = mean_bg_mass * n_pixels
-        unc_background = (n_pixels) * std_bg_mass
-        print(f"Stat background: {stat_background:.1f} +/- {unc_background:.1f}")
-        print(f"Mean/STD mass/pixel: {mean_bg_mass:.2E} +/- {std_bg_mass:.2E}")
+        print(f"Mean/STD column: {mean_col:.2E} +/- {std_col:.2E}(sys) +/- {mean_col_stat_err:.2E}(stat)")
+        print(f"Sum background: {sum_bg_mass:.1f} +/- {std_bg_mass*n_pixels:.3f}(sys) +/- {mean_bg_mass_stat_err*n_pixels:.3f}(stat)")
+        print(f"Mean bg mass/pixel: {mean_bg_mass:.2E} +/- {std_bg_mass:.2E}(sys) +/- {mean_bg_mass_stat_err:.2E}(stat)")
 
-        axes_hist[0].hist(col_values, bins=32, histtype='step', density=True, label=noise_box_labels[i])
-        axes_hist[1].hist(mass_values, bins=32, histtype='step', density=True, label=noise_box_labels[i])
+        axes_hist[0].hist(col_values, bins=32, histtype='step', density=True, label=noise_box_lists_labels[i])
+        axes_hist[1].hist(mass_values, bins=32, histtype='step', density=True, label=noise_box_lists_labels[i])
 
         print('='*8)
 
     axes_hist[0].legend()
-    plt.savefig(f"/home/ramsey/Pictures/2022-11-21/coldens_and_mass_noise_{type}.png",
+    # 2022-11-21
+    plt.savefig(f"/home/ramsey/Pictures/2022-12-06/coldens_and_mass_noise_{type}.png",
         metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
             file=__file__, func='estimate_uncertainty_mass_and_coldens'))
 
     print("\n\n")
 
     for reg in reg_dict:
-        if reg in noise_boxes:
+        if 'noise' in reg:
             # Pillars only
             continue
         print(f"REGION {reg}")
         pix_reg = reg_dict[reg].to_pixel(wcs_object)
-        mask = pix_reg.to_mask()
-        col_values = mask.get_values(column_map)
-        col_values = col_values[np.isfinite(col_values)]
-        mass_values = mask.get_values(mass_map)
-        mass_values = mass_values[np.isfinite(mass_values)]
+        mask = pix_reg.to_mask().to_image(wcs_object.array_shape).astype(bool)
 
-        max_col = np.max(col_values)
+        col_values = column_map[mask & finite_mask]
+        mass_values = mass_map[mask & finite_mask]
+
+        if err_column_map is None:
+            err_col_values = 0
+        else:
+            err_col_values = err_column_map[mask & finite_mask]
+        err_mass_values = err_mass_map[mask & finite_mask]
+
+        max_col_loc = np.argmax(col_values)
+        max_col = col_values[max_col_loc]
+        max_col_stat_unc = err_col_values[max_col_loc] if err_column_map is not None else 0
 
         sum_mass = np.sum(mass_values)
+        mass_stat_unc = np.sqrt(np.sum(err_mass_values**2))
         n_pixels = len(mass_values)
 
-        select_index = (1 if reg=='p1b' else 0)
+        select_index = ('south' if reg=='p1b' else 'north')
+
         if type=='co':
-            select_index = 2
-        col_mean_bg = col_mean_vals[select_index]
-        col_unc = col_stddev_vals[select_index]
-        mass_pixel_bg = mass_mean_vals[select_index]
-        mass_pixel_unc = mass_stddev_vals[select_index]
+            col_mean_bg = 0
+            col_sys_unc = 0
+            col_mean_bg_stat_unc = 0
+            mass_pixel_bg = 0
+            mass_pixel_sys_unc = 0
+            mass_pixel_bg_stat_unc = 0
+        else:
+            col_mean_bg = col_mean_vals[select_index]
+            col_sys_unc = col_stddev_vals[select_index]
+            col_mean_bg_stat_unc = col_mean_stat_unc[select_index]
+            mass_pixel_bg = mass_mean_vals[select_index]
+            mass_pixel_sys_unc = mass_stddev_vals[select_index]
+            mass_pixel_bg_stat_unc = mass_mean_stat_unc[select_index]
 
         mass_bg = n_pixels * mass_pixel_bg
-        mass_unc = (n_pixels) * mass_pixel_unc
+        mass_sys_unc = n_pixels * mass_pixel_sys_unc
+        mass_bg_stat_unc = n_pixels * mass_pixel_bg_stat_unc
 
         subtracted_column = max_col - col_mean_bg
-        subtracted_column_uncertainty = np.sqrt(2)*col_unc
+        subtracted_column_sys_uncertainty = col_sys_unc*np.sqrt(2)
+        subtracted_column_stat_uncertainty = np.sqrt(max_col_stat_unc**2 + col_mean_bg_stat_unc**2)
 
         subtracted_mass = sum_mass - mass_bg
-        subtracted_mass_uncertainty = np.sqrt(2)*mass_unc
+        subtracted_mass_sys_uncertainty = mass_sys_unc*np.sqrt(2)
+        subtracted_mass_stat_uncertainty = np.sqrt(mass_stat_unc**2 + mass_bg_stat_unc**2)
 
-        print(f"Max Col (no sub): {max_col:.2E} +/- {col_unc:.2E}")
-        print(f"Max Col (corrected): {subtracted_column:.2E} +/- {subtracted_column_uncertainty:.2E}")
-        print(f"Mass (no sub): {sum_mass:2f} +/- {mass_unc:.2f}")
-        print(f"Mass (corrected) {subtracted_mass:.2f} +/- {subtracted_mass_uncertainty:.2f}")
-        print(f"Background used: {mass_bg:.2f} +/- {mass_unc:.2f}")
+        print(f"Max Col (no sub): {max_col:.2E} +/- {col_sys_unc:.2E}(sys) +/- {max_col_stat_unc:.2E}(stat)")
+        print(f"Max Col (corrected): {subtracted_column:.2E} +/- {subtracted_column_sys_uncertainty:.2E}(sys) +/- {subtracted_column_stat_uncertainty:.2E}(stat)")
+        print(f"Mass (no sub): {sum_mass:.2f} +/- {mass_sys_unc:.2f}(sys) +/- {mass_stat_unc:.2f}(stat)")
+        print(f"Mass (corrected) {subtracted_mass:.2f} +/- {subtracted_mass_sys_uncertainty:.2f}(sys) +/- {subtracted_mass_stat_uncertainty:.2f}(stat)")
+        print(f"Background used: {mass_bg:.2f} +/- {mass_sys_unc:.2f}(sys) +/- {mass_bg_stat_unc:.2f}(stat)")
 
         print("-"*5)
-        print(f"{subtracted_column:.2E} {subtracted_column_uncertainty:.2E} {subtracted_mass:.2f} {subtracted_mass_uncertainty:.2f}")
+        print(f"{subtracted_column:.2E} {subtracted_column_sys_uncertainty:.2E} {subtracted_column_stat_uncertainty:.2E} | {subtracted_mass:.2f} {subtracted_mass_sys_uncertainty:.2f} {subtracted_mass_stat_uncertainty:.2f}")
         print("-"*5)
 
         print("="*10)
@@ -3776,12 +3843,13 @@ The column density figure for the paper will be made in m16_pictures.column_dens
 if __name__ == "__main__":
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
-    calculate_cii_column_density()
-    # calculate_dust_column_densities(v=1)
+    # calculate_cii_column_density(filling_factor=1.0)
+    # calculate_dust_column_densities(v=2)
+
     # estimate_uncertainty_mass_and_coldens(type='co')
     # estimate_uncertainty_mass_and_coldens(type='cii')
     # estimate_uncertainty_mass_and_coldens(type='dust')
-    # estimate_uncertainty_mass_and_coldens(type='dust250')
+    estimate_uncertainty_mass_and_coldens(type='dust250')
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]

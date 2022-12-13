@@ -1697,19 +1697,44 @@ def smooth_spatial(img_to_convolve, img_wcs, cube, target_beam):
     return convolution.convolve(img_to_convolve, conv_beam.as_kernel(misc_utils.get_pixel_scale(img_wcs)), boundary='extend')
 
 
-def get_cii_background(cii_cube=None, return_artist=False, **kwargs):
+def get_background_regions(select='all'):
+    """
+    December 6, 2022
+    Load in background regions around the pillars.
+    :param select: changes the subset of regions.
+        'all' loads all 5 regions.
+        'north' loads 4 northern regions, good for pillar heads and P2 and P3 bodies
+        'south' loads 1 southern region near P1b, good for the base of P1.
+        The southern sample could be used for the Shelf, but the background
+        changes a lot around there, so it's tricky.
+    """
+    bg_reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_5.reg")) # 5 is the most updated version as of Dec 6, 2022
+    print(f"<get_background_regions> using {select} background regions")
+    if select == 'north':
+        return bg_reg_list[:4]
+    elif select == 'south':
+        return bg_reg_list[4:] # still want it to be a list
+    elif select == 'all':
+        return bg_reg_list
+    else:
+        raise RuntimeError(f"Unrecognized argument <{select}> to {os.path.basename(__file__)}.get_background_regions")
+
+
+def get_cii_background(cii_cube=None, select='north', return_artist=False, **kwargs):
     """
     Load up the standard CII background spectrum
     Unfortunately totally messes up your noise estimates (I don't want to make that calculation)
     :param cii_cube: SpectralCube, a CII cube from which to take the background spectrum.
         If left None, loads up the standard CII cube and takes the spectrum.
+    :param select: passed to get_background_regions, chooses which background regions are used.
+        north is good for P1a, P2, P3. south is good for P1b. all is probably kind of ok somewhere
     :param return_artist: return a matplotlib artist for the background patch
     :param kwargs: sent to PixelRegion.as_artist()
     :returns: Quantity array spectrum (, list(Artist) for background patch)
     """
     if cii_cube is None:
         cii_cube = cutout_subcube(length_scale_mult=None)
-    bg_reg = regions.read_ds9(catalog.utils.search_for_file("catalogs/pillar_background_sample_multiple_4.reg"))
+    bg_reg = get_background_regions(select=select)
     cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg).mean(axis=(1, 2))
     kwargs.setdefault('fill', False)
     kwargs.setdefault('color', 'k')

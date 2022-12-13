@@ -919,7 +919,7 @@ def background_samples_figure():
     average
     """
     cii_cube = cps2.cutout_subcube(length_scale_mult=7)
-    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_5_v2.reg"
+    bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_5.reg" # this used to be "5_v2" but I renamed "5_v2" to "5", so "5" is the most updated as of Dec 6, 2022
     bg_reg = regions.read_ds9(catalog.utils.search_for_file(bg_reg_filename_short))
     cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg[:-1]).mean(axis=(1, 2))
     kwargs = {'fill': False}
