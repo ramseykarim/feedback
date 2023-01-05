@@ -253,7 +253,7 @@ def fir_intensity_2():
         else:
             new_w = original_w
 
-        finite_mask = np.isfinite(T_img) & np.isfinite(tau_img) & (T_img > 0)
+        finite_mask = np.isfinite(T_img) & np.isfinite(tau_img) & (T_img > 0) & (tau_img > 0)
         T_img[~finite_mask] = np.nan
         tau_img[~finite_mask] = np.nan
         # plt.subplot(121, projection=new_w)

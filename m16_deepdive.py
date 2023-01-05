@@ -3572,6 +3572,12 @@ def calculate_dust_column_densities(v=1):
             suffix = '_fluxbgsub'
         fn_v2 = catalog.utils.search_for_file(f'herschel/T-tau_colorsolution{suffix}.fits')
         tau_v2, hdr_v2 = fits.getdata(fn_v2, extname='tau', header=True)
+        # Use the T image to mask the tau image
+        T = fits.getdata(fn_v2, extname='T')
+        finite_mask = np.isfinite(T) & np.isfinite(tau_v2) & (T > 0) & (tau_v2 > 0)
+        tau_v2[~finite_mask] = np.nan
+        del T
+        # finished masking, delete T
         tau_large = tau_v2
         wcs_obj_large = WCS(hdr_v2)
         fn_stub = fn_v2
@@ -3655,10 +3661,9 @@ def calculate_galactocentric_distance_and_12c13c_ratio():
 
 
 
-def estimate_uncertainty_mass_and_coldens(type='cii', setting=2):
+def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     """
     TODO!!!!!!!!!!!!!!!!! (dec 13 2022)
-    rename type (maybe)
     use setting=2 to add _fluxbgsub to dust (not dust250)
     see what the results are
     """
@@ -3668,28 +3673,35 @@ def estimate_uncertainty_mass_and_coldens(type='cii', setting=2):
     Per Marc's comment on my section draft, I will make uncertainty estimates
     for mass and column density. I have taken regions for each
     """
-    print("MASS AND COLUMN DENSITIES BASED ON", type)
+    print("MASS AND COLUMN DENSITIES BASED ON", tracer)
     filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty.fits",
         'co': "bima/13co10_column_density_and_more_with_uncertainty.fits",
         'dust': "herschel/coldens_70-160.fits",
         'dust250': "herschel/coldens_70-160-250.fits",
     }
-    if
     column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens', 'dust': 'Hcoldens', 'dust250': 'Hcoldens'}
     column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens'}
     mass_extname = 'mass'
     mass_err_extname = 'err_mass'
 
-    reg_filename_short = "catalogs/mass_boxes.reg"
+    entire_pillar_mass = False
+    if entire_pillar_mass:
+        reg_filename_short = "catalogs/mass_boxes.reg"
+    else:
+        reg_filename_short = "catalogs/p123_boxes_head_body_withlabels_v3.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_dict = {reg.meta['label']: reg for reg in reg_list if 'noise' not in reg.meta['label']}
 
-    with fits.open(catalog.utils.search_for_file(filenames_dict[type])) as hdul:
-        column_map = hdul[column_extnames[type]].data
-        hdr = hdul[column_extnames[type]].header
+    fn = filenames_dict[tracer]
+    if setting == 2 and tracer == 'dust':
+        print("Using the version with FLUX BACKGROUND SUBTRACTION")
+        fn = fn.replace('.fits', '_fluxbgsub.fits')
+    with fits.open(catalog.utils.search_for_file(fn)) as hdul:
+        column_map = hdul[column_extnames[tracer]].data
+        hdr = hdul[column_extnames[tracer]].header
         mass_map = hdul[mass_extname].data
-        if type in column_err_extnames:
-            err_column_map = hdul[column_err_extnames[type]].data
+        if tracer in column_err_extnames:
+            err_column_map = hdul[column_err_extnames[tracer]].data
         else:
             err_column_map = None
         err_mass_map = hdul[mass_err_extname].data # all data have mass error maps now, from LOS uncertainty
@@ -3769,8 +3781,8 @@ def estimate_uncertainty_mass_and_coldens(type='cii', setting=2):
         print('='*8)
 
     axes_hist[0].legend()
-    # 2022-11-21
-    plt.savefig(f"/home/ramsey/Pictures/2022-12-06/coldens_and_mass_noise_{type}.png",
+    # 2022-11-21, 2022-12-06/
+    plt.savefig(f"/home/ramsey/Pictures/2022-12-13/coldens_and_mass_noise_{tracer}.png",
         metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
             file=__file__, func='estimate_uncertainty_mass_and_coldens'))
 
@@ -3801,9 +3813,9 @@ def estimate_uncertainty_mass_and_coldens(type='cii', setting=2):
         mass_stat_unc = np.sqrt(np.sum(err_mass_values**2))
         n_pixels = len(mass_values)
 
-        select_index = ('south' if reg=='p1b' else 'north')
+        select_index = ('south' if ('p1b' in reg) else 'north')
 
-        if type=='co':
+        if tracer=='co':
             col_mean_bg = 0
             col_sys_unc = 0
             col_mean_bg_stat_unc = 0
@@ -3856,12 +3868,12 @@ if __name__ == "__main__":
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
     # calculate_cii_column_density(filling_factor=1.0)
-    calculate_dust_column_densities(v=3)
+    # calculate_dust_column_densities(v=3)
 
-    # estimate_uncertainty_mass_and_coldens(type='co')
-    # estimate_uncertainty_mass_and_coldens(type='cii')
-    # estimate_uncertainty_mass_and_coldens(type='dust')
-    # estimate_uncertainty_mass_and_coldens(type='dust250')
+    # estimate_uncertainty_mass_and_coldens(tracer='co')
+    # estimate_uncertainty_mass_and_coldens(tracer='cii')
+    estimate_uncertainty_mass_and_coldens(tracer='dust')
+    # estimate_uncertainty_mass_and_coldens(tracer='dust250')
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
     # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
