@@ -59,7 +59,9 @@ def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
     :param length_scale_mult: multiplier for the length_scale, wherever that
         comes from. Default is 2
     :param data_filename: filename for the cube. Can be absolute or under one
-        of the "_data" directories in Feedback/. Default is M16 SOFIA CII
+        of the "_data" directories in Feedback/. Default is M16 SOFIA CII.
+        As of Jan 7, 2023, CubeData takes dict keys to cubefilenames, so this
+        function can take them too since it passes right to CubeData
     :param reg_filename: filename for DS9 .reg file to use for center coordinate
         and length_scale. If None, then length_scale and global_center_coord
         should be given. This will override those, if given.
@@ -90,7 +92,7 @@ def cutout_subcube(length_scale_mult=2, data_filename=None, reg_filename=None,
             None, None, pvpath_width=10*u.arcsec, points_not_paths=True
         )
 
-    cube = cube_utils.CubeData(data_filename)
+    cube = cube_utils.CubeData(data_filename) # Can take dict keys to cubefilenames
     cube.convert_to_K()
     cube_info['dir'] = cube.directory
     if length_scale_mult is None:

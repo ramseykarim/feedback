@@ -114,9 +114,16 @@ class CubeData:
     data (like the BIMA 4-D cube...)
     Written July 21-22, 2020
     Updated November 16, 2020 to take CARMA data
+    Updated January 7, 2023 to take dict keys to cubefilenames
     """
     def __init__(self, filename):
+        # Check if filename is dict key to cubefilenames
+        if filename in cubefilenames:
+            # Expand from key into filename
+            filename = cubefilenames[filename]
+        # Expand from relative to absolute path
         if not os.path.exists(filename):
+            # Path is relative to the "data" path (e.g. m16_data/)
             self.full_path = catalog.utils.search_for_file(filename)
         else:
             self.full_path = os.path.abspath(filename)

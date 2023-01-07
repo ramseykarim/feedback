@@ -1567,6 +1567,113 @@ def column_density_figure():
     plt.show()
 
 
+def multi_panel_moment_images():
+    """
+    January 5, 2023 (First work of 2023)
+    Create a multi-panel figure showing moment images (over same interval) and
+    photometry, all on the same grid and cutout, but all at native resolution
+    The key here will be picking a grid and regridding everything to it.
+
+    Probably the 12co10 grid. 12co10 pixels are 0.5'' while IRAC is at 0.6''.
+    The CARMA grids (e.g. hcop) are also at 0.5'' and have a larger footprint.
+
+    The only finer grids are optical/NIR, but I'll present those somewhere else
+    The data that go here are:
+    cii
+    oi (maybe cii as overlay?)
+    12co10 (c18o10 overlay?)
+    13co10 (should this also be an overlay?)
+    12co32 (13co32 overlay)
+    12co65
+    hcop
+    hcn (n2hp overlay?)
+    cs
+    8um
+    70um (160um overlay)
+
+    n2hp, c18o10, and any other limited-emission lines can go in a contour overlay somewhere (maybe on this plot?)
+    """
+    selected_data = [
+        '12co10', '13co10', '12co32', '12co65', 'hcop', 'cs',
+        'cii', 'oi', 'hcn', '8um', '70um']
+    overlays = { # overlay: image on which to overlay
+        'c18o10': '12co10', '13co32': '12co32', 'n2hp': 'hcn', '160um': '70um'
+    }
+    grid_shape = (2, 6)
+
+    # for the draft version
+    selected_data = ['12co10', 'cii']
+    overlays = {'13co10': '12co10'}
+    grid_shape = (1, 2)
+
+    # Set up reference grid and velocity limits
+    reference_grid_stub = '12co10'
+    vel_lims = (18, 27)
+
+    # Add units to velocity limits and make a string description
+    vel_lims = tuple(x*kms for x in vel_lims)
+    vel_lims_stub = make_vel_stub(vel_lims)
+
+    # use np.unravel_index(i, grid_shape)
+
+    # Plotting config and defaults
+    fig = plt.figure(figsize=(8, 6))
+    plot_kwargs = dict(origin='lower', cmap='viridis')
+
+    # First, grab the reference grid data and plot it while we have it loaded
+    # Save the wcs to an object which we will use for the rest of them
+    # Assumption is cube, change it if it's a 2d image
+    ref_cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=reference_grid_stub)
+    ref_mom0 = ref_cube.spectral_slab(*vel_lims).moment0()
+    ref_wcs = ref_mom0.wcs
+    ref_shape = ref_mom0.shape
+
+    # Memoize axes, and use the ref_wcs to make the Axes objects
+    axes = {}
+    def get_axis(index):
+        # Index is 1D index of stub in selected_data list
+        if index not in axes:
+            ax = plt.subplot2grid(grid_shape, np.unravel_index(index, grid_shape), projection=ref_wcs)
+            axes[index] = ax
+        return axes[index]
+
+
+    # Plot the reference image while we have it loaded
+    ax = get_axis(selected_data.index(reference_grid_stub))
+    # And remember to skip the reference when we come by it in the general loop
+    ax.imshow(ref_mom0.to_value(), **plot_kwargs)
+    # # TODO: vlims
+    # # TODO: colorbars
+
+    # General loop over the rest of the images
+    for i, stub in enumerate(selected_data):
+        if stub == reference_grid_stub:
+            # Skip the reference, we already plotted it
+            # Could use this loop to dress it up, add titles and colorbars and stuff
+            continue
+        if stub in cube_utils.cubefilenames:
+            # Cube, make moment
+            cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=stub)
+            mom0 = cube.spectral_slab(*vel_lims).moment0()
+            raw_wcs = mom0.wcs
+            raw_img = mom0.to_value()
+        else:
+            # 2D Photometry, code this in later. Make a dictionary somewhere, though we might already have one (CrossCut?)
+            """
+            For the record, this procedure is very similar to DataLayer, which I made for CrossCut.
+            But it's pretty simple and DataLayer does a lot of other stuff that I don't need to do here,
+            so I'm going to rewrite the wheel. It's just a circle.
+            """
+            raise NotImplementedError
+        # Regrid to reference wcs. Use nearest-neighbor (order=0) to preserve pixellation
+        img_reproj = reproject_interp((raw_img, raw_wcs), ref_wcs, shape_out=ref_shape, order=0, return_footprint=False)
+        ax = get_axis(i)
+        ax.imshow(img_reproj, **plot_kwargs)
+        ax.coords.grid(color='white', alpha=0.5, linestyle='solid')
+    plt.show()
+
+
+
 if __name__ == "__main__":
     # m16_channel_maps()
     # save_fits_thin_channel_maps()
@@ -1575,7 +1682,9 @@ if __name__ == "__main__":
     # simple_mom0_carma_molecules('cii')
     # advanced_mom0_carma_molecules()
 
-    background_samples_figure()
+    # background_samples_figure()
 
     # try_component_velocity_figure()
     # column_density_figure()
+
+    multi_panel_moment_images()
