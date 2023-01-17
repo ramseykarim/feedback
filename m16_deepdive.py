@@ -3684,7 +3684,9 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     mass_extname = 'mass'
     mass_err_extname = 'err_mass'
 
-    entire_pillar_mass = False
+    ########################### toggle whether it's P1a/P1b/P2/P3 or heads and necks are separated
+    entire_pillar_mass = True
+    ############################
     if entire_pillar_mass:
         reg_filename_short = "catalogs/mass_boxes.reg"
     else:
@@ -3781,8 +3783,8 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
         print('='*8)
 
     axes_hist[0].legend()
-    # 2022-11-21, 2022-12-06/
-    plt.savefig(f"/home/ramsey/Pictures/2022-12-13/coldens_and_mass_noise_{tracer}.png",
+    # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16
+    plt.savefig(f"/home/ramsey/Pictures/2023-01-16/coldens_and_mass_noise_{tracer}.png",
         metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
             file=__file__, func='estimate_uncertainty_mass_and_coldens'))
 
@@ -3815,7 +3817,9 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
 
         select_index = ('south' if ('p1b' in reg) else 'north')
 
-        if tracer=='co':
+        no_background_subtract = ((tracer=='co') or ('dust' in tracer))
+
+        if no_background_subtract:
             col_mean_bg = 0
             col_sys_unc = 0
             col_mean_bg_stat_unc = 0
@@ -3830,6 +3834,7 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
             mass_pixel_sys_unc = mass_stddev_vals[select_index]
             mass_pixel_bg_stat_unc = mass_mean_stat_unc[select_index]
 
+        # if N x Mass is the formula, d/dMass is N, so N x sigma is the error
         mass_bg = n_pixels * mass_pixel_bg
         mass_sys_unc = n_pixels * mass_pixel_sys_unc
         mass_bg_stat_unc = n_pixels * mass_pixel_bg_stat_unc
@@ -3848,8 +3853,14 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
         print(f"Mass (corrected) {subtracted_mass:.2f} +/- {subtracted_mass_sys_uncertainty:.2f}(sys) +/- {subtracted_mass_stat_uncertainty:.2f}(stat)")
         print(f"Background used: {mass_bg:.2f} +/- {mass_sys_unc:.2f}(sys) +/- {mass_bg_stat_unc:.2f}(stat)")
 
+
+        column_modifier = 1e21
+        # N(H) vs N(H2). dust and cii are in N(H), convert to N(H2) equivalent
+        if (tracer=='cii') or ('dust' in tracer):
+            column_modifier *= 2
         print("-"*5)
-        print(f"{subtracted_column:.2E} {subtracted_column_sys_uncertainty:.2E} {subtracted_column_stat_uncertainty:.2E} | {subtracted_mass:.2f} {subtracted_mass_sys_uncertainty:.2f} {subtracted_mass_stat_uncertainty:.2f}")
+        print(f"{subtracted_column/column_modifier:4.1f} {subtracted_column_stat_uncertainty/column_modifier:.1f} (sta) | {subtracted_mass:.2f} {subtracted_mass_stat_uncertainty:.2f} (sta) {subtracted_mass_sys_uncertainty:.2f} (sys)")
+        print(f"sys {subtracted_column_sys_uncertainty/column_modifier:.2f}")
         print("-"*5)
 
         print("="*10)
@@ -3872,7 +3883,7 @@ if __name__ == "__main__":
 
     # estimate_uncertainty_mass_and_coldens(tracer='co')
     # estimate_uncertainty_mass_and_coldens(tracer='cii')
-    estimate_uncertainty_mass_and_coldens(tracer='dust')
+    estimate_uncertainty_mass_and_coldens(tracer='cii')
     # estimate_uncertainty_mass_and_coldens(tracer='dust250')
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]

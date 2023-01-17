@@ -1602,9 +1602,9 @@ def multi_panel_moment_images():
     grid_shape = (2, 6)
 
     # for the draft version
-    selected_data = ['12co10', 'cii']
+    selected_data = ['12co10', 'cii', '8um']
     overlays = {'13co10': '12co10'}
-    grid_shape = (1, 2)
+    grid_shape = (1, 3)
 
     # Set up reference grid and velocity limits
     reference_grid_stub = '12co10'
@@ -1614,19 +1614,46 @@ def multi_panel_moment_images():
     vel_lims = tuple(x*kms for x in vel_lims)
     vel_lims_stub = make_vel_stub(vel_lims)
 
+    # Lookup table for 2D data filenames and info
+    photometry_lookup = {
+        '8um': ("spitzer/SPITZER_I4_mosaic.fits",)
+    }
+
+
+    def load_helper(cube_or_image_stub):
+        # Load a cube or image
+        # Perform a moment 0 integration if it's a cube
+        # Return the image and WCS
+        # TODO: Units of images. Cubes will be in K km/s
+        """
+        For the record, this procedure is very similar to DataLayer, which I made for CrossCut.
+        But it's pretty simple and DataLayer does a lot of other stuff that I don't need to do here,
+        so I'm going to rewrite the wheel. It's just a circle.
+        """
+        if cube_or_image_stub in cube_utils.cubefilenames:
+            cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=cube_or_image_stub)
+            mom0 = cube.spectral_slab(*vel_lims).moment0()
+            img = mom0.to_value()
+            wcs_obj = mom0.wcs
+        else:
+            filename, = photometry_lookup[cube_or_image_stub]
+            img, header = fits.getdata(catalog.utils.search_for_file(filename), header=True)
+            wcs_obj = WCS(header)
+        return img, wcs_obj
+
     # use np.unravel_index(i, grid_shape)
 
     # Plotting config and defaults
     fig = plt.figure(figsize=(8, 6))
     plot_kwargs = dict(origin='lower', cmap='viridis')
+    contour_kwargs = dict(cmap='magma_r')
 
     # First, grab the reference grid data and plot it while we have it loaded
     # Save the wcs to an object which we will use for the rest of them
     # Assumption is cube, change it if it's a 2d image
-    ref_cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=reference_grid_stub)
-    ref_mom0 = ref_cube.spectral_slab(*vel_lims).moment0()
-    ref_wcs = ref_mom0.wcs
-    ref_shape = ref_mom0.shape
+
+    ref_img, ref_wcs = load_helper(reference_grid_stub)
+    ref_shape = ref_img.shape
 
     # Memoize axes, and use the ref_wcs to make the Axes objects
     axes = {}
@@ -1637,11 +1664,10 @@ def multi_panel_moment_images():
             axes[index] = ax
         return axes[index]
 
-
     # Plot the reference image while we have it loaded
     ax = get_axis(selected_data.index(reference_grid_stub))
     # And remember to skip the reference when we come by it in the general loop
-    ax.imshow(ref_mom0.to_value(), **plot_kwargs)
+    ax.imshow(ref_img, **plot_kwargs)
     # # TODO: vlims
     # # TODO: colorbars
 
@@ -1651,25 +1677,23 @@ def multi_panel_moment_images():
             # Skip the reference, we already plotted it
             # Could use this loop to dress it up, add titles and colorbars and stuff
             continue
-        if stub in cube_utils.cubefilenames:
-            # Cube, make moment
-            cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=stub)
-            mom0 = cube.spectral_slab(*vel_lims).moment0()
-            raw_wcs = mom0.wcs
-            raw_img = mom0.to_value()
-        else:
-            # 2D Photometry, code this in later. Make a dictionary somewhere, though we might already have one (CrossCut?)
-            """
-            For the record, this procedure is very similar to DataLayer, which I made for CrossCut.
-            But it's pretty simple and DataLayer does a lot of other stuff that I don't need to do here,
-            so I'm going to rewrite the wheel. It's just a circle.
-            """
-            raise NotImplementedError
+        raw_img, raw_wcs = load_helper(stub)
         # Regrid to reference wcs. Use nearest-neighbor (order=0) to preserve pixellation
         img_reproj = reproject_interp((raw_img, raw_wcs), ref_wcs, shape_out=ref_shape, order=0, return_footprint=False)
         ax = get_axis(i)
         ax.imshow(img_reproj, **plot_kwargs)
         ax.coords.grid(color='white', alpha=0.5, linestyle='solid')
+
+    for stub in overlays:
+        # the key, stub, is the overlay data name`
+        # the value is the image to be overlayed on. find its index in selected data
+        i = selected_data.index(overlays[stub])
+        ax = get_axis(i)
+        raw_img, raw_wcs = load_helper(stub)
+        # Use bilinear (order=1) for contours, they don't need to be pixellated like the images should be
+        img_reproj = reproject_interp((raw_img, raw_wcs), ref_wcs, shape_out=ref_shape, order=1, return_footprint=False)
+        ax.contour(img_reproj, **contour_kwargs)
+
     plt.show()
 
 
