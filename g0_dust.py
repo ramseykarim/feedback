@@ -228,7 +228,7 @@ def fir_intensity_2():
     Then, use the T-tau solution to integrate intensity between 40 and 500 micron
     for use in PDRToolbox (following the method of fir_intensity())
     """
-    calculate_FIR = True
+    calculate_FIR = False
     if calculate_FIR:
         # Copying this part from fir_intensity() (function above)
         # Remove "_fluxbgsub" to use the normal version with Planck zero-point offset
@@ -290,7 +290,7 @@ def fir_intensity_2():
         hdu.writeto(os.path.join(os.path.dirname(solution_path), "M16_I_FIR_from70-160_fluxbgsub.fits"), overwrite=True)
 
 
-    calculate_T_and_tau = False # Done on October 10, 2022, saved as T-tau_colorsolution.fits
+    calculate_T_and_tau = True # Done on October 10, 2022, saved as T-tau_colorsolution.fits
     if calculate_T_and_tau:
         regular_background_correction = False
         if regular_background_correction:
@@ -299,8 +299,17 @@ def fir_intensity_2():
             p160_correction = 1055
         else:
             # Negative offsets, subtracting local background near pillars
+            # These are sampled from the "north" regions and do noth include the "south" sample
             p70_correction = -2836.24 # +/- 417.06
             p160_correction = -1365.62 # +/- 229.34
+
+            # Lower error bar
+            # p70_correction = -2836.24 - 417.06
+            # p160_correction = -1365.62 - 229.34
+
+            # Higher error bar
+            # p70_correction = -2836.24 + 417.06
+            # p160_correction = -1365.62 + 229.34
 
         # Set up T vs 70/160 ratio spline model using the bandpass filters
         # Following the code in color_temperature_comparison.ipynb
@@ -394,6 +403,7 @@ def fir_intensity_2():
         hdul[1].header['BUNIT'] = 'K'
         hdul[2].header['EXTNAME'] = 'tau'
         hdul[2].header['BUNIT'] = 'optical depth at 160 micron'
+        # appended _HIERR and _LOERR to savepath for error bars
         savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution_fluxbgsub.fits")
         print("SAVING TO", savepath)
         hdul.writeto(savepath)

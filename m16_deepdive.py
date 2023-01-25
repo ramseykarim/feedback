@@ -3565,11 +3565,17 @@ def calculate_dust_column_densities(v=1):
         summary_stub = '70-160-250'
         comment_stub = 'Calculated using mantipython'
         suffix = ''
-    elif v in [2, 3]:
+    elif v > 1 and v < 6: # haven't assigned above 5
         if v == 2:
             suffix = ''
         elif v == 3:
             suffix = '_fluxbgsub'
+        # 4 and 5 use the flux subtraction like 3, but are the lower and upper error bars
+        elif v == 4:
+            suffix = '_fluxbgsub_LOERR'
+        elif v == 5:
+            suffix = '_fluxbgsub_HIERR'
+
         fn_v2 = catalog.utils.search_for_file(f'herschel/T-tau_colorsolution{suffix}.fits')
         tau_v2, hdr_v2 = fits.getdata(fn_v2, extname='tau', header=True)
         # Use the T image to mask the tau image
@@ -3695,9 +3701,24 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     reg_dict = {reg.meta['label']: reg for reg in reg_list if 'noise' not in reg.meta['label']}
 
     fn = filenames_dict[tracer]
-    if setting == 2 and tracer == 'dust':
+
+    # Flux background subtraction (can also check upper and lower error bounds)
+    if setting > 1 and tracer == 'dust':
         print("Using the version with FLUX BACKGROUND SUBTRACTION")
-        fn = fn.replace('.fits', '_fluxbgsub.fits')
+
+        if setting == 2:
+            suffix = '_fluxbgsub.fits'
+        elif setting == 3:
+            print("*"*12 + "LOWER ERROR BAR" + "*"*12)
+            suffix = '_fluxbgsub_LOERR.fits'
+        elif setting == 4:
+            print("*"*12 + "UPPER ERROR BAR" + "*"*12)
+            suffix = '_fluxbgsub_HIERR.fits'
+        else:
+            raise NotImplementedError(f"settings above 4 not approved (user setting = {setting})")
+
+        fn = fn.replace('.fits', suffix)
+
     with fits.open(catalog.utils.search_for_file(fn)) as hdul:
         column_map = hdul[column_extnames[tracer]].data
         hdr = hdul[column_extnames[tracer]].header
@@ -3783,8 +3804,8 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
         print('='*8)
 
     axes_hist[0].legend()
-    # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16
-    plt.savefig(f"/home/ramsey/Pictures/2023-01-16/coldens_and_mass_noise_{tracer}.png",
+    # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16,23
+    plt.savefig(f"/home/ramsey/Pictures/2023-01-23/coldens_and_mass_noise_{tracer}{suffix}.png",
         metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
             file=__file__, func='estimate_uncertainty_mass_and_coldens'))
 
@@ -3881,9 +3902,9 @@ if __name__ == "__main__":
     # calculate_cii_column_density(filling_factor=1.0)
     # calculate_dust_column_densities(v=3)
 
-    # estimate_uncertainty_mass_and_coldens(tracer='co')
     # estimate_uncertainty_mass_and_coldens(tracer='cii')
-    estimate_uncertainty_mass_and_coldens(tracer='cii')
+    # estimate_uncertainty_mass_and_coldens(tracer='co')
+    estimate_uncertainty_mass_and_coldens(tracer='dust')
     # estimate_uncertainty_mass_and_coldens(tracer='dust250')
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
