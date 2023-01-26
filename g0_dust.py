@@ -291,25 +291,25 @@ def fir_intensity_2():
 
 
     calculate_T_and_tau = True # Done on October 10, 2022, saved as T-tau_colorsolution.fits
+    # Jan 25, 2023: finalized method of passing flux uncertainties through this process.
+    # Saving with the suffix _fluxbgsub_with_uncertainty
     if calculate_T_and_tau:
         regular_background_correction = False
+        corrections = {}
+        err_corrections = {}
         if regular_background_correction:
             # positive offsets from Planck
-            p70_correction = 268
-            p160_correction = 1055
+            corrections[70] = 268
+            corrections[160] = 1055 # If i ever go back to these, I could do the same error thing. HELPSS talked about uncertanties on these
         else:
             # Negative offsets, subtracting local background near pillars
             # These are sampled from the "north" regions and do noth include the "south" sample
-            p70_correction = -2836.24 # +/- 417.06
-            p160_correction = -1365.62 # +/- 229.34
+            corrections[70] = -2836.24 # +/- 417.06
+            corrections[160] = -1365.62 # +/- 229.34
+            # Error bars
+            err_corrections[70] = 417.06
+            err_corrections[160] = 229.34
 
-            # Lower error bar
-            # p70_correction = -2836.24 - 417.06
-            # p160_correction = -1365.62 - 229.34
-
-            # Higher error bar
-            # p70_correction = -2836.24 + 417.06
-            # p160_correction = -1365.62 + 229.34
 
         # Set up T vs 70/160 ratio spline model using the bandpass filters
         # Following the code in color_temperature_comparison.ipynb
@@ -320,58 +320,100 @@ def fir_intensity_2():
         model_bandpass_br_ratio = np.zeros_like(model_T_arr)
         # Loop thru T array, can't use units because I didn't write mantipython with astropy.units
         # Set optical depth to something very small (10^-8) since I can't put in zero
-        args = (-8., dust.TauOpacity(2.))
+        args1 = (-8., dust.TauOpacity(2.))
+        # Make an output array for the zero-tau 160 intensity (perfect blackbody run through the detector function)
+        # Not sure if "zero-tau" is the right name, but I know what I'm talking about when I say it
+        zerotau_160intensity = np.zeros_like(model_T_arr)
+        args2 = (0, dust.TauOpacity(2.))
         for i, t in enumerate(model_T_arr):
-            # # TODO: reuse Greybody
-            p70_I = p70_detector.detect(greybody.Greybody(t, *args))
-            p160_I = p160_detector.detect(greybody.Greybody(t, *args))
+            # First T -> ratio
+            g = greybody.Greybody(t, *args1) # reuse Greybody
+            p70_I = p70_detector.detect(g)
+            p160_I = p160_detector.detect(g)
             model_bandpass_br_ratio[i] = p70_I / p160_I
+            # Now T -> 160 (no tau)
+            g = greybody.ThinGreybody(t, *args2) # redefine g as a ThinGreybody (opt thin approx)
+            p160_I = p160_detector.detect(g)
+            zerotau_160intensity[i] = p160_I
+
         # Make spline interpolation from ratio to T
         model_bandpass_br_spline = UnivariateSpline(model_bandpass_br_ratio, model_T_arr, s=0)
         # This is our tool for interpolating from the ratio to T!
 
-        # Make an output array for the zero-tau 160 intensity (perfect blackbody run through the detector function)
-        zerotau_160intensity = np.zeros_like(model_T_arr)
-        args = (0, dust.TauOpacity(2.))
-        for i, t in enumerate(model_T_arr):
-            p160_I = p160_detector.detect(greybody.ThinGreybody(t, *args))
-            zerotau_160intensity[i] = p160_I
-        # Spline fit that as a function of temperature
+        # Make spline for the tau thing
         zerotau_I_spline = UnivariateSpline(model_T_arr, zerotau_160intensity, s=0)
 
         """
         Now load the data and use it as follows:
         T_solution = model_bandpass_br_spline(observed_70/observed_160)
         tau_solution = observed_160 / zerotau_I_spline(T_solution)
+
+        Get 5% uncertainty before correcting any zero-points
+        Establish uncertainty maps and pass uncertainties through to T/tau
+        Ignore the statistical uncertainty since it's small for the pillars
         """
+        # Cutout params
+        use_cutout = True
+        center = (2867, 1745-30)
+        size = (1192//4, 873//4)
 
         # Path names
         # I did the reproc160 on October 7, 2022 (previously I had only done 250)
         pacs_obs_dir = catalog.utils.search_for_file("herschel/processed/1342218995_reproc160")
         make_pacs_fn = lambda band : os.path.join(pacs_obs_dir, f"PACS{band}um-image-remapped-conv.fits")
-        p70_fn, p160_fn = make_pacs_fn(70), make_pacs_fn(160)
-        # Load
-        p70_img, p70_hdr = fits.getdata(p70_fn, header=True)
-        p70_img += p70_correction
-        p160_img, p160_hdr = fits.getdata(p160_fn, header=True)
-        p160_img += p160_correction
 
-        use_cutout = True
-        if use_cutout:
-            center = (2867, 1745-30)
-            size = (1192//4, 873//4)
-            p70_cutout = Cutout2D(p70_img, center, size[::-1], wcs=WCS(p70_hdr))
-            p70_img = p70_cutout.data
-            p160_img = p160_img[p70_cutout.slices_original]
-            new_w = p70_cutout.wcs
-        else:
-            new_w = WCS(p70_hdr)
+        bands = [70, 160]
+        band_images = {}
+        band_errors = {}
+        slices, wcs_obj = None, None
+        for i, band in enumerate(bands):
+            fn = make_pacs_fn(band)
+            img, hdr = fits.getdata(fn, header=True)
+            # Get 5% of image before zero-point correction
+            err = np.sqrt((img * 0.05)**2 + err_corrections[band]**2)
+            img = img + corrections[band]
 
+            if use_cutout:
+                if slices is None:
+                    # Cutout not calculated yet
+                    img_cutout = Cutout2D(img, center, size[::-1], wcs=WCS(hdr))
+                    slices = img_cutout.slices_original
+                    wcs_obj = img_cutout.wcs
+                    img = img_cutout.data
+                    err = err[slices]
+                else:
+                    # Cutout already calculated
+                    img = img[slices]
+                    err = err[slices]
+            else:
+                wcs_obj = WCS(hdr)
 
+            band_images[band] = img
+            band_errors[band] = err
 
-        observed_br_ratio = p70_img / p160_img
+        # Divide the bands for the ratio
+        observed_br_ratio = band_images[70] / band_images[160]
+        # Use fractional errors to easily find ratio error via quad sum
+        err_br_ratio = observed_br_ratio * np.sqrt(np.sum([(band_errors[band] / band_images[band])**2 for band in [70, 160]], axis=0))
+
+        # "Best" values
         T_solution = model_bandpass_br_spline(observed_br_ratio)
-        tau_solution = p160_img / zerotau_I_spline(T_solution)
+        tau_solution = band_images[160] / zerotau_I_spline(T_solution)
+
+        # Low temperature
+        T_solution_lo = model_bandpass_br_spline(observed_br_ratio - err_br_ratio)
+        # High temperature
+        T_solution_hi = model_bandpass_br_spline(observed_br_ratio + err_br_ratio)
+
+        # Low tau: high temperature and low 160 flux
+        tau_solution_lo = (band_images[160] - band_errors[160]) / zerotau_I_spline(T_solution_hi)
+        # High tau: low temperature and high 160 flux
+        tau_solution_hi = (band_images[160] + band_errors[160]) / zerotau_I_spline(T_solution_lo)
+
+        # Make a mask for later use
+        # Require: flux > 3xerror in both bands
+        flux_cutoff = 3
+        mask = np.all([band_images[band] > flux_cutoff*band_errors[band] for band in [160,]], axis=0).astype(float)
 
         # fig = plt.figure()
         # axT = plt.subplot(121)
@@ -382,13 +424,13 @@ def fir_intensity_2():
         # fig.colorbar(im, ax=axtau)
         # plt.show()
 
-        new_hdr = new_w.to_header()
+        new_hdr = wcs_obj.to_header()
         new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
         new_hdr['CREATOR'] = f"rkarim, via {__file__}.fir_intensity_2"
         new_hdr['AUTHOR'] = "Ramsey Karim"
         new_hdr['OBJECT'] = "M16"
         new_hdr['HISTORY'] = "Herschel PACS 70 and 160, obsID 1342218995, 160 grid and beam"
-        new_hdr['HISTORY'] = f"Zero-point offsets: {p70_correction} (70), {p160_correction} (160)"
+        new_hdr['HISTORY'] = f"Zero-point offsets: {corrections[70]}+/-{err_corrections[70]} (70), {corrections[160]}+/-{err_corrections[160]} (160)"
         if regular_background_correction:
             new_hdr['HISTORY'] = "Zero-point offsets from fit_FIR.py, calculated long ago"
         else:
@@ -397,14 +439,67 @@ def fir_intensity_2():
             new_hdr['HISTORY'] = f"Cutout center xy {center} size {size}"
         new_hdr['COMMENT'] = "T,tau calc'd using bandpasses; see color_temperature_comparison.ipynb"
         hdul = fits.HDUList([fits.PrimaryHDU(),
-            fits.ImageHDU(data=T_solution, header=new_hdr.copy()),
-            fits.ImageHDU(data=tau_solution, header=new_hdr.copy())])
+            fits.ImageHDU(data=T_solution, header=new_hdr.copy()), # 1
+
+            fits.ImageHDU(data=T_solution_lo, header=new_hdr.copy()), # 2
+            fits.ImageHDU(data=T_solution_hi, header=new_hdr.copy()), # 3
+
+            fits.ImageHDU(data=tau_solution, header=new_hdr.copy()), # 4
+
+            fits.ImageHDU(data=tau_solution_lo, header=new_hdr.copy()), # 5
+            fits.ImageHDU(data=tau_solution_hi, header=new_hdr.copy()), # 6
+
+            fits.ImageHDU(data=band_images[70], header=new_hdr.copy()), # 7
+            fits.ImageHDU(data=band_errors[70], header=new_hdr.copy()), # 8
+
+            fits.ImageHDU(data=band_images[160], header=new_hdr.copy()), # 9
+            fits.ImageHDU(data=band_errors[160], header=new_hdr.copy()), # 10
+
+            fits.ImageHDU(data=observed_br_ratio, header=new_hdr.copy()), # 11
+            fits.ImageHDU(data=err_br_ratio, header=new_hdr.copy()), # 12
+
+            fits.ImageHDU(data=mask, header=new_hdr.copy()), # 13
+            ])
         hdul[1].header['EXTNAME'] = 'T'
         hdul[1].header['BUNIT'] = 'K'
-        hdul[2].header['EXTNAME'] = 'tau'
-        hdul[2].header['BUNIT'] = 'optical depth at 160 micron'
+
+        hdul[2].header['EXTNAME'] = 'T_LO'
+        hdul[2].header['BUNIT'] = 'K'
+        hdul[2].header['COMMENT'] = 'Lower-error estimate on T: T - sigma_T'
+        hdul[3].header['EXTNAME'] = 'T_HI'
+        hdul[3].header['BUNIT'] = 'K'
+        hdul[3].header['COMMENT'] = 'Upper-error estimate on T: T + sigma_T'
+
+        hdul[4].header['EXTNAME'] = 'tau'
+        hdul[4].header['BUNIT'] = 'optical depth at 160 micron'
+
+        hdul[5].header['EXTNAME'] = 'tau_LO'
+        hdul[5].header['BUNIT'] = 'optical depth at 160 micron'
+        hdul[5].header['COMMENT'] = 'Lower-error estimate on tau: tau - sigma_tau'
+        hdul[6].header['EXTNAME'] = 'tau_HI'
+        hdul[6].header['BUNIT'] = 'optical depth at 160 micron'
+        hdul[6].header['COMMENT'] = 'Upper-error estimate on tau: tau + sigma_tau'
+
+        hdul[7].header['EXTNAME'] = 'PACS70um'
+        hdul[7].header['BUNIT'] = 'MJy sr-1'
+        hdul[8].header['EXTNAME'] = 'err_PACS70um'
+        hdul[8].header['BUNIT'] = 'MJy sr-1'
+
+        hdul[9].header['EXTNAME'] = 'PACS160um'
+        hdul[9].header['BUNIT'] = 'MJy sr-1'
+        hdul[10].header['EXTNAME'] = 'err_PACS160um'
+        hdul[10].header['BUNIT'] = 'MJy sr-1'
+
+        hdul[11].header['EXTNAME'] = 'ratio70-160'
+        hdul[11].header['BUNIT'] = 'ratio'
+        hdul[12].header['EXTNAME'] = 'err_ratio70-160'
+        hdul[12].header['BUNIT'] = 'ratio'
+
+        hdul[13].header['EXTNAME'] = 'mask',
+        hdul[13].header['COMMENT'] = f'Corrected flux > {flux_cutoff} x error in 160um'
+
         # appended _HIERR and _LOERR to savepath for error bars
-        savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution_fluxbgsub.fits")
+        savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution_fluxbgsub_with_uncertainty.fits")
         print("SAVING TO", savepath)
         hdul.writeto(savepath)
 
