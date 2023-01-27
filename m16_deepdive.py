@@ -66,6 +66,9 @@ mpl_colors = pvdiagrams.mpl_colors
 mpl_transforms = pvdiagrams.mpl_transforms
 mpatches = pvdiagrams.mpatches
 
+from .mantipython.physics import greybody, dust, instrument
+
+
 make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
@@ -3551,6 +3554,11 @@ def calculate_dust_column_densities(v=1):
     From the RCW 49 paper, Cext,160 / H = 1.9 x 10^-25 cm2/H
     I have versions using 70--250 and 70--160, I'll check both to compare
     Nov 18: added a mass/pixel map so I can integrate in DS9
+
+    Jan 26, 2023: using the newly minted upper and lower tau limits, make
+    some new column density and mass/pixel maps.
+    upper and lower limits in independent files so that I can run them thru
+    the mass estimator separately
     """
     # raise RuntimeError("Already ran on November 21, 2022")
     cutout_center_coord = SkyCoord("18:18:55.9969 -13:50:56.169", unit=(u.hourangle, u.deg), frame=FK5)
@@ -3565,25 +3573,33 @@ def calculate_dust_column_densities(v=1):
         summary_stub = '70-160-250'
         comment_stub = 'Calculated using mantipython'
         suffix = ''
-    elif v > 1 and v < 6: # haven't assigned above 5
+    elif v > 1: # haven't assigned above 5
         if v == 2:
             suffix = ''
-        elif v == 3:
-            suffix = '_fluxbgsub'
-        # 4 and 5 use the flux subtraction like 3, but are the lower and upper error bars
-        elif v == 4:
-            suffix = '_fluxbgsub_LOERR'
-        elif v == 5:
-            suffix = '_fluxbgsub_HIERR'
+        elif v >= 3:
+            # this version has error bars, but v==3 will get "best values"
+            suffix = '_fluxbgsub_with_uncertainty'
 
         fn_v2 = catalog.utils.search_for_file(f'herschel/T-tau_colorsolution{suffix}.fits')
-        tau_v2, hdr_v2 = fits.getdata(fn_v2, extname='tau', header=True)
-        # Use the T image to mask the tau image
-        T = fits.getdata(fn_v2, extname='T')
-        finite_mask = np.isfinite(T) & np.isfinite(tau_v2) & (T > 0) & (tau_v2 > 0)
-        tau_v2[~finite_mask] = np.nan
-        del T
-        # finished masking, delete T
+        with fits.open(fn_v2) as hdul:
+            if v == 3:
+                extname = 'tau'
+                suffix = suffix.replace('_with_uncertainty', '')
+            elif v == 4:
+                extname = 'tau_LO'
+                suffix = suffix.replace('_with_uncertainty', '_LO')
+            elif v == 5:
+                extname = 'tau_HI'
+                suffix = suffix.replace('_with_uncertainty', '_HI')
+            tau_v2, hdr_v2 = hdul[extname].data, hdul[extname].header
+            if 'mask' in hdul:
+                # Use the mask we made, it's good
+                mask = hdul['mask'].data > 0.5 # convert float 1s and 0s to bool
+            else:
+                # Use the T image to mask the tau image
+                mask = np.isfinite(hdul['T'].data) & np.isfinite(tau_v2) & (hdul['T'].data > 0) & (tau_v2 > 0)
+
+        tau_v2[~mask] = np.nan
         tau_large = tau_v2
         wcs_obj_large = WCS(hdr_v2)
         fn_stub = fn_v2
@@ -3639,7 +3655,146 @@ def calculate_dust_column_densities(v=1):
     hdu3 = fits.ImageHDU(data=err_mass_per_pixel_map.to_value(), header=new_hdr3)
 
     hdul = fits.HDUList([phdu, hdu, hdu2, hdu3])
-    hdul.writeto(savename, overwrite=True)
+    hdul.writeto(savename, overwrite=False)
+
+
+"""
+Next couple functions are in service of the dust FIR -> mass Monte Carlo thing
+"""
+
+def helper_make_dust_t_tau_splines():
+    """
+    Jan 27, 2023
+    Helper function for calculate_dust_column_densities_and_masses_with_error
+    Make the splines for 70/160 ratio to temperature and temperature to 160 flux
+    Returns the two splines as a tuple
+    Astropy units are not supported, but temperatures are in K and flux density
+    in MJy/sr
+    Copying code from g0_dust.fir_intensity_2 and color_temperature_uncertainty.ipynb
+    """
+    # Set up PACS detectors
+    bands = [70, 160]
+    detectors = {band: detector for band, detector in zip(bands, instrument.get_instrument(bands))}
+    # Set up model arrays
+    model_T_arr = np.arange(1, 200, 0.1) # units of K
+    model_bandpass_br_ratio = np.zeros_like(model_T_arr)
+    notau_160intensity = np.zeros_like(model_T_arr) # not calling it "zero tau" anymore
+    args1 = (-8., dust.TauOpacity(2.)) # for the regular Greybody
+    args2 = (0, dust.TauOpacity(2.)) # for the ThinGreybody
+    for i, t in enumerate(model_T_arr):
+        # First ratio->T
+        g = greybody.Greybody(t, *args1)
+        model_bandpass_br_ratio[i] = detectors[70].detect(g) / detectors[160].detect(g)
+        # Then T -> no tau 160 flux
+        notau_160intensity[i] = detectors[160].detect(greybody.ThinGreybody(t, *args2))
+    model_bandpass_br_spline = UnivariateSpline(model_bandpass_br_ratio, model_T_arr, s=0)
+    notau_160I_spline = UnivariateSpline(model_T_arr, notau_160intensity, s=0)
+    return model_bandpass_br_spline, notau_160I_spline
+
+
+def calculate_dust_column_densities_and_masses_with_error(debug=False):
+    """
+    January 27, 2023
+    Derive H column density and pillar mass from the FIR dust fluxes.
+    This combines work from g0_dust.fir_intensity_2,
+    m16_deepdive.calculate_dust_column_densities,
+    and m16_deepdive.estimate_uncertainty_mass_and_coldens
+    because I want to propagate uncertainties from flux all the way to mass
+    and use a Monte Carlo sampling to do so. I can't have them be separate
+    functions, I have to do it all at once
+
+    This procedure has a few segments:
+    1) zero-point calibrate emission and establish flux uncertainties
+    2) create color ratio and convert to T and tau
+    3) convert tau to optical depth and mass/pixel
+    4) integrate mass/pixel over pillars to find total mass
+    The established flux uncertainties will be sampled a large (~100-1000)
+    number of times. The flux maps will be expanded out in a 3rd dimension
+    and the samples will be added to the entire map (*not* pixel-by-pixel,
+    they are systematic).
+    This should correctly propagate the errors from flux to column density
+    and mass.
+    Hopefully this takes less than a couple hours... (starting at 12:54pm)
+    """
+    # Seed a RNG
+    rng = np.random.default_rng(1312)
+    # Choose number of realizations (should be >100, maybe 1000 if that's fast enough)
+    nsamples = 10
+
+    # Step 1: Load and zero-point correct the observations.
+    # This stuff is copied out of g0_dust.fir_intensity_2 for the most part (I rewrote it to look nicer the other day)
+    corrections, err_corrections = {}, {}
+    # Negative offsets, subtracting local background near pillars
+    # These are sampled from the "north" regions and do noth include the "south" sample
+    corrections[70] = -2836.24 # +/- 417.06
+    corrections[160] = -1365.62 # +/- 229.34
+    # Error bars
+    err_corrections[70] = 417.06
+    err_corrections[160] = 229.34
+    # Cutout params (use by default)
+    use_cutout = True
+    center = (2867, 1745-30)
+    size = (1192//4, 873//4)
+    # Path names
+    # I did the reproc160 on October 7, 2022 (previously I had only done 250)
+    pacs_obs_dir = catalog.utils.search_for_file("herschel/processed/1342218995_reproc160")
+    # ie = 'image' or 'error'
+    make_pacs_fn = lambda band, ie : os.path.join(pacs_obs_dir, f"PACS{band}um-{ie}-remapped-conv.fits")
+    bands = [70, 160]
+    band_image_samples = {} # zero-point corrected (and sampled along new 0 axis)
+    slices, wcs_obj = None, None
+    for i, band in enumerate(bands):
+        # Load image
+        img, hdr = fits.getdata(make_pacs_fn(band, 'image'), header=True)
+        # Cutout and save cutout info
+        if slices is None:
+            img_cutout = Cutout2D(img, center, size[::-1], wcs=WCS(hdr))
+            slices = img_cutout.slices_original
+            wcs_obj = img_cutout.wcs
+            img = img_cutout.data
+        else:
+            img = img[slices]
+        # Collect all uncertainties
+        # Flux calibraton error: Get 5% of image before zero-point correction
+        # Background subtraction error: single number for all map
+        onesigma_err_sys = np.sqrt((img*0.05)**2 + err_corrections[band]**2) # combine them so we only sample once
+        onesigma_err_stat = fits.getdata(make_pacs_fn(band, 'error'))[slices]
+        """
+        We can use a *single* Gaussian-sampled number for BOTH fluxcal and bg for the entire map (per realization)
+        For statistical, we will use a map's worth of Gaussian sampled numbers per realization
+        """
+        sample_sys = rng.normal(size=(nsamples, 1, 1)) # realizations X single number per realization
+        sample_stat = rng.normal(size=(nsamples, *img.shape)) # realizations X 2D map size
+        sampled_err_sys = onesigma_err_sys * sample_sys
+        sampled_err_stat = onesigma_err_stat * sample_stat
+
+        if debug:
+            fig = plt.figure(f"Uncertainty {band}um", figsize=(16, 8))
+            ax1 = plt.subplot(231)
+            im1 = ax1.imshow(onesigma_err_sys, origin='lower')
+            ax1.set_title(f"Systematic $\\sigma$")
+
+            ax2 = plt.subplot(232)
+            ax2.imshow(img, origin='lower')
+            ax2.set_title("Data values")
+
+            ax3 = plt.subplot(233)
+            im3 = ax3.imshow(onesigma_err_stat, origin='lower')
+            ax3.set_title("Statistical $\\sigma$")
+
+            ax4 = plt.subplot(234)
+            ax4.imshow(sampled_err_sys[0], origin='lower')
+            ax4.set_title(f"Systematic sample 0")
+
+            ax5 = plt.subplot(236)
+            ax5.imshow(sampled_err_stat[0], origin='lower', vmin=np.median(np.abs(sampled_err_stat[0])*-3), vmax=np.median(np.abs(sampled_err_stat[0])*3))
+            ax5.set_title("Statistical sample 0")
+
+            plt.show()
+
+        # TODO: now sample! 1 sample per realization for sys, NxM samples per realization for stat
+        # got the samples, now operate on them
+
 
 
 def calculate_galactocentric_distance_and_12c13c_ratio():
@@ -3710,10 +3865,10 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
             suffix = '_fluxbgsub.fits'
         elif setting == 3:
             print("*"*12 + "LOWER ERROR BAR" + "*"*12)
-            suffix = '_fluxbgsub_LOERR.fits'
+            suffix = '_fluxbgsub_LO.fits'
         elif setting == 4:
             print("*"*12 + "UPPER ERROR BAR" + "*"*12)
-            suffix = '_fluxbgsub_HIERR.fits'
+            suffix = '_fluxbgsub_HI.fits'
         else:
             raise NotImplementedError(f"settings above 4 not approved (user setting = {setting})")
 
@@ -3748,66 +3903,71 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     mass_stddev_vals = {}
     mass_mean_stat_unc = {}
 
+    no_background_subtract = ((tracer=='co') or ('dust' in tracer))
+
     noise_box_lists = [cps2.get_background_regions('north'), cps2.get_background_regions('south')]
     noise_box_lists_labels = ['north', 'south']
     noise_box_colors = [marcs_colors[0], marcs_colors[1]]
 
-    for i, noise_reg_list in enumerate(noise_box_lists):
+    if no_background_subtract:
+        pass
+    else:
+        for i, noise_reg_list in enumerate(noise_box_lists):
 
-        pix_reg_list = [reg.to_pixel(wcs_object) for reg in noise_reg_list]
-        mask_list = []
-        for pix_reg in pix_reg_list:
-            ax_col.add_artist(pix_reg.as_artist(fill=False, edgecolor=noise_box_colors[i]))
-            ax_mass.add_artist(pix_reg.as_artist(fill=False, edgecolor=noise_box_colors[i]))
+            pix_reg_list = [reg.to_pixel(wcs_object) for reg in noise_reg_list]
+            mask_list = []
+            for pix_reg in pix_reg_list:
+                ax_col.add_artist(pix_reg.as_artist(fill=False, edgecolor=noise_box_colors[i]))
+                ax_mass.add_artist(pix_reg.as_artist(fill=False, edgecolor=noise_box_colors[i]))
 
-            mask_list.append(pix_reg.to_mask().to_image(wcs_object.array_shape)) # you have to use .to_image() since .to_mask() returns a RegionMask object, which behaves strangely
-        noise_mask = np.any(mask_list, axis=0)
+                mask_list.append(pix_reg.to_mask().to_image(wcs_object.array_shape)) # you have to use .to_image() since .to_mask() returns a RegionMask object, which behaves strangely
+            noise_mask = np.any(mask_list, axis=0)
 
-        col_values = column_map[noise_mask & finite_mask]
-        mass_values = mass_map[noise_mask & finite_mask]
-        if err_column_map is None:
-            err_col_values = 0
-        else:
-            err_col_values = err_column_map[noise_mask & finite_mask]
-        err_mass_values = err_mass_map[noise_mask & finite_mask]
-        n_pixels = len(col_values)
+            col_values = column_map[noise_mask & finite_mask]
+            mass_values = mass_map[noise_mask & finite_mask]
+            if err_column_map is None:
+                err_col_values = 0
+            else:
+                err_col_values = err_column_map[noise_mask & finite_mask]
+            err_mass_values = err_mass_map[noise_mask & finite_mask]
+            n_pixels = len(col_values)
 
-        mean_col = np.mean(col_values)
-        std_col = np.std(col_values)
-        # error on mean: (1/N) * sum(e**2 for e in errors)
-        mean_col_stat_err = np.sqrt(np.sum(err_col_values**2)) / n_pixels
+            mean_col = np.mean(col_values)
+            std_col = np.std(col_values)
+            # error on mean: (1/N) * sum(e**2 for e in errors)
+            mean_col_stat_err = np.sqrt(np.sum(err_col_values**2)) / n_pixels
 
-        sum_bg_mass = np.sum(mass_values)
-        mean_bg_mass = np.mean(mass_values)
-        std_bg_mass = np.std(mass_values)
-        mean_bg_mass_stat_err = np.sqrt(np.sum(err_mass_values**2)) / n_pixels
+            sum_bg_mass = np.sum(mass_values)
+            mean_bg_mass = np.mean(mass_values)
+            std_bg_mass = np.std(mass_values)
+            mean_bg_mass_stat_err = np.sqrt(np.sum(err_mass_values**2)) / n_pixels
 
-        col_mean_vals[noise_box_lists_labels[i]] = mean_col
-        col_stddev_vals[noise_box_lists_labels[i]] = std_col
-        col_mean_stat_unc[noise_box_lists_labels[i]] = mean_col_stat_err
-        mass_mean_vals[noise_box_lists_labels[i]] = mean_bg_mass
-        mass_stddev_vals[noise_box_lists_labels[i]] = std_bg_mass
-        mass_mean_stat_unc[noise_box_lists_labels[i]] = mean_bg_mass_stat_err
+            col_mean_vals[noise_box_lists_labels[i]] = mean_col
+            col_stddev_vals[noise_box_lists_labels[i]] = std_col
+            col_mean_stat_unc[noise_box_lists_labels[i]] = mean_col_stat_err
+            mass_mean_vals[noise_box_lists_labels[i]] = mean_bg_mass
+            mass_stddev_vals[noise_box_lists_labels[i]] = std_bg_mass
+            mass_mean_stat_unc[noise_box_lists_labels[i]] = mean_bg_mass_stat_err
 
-        print(f"NOISE FROM {noise_box_lists_labels[i]}")
+            print(f"NOISE FROM {noise_box_lists_labels[i]}")
 
-        print("Pixels in mask (real)", n_pixels)
-        print("Pixels in image", column_map.size)
+            print("Pixels in mask (real)", n_pixels)
+            print("Pixels in image", column_map.size)
 
-        print(f"Mean/STD column: {mean_col:.2E} +/- {std_col:.2E}(sys) +/- {mean_col_stat_err:.2E}(stat)")
-        print(f"Sum background: {sum_bg_mass:.1f} +/- {std_bg_mass*n_pixels:.3f}(sys) +/- {mean_bg_mass_stat_err*n_pixels:.3f}(stat)")
-        print(f"Mean bg mass/pixel: {mean_bg_mass:.2E} +/- {std_bg_mass:.2E}(sys) +/- {mean_bg_mass_stat_err:.2E}(stat)")
+            print(f"Mean/STD column: {mean_col:.2E} +/- {std_col:.2E}(sys) +/- {mean_col_stat_err:.2E}(stat)")
+            print(f"Sum background: {sum_bg_mass:.1f} +/- {std_bg_mass*n_pixels:.3f}(sys) +/- {mean_bg_mass_stat_err*n_pixels:.3f}(stat)")
+            print(f"Mean bg mass/pixel: {mean_bg_mass:.2E} +/- {std_bg_mass:.2E}(sys) +/- {mean_bg_mass_stat_err:.2E}(stat)")
 
-        axes_hist[0].hist(col_values, bins=32, histtype='step', density=True, label=noise_box_lists_labels[i])
-        axes_hist[1].hist(mass_values, bins=32, histtype='step', density=True, label=noise_box_lists_labels[i])
+            axes_hist[0].hist(col_values, bins=32, histtype='step', density=True, label=noise_box_lists_labels[i])
+            axes_hist[1].hist(mass_values, bins=32, histtype='step', density=True, label=noise_box_lists_labels[i])
 
-        print('='*8)
+            print('='*8)
 
-    axes_hist[0].legend()
-    # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16,23
-    plt.savefig(f"/home/ramsey/Pictures/2023-01-23/coldens_and_mass_noise_{tracer}{suffix}.png",
-        metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
-            file=__file__, func='estimate_uncertainty_mass_and_coldens'))
+        axes_hist[0].legend()
+        # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16,23
+        plt.savefig(f"/home/ramsey/Pictures/2023-01-23/coldens_and_mass_noise_{tracer}{suffix}.png",
+            metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
+                file=__file__, func='estimate_uncertainty_mass_and_coldens'))
 
     print("\n\n")
 
@@ -3837,8 +3997,6 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
         n_pixels = len(mass_values)
 
         select_index = ('south' if ('p1b' in reg) else 'north')
-
-        no_background_subtract = ((tracer=='co') or ('dust' in tracer))
 
         if no_background_subtract:
             col_mean_bg = 0
@@ -3897,6 +4055,10 @@ The column density figure for the paper will be made in m16_pictures.column_dens
 
 
 if __name__ == "__main__":
+
+    ...
+    calculate_dust_column_densities_and_masses_with_error(debug=True)
+
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
     # calculate_cii_column_density(filling_factor=1.0)
@@ -3904,7 +4066,8 @@ if __name__ == "__main__":
 
     # estimate_uncertainty_mass_and_coldens(tracer='cii')
     # estimate_uncertainty_mass_and_coldens(tracer='co')
-    estimate_uncertainty_mass_and_coldens(tracer='dust')
+    # estimate_uncertainty_mass_and_coldens(tracer='dust')
+
     # estimate_uncertainty_mass_and_coldens(tracer='dust250')
 
     # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
