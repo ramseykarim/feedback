@@ -3743,6 +3743,7 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
     bands = [70, 160]
     band_image_samples = {} # zero-point corrected (and sampled along new 0 axis)
     slices, wcs_obj = None, None
+    mask = None
     for i, band in enumerate(bands):
         # Load image
         img, hdr = fits.getdata(make_pacs_fn(band, 'image'), header=True)
@@ -3764,11 +3765,25 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
         For statistical, we will use a map's worth of Gaussian sampled numbers per realization
         """
         sample_sys = rng.normal(size=(nsamples, 1, 1)) # realizations X single number per realization
-        sample_stat = rng.normal(size=(nsamples, *img.shape)) # realizations X 2D map size
+        sample_stat = rng.normal(size=(nsamples, *img.shape)) # realizations X 2D map shape
         sampled_err_sys = onesigma_err_sys * sample_sys
         sampled_err_stat = onesigma_err_stat * sample_stat
 
-        if debug:
+        # Add the error realizations to the data (and add the zero-point correction while things are still 2D)
+        sampled_img = (img + corrections[band]) + sampled_err_sys + sampled_err_stat # realizations X 2D map shape
+        band_image_samples[band] = sampled_img
+
+        # Also, make that mask of 3x the systematic error in the 160 band
+        # And add in 70um above 0
+        if band == 70:
+            assert mask is None
+            mask = (img + corrections[band]) > 0
+        if band == 160:
+            flux_cutoff = 3
+            assert mask is not None
+            mask &= (img + corrections[band]) > flux_cutoff*onesigma_err_sys
+
+        if debug and True:
             fig = plt.figure(f"Uncertainty {band}um", figsize=(16, 8))
             ax1 = plt.subplot(231)
             im1 = ax1.imshow(onesigma_err_sys, origin='lower')
@@ -3777,6 +3792,7 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
             ax2 = plt.subplot(232)
             ax2.imshow(img, origin='lower')
             ax2.set_title("Data values")
+            ax2.contour(mask.astype(float), levels=[0.5], colors='k')
 
             ax3 = plt.subplot(233)
             im3 = ax3.imshow(onesigma_err_stat, origin='lower')
@@ -3786,14 +3802,43 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
             ax4.imshow(sampled_err_sys[0], origin='lower')
             ax4.set_title(f"Systematic sample 0")
 
-            ax5 = plt.subplot(236)
-            ax5.imshow(sampled_err_stat[0], origin='lower', vmin=np.median(np.abs(sampled_err_stat[0])*-3), vmax=np.median(np.abs(sampled_err_stat[0])*3))
-            ax5.set_title("Statistical sample 0")
+            ax5 = plt.subplot(235)
+            ax5.imshow(sampled_img[0], origin='lower')
+            ax5.set_title(f"Data sample 0")
+
+            ax6 = plt.subplot(236)
+            ax6.imshow(sampled_err_stat[0], origin='lower', vmin=np.median(np.abs(sampled_err_stat[0])*-3), vmax=np.median(np.abs(sampled_err_stat[0])*3))
+            ax6.set_title("Statistical sample 0")
 
             plt.show()
 
-        # TODO: now sample! 1 sample per realization for sys, NxM samples per realization for stat
-        # got the samples, now operate on them
+    # Get the splines
+    br_t_spline, t_160_spline = helper_make_dust_t_tau_splines()
+    # Get the ratio
+    observed_br_ratio_samples = band_image_samples[70] / band_image_samples[160]
+    # Use the splines, get T and tau
+    t_solution_samples = br_t_spline(observed_br_ratio_samples)
+    tau_solution_samples = band_image_samples[160] / t_160_spline(t_solution_samples)
+
+    if debug and True:
+        tau_solution_median = np.median(tau_solution_samples, axis=0)
+        tau_solution_std = np.std(tau_solution_samples, axis=0)
+        tau_solution_median[~mask] = np.nan
+        tau_solution_std[~mask] = np.nan
+
+        tau_Av_conversion_denom = (1.9e-25 * 1.9e21)
+        tau_solution_median /= tau_Av_conversion_denom
+        tau_solution_std /= tau_Av_conversion_denom
+
+        fig = plt.figure("Sampled $\\tau$ statistics", figsize=(9, 4))
+        ax1 = plt.subplot(121)
+        ax1.imshow(tau_solution_median, origin='lower', vmin=0, vmax=150)
+        ax1.set_title("Median")
+        ax2 = plt.subplot(122)
+        ax2.imshow(tau_solution_std, origin='lower', vmin=0, vmax=15)
+        ax2.set_title("StdDev")
+        plt.show()
+
 
 
 
