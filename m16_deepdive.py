@@ -3692,7 +3692,7 @@ def helper_make_dust_t_tau_splines():
     return model_bandpass_br_spline, notau_160I_spline
 
 
-def calculate_dust_column_densities_and_masses_with_error(debug=False):
+def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=False):
     """
     January 27, 2023
     Derive H column density and pillar mass from the FIR dust fluxes.
@@ -3715,11 +3715,13 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
     This should correctly propagate the errors from flux to column density
     and mass.
     Hopefully this takes less than a couple hours... (starting at 12:54pm)
+
+    :param nsamples: Choose number of realizations (should be >100, maybe 1000 if that's fast enough)
+        10-40 is good for testing. 400 takes about 1G of RAM and only ~5-10 seconds
     """
     # Seed a RNG
     rng = np.random.default_rng(1312)
-    # Choose number of realizations (should be >100, maybe 1000 if that's fast enough)
-    nsamples = 10
+    print("NSAMPLES", nsamples)
 
     # Step 1: Load and zero-point correct the observations.
     # This stuff is copied out of g0_dust.fir_intensity_2 for the most part (I rewrote it to look nicer the other day)
@@ -3742,8 +3744,9 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
     make_pacs_fn = lambda band, ie : os.path.join(pacs_obs_dir, f"PACS{band}um-{ie}-remapped-conv.fits")
     bands = [70, 160]
     band_image_samples = {} # zero-point corrected (and sampled along new 0 axis)
+    band_best_images = {} # 2D arrays, "best" values (no uncertainty)
     slices, wcs_obj = None, None
-    mask = None
+    flux_mask = None # mask based on flux that excludes background around pillars
     for i, band in enumerate(bands):
         # Load image
         img, hdr = fits.getdata(make_pacs_fn(band, 'image'), header=True)
@@ -3773,17 +3776,21 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
         sampled_img = (img + corrections[band]) + sampled_err_sys + sampled_err_stat # realizations X 2D map shape
         band_image_samples[band] = sampled_img
 
+        # Save the regular corrected 2D images as "best" values
+        band_best_images[band] = img + corrections[band]
+
         # Also, make that mask of 3x the systematic error in the 160 band
         # And add in 70um above 0
+        flux_cutoff = 3
         if band == 70:
-            assert mask is None
-            mask = (img + corrections[band]) > 0
+            assert flux_mask is None
+            flux_mask = (img + corrections[band]) > flux_cutoff*onesigma_err_sys
+            # Doing >3sigma to 70um really loses us a lot of Pillar 3. But the alternative is huge error bars and uncertainty due to low temperatures
         if band == 160:
-            flux_cutoff = 3
-            assert mask is not None
-            mask &= (img + corrections[band]) > flux_cutoff*onesigma_err_sys
+            assert flux_mask is not None
+            flux_mask &= (img + corrections[band]) > flux_cutoff*onesigma_err_sys
 
-        if debug and True:
+        if debug and False:
             fig = plt.figure(f"Uncertainty {band}um", figsize=(16, 8))
             ax1 = plt.subplot(231)
             im1 = ax1.imshow(onesigma_err_sys, origin='lower')
@@ -3792,7 +3799,7 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
             ax2 = plt.subplot(232)
             ax2.imshow(img, origin='lower')
             ax2.set_title("Data values")
-            ax2.contour(mask.astype(float), levels=[0.5], colors='k')
+            ax2.contour(flux_mask.astype(float), levels=[0.5], colors='k')
 
             ax3 = plt.subplot(233)
             im3 = ax3.imshow(onesigma_err_stat, origin='lower')
@@ -3811,35 +3818,194 @@ def calculate_dust_column_densities_and_masses_with_error(debug=False):
             ax6.set_title("Statistical sample 0")
 
             plt.show()
+    del sampled_err_sys, sampled_err_stat, img
+
+    # An array we can simply multiply to make NaNs. Broadcasts easily, unlike bool indexing
+    bad_flux_nan_mask = np.ones_like(flux_mask.astype(float))
+    bad_flux_nan_mask[~flux_mask] = np.nan
 
     # Get the splines
     br_t_spline, t_160_spline = helper_make_dust_t_tau_splines()
     # Get the ratio
-    observed_br_ratio_samples = band_image_samples[70] / band_image_samples[160]
+    observed_br_ratio_samples = band_image_samples[70] / band_image_samples[160] # Monte Carlo samples
+    best_observed_br_ratio = band_best_images[70] / band_best_images[160] # "best" value
     # Use the splines, get T and tau
     t_solution_samples = br_t_spline(observed_br_ratio_samples)
-    tau_solution_samples = band_image_samples[160] / t_160_spline(t_solution_samples)
+    best_t_solution = br_t_spline(best_observed_br_ratio)
 
-    if debug and True:
+    plot_tau_and_cold_pixels = True
+    if debug and plot_tau_and_cold_pixels:
+        cold_cutoff = 10
+        cold_pixels = np.sum(t_solution_samples<cold_cutoff, axis=0)/nsamples
+        cold_pixels *= bad_flux_nan_mask
+    tau_solution_samples = band_image_samples[160] / t_160_spline(t_solution_samples)
+    best_tau_solution = band_best_images[160] / t_160_spline(best_t_solution)
+    del band_image_samples, band_best_images, t_solution_samples, best_t_solution
+
+    if debug and plot_tau_and_cold_pixels:
         tau_solution_median = np.median(tau_solution_samples, axis=0)
         tau_solution_std = np.std(tau_solution_samples, axis=0)
-        tau_solution_median[~mask] = np.nan
-        tau_solution_std[~mask] = np.nan
+        tau_solution_max = np.max(tau_solution_samples, axis=0)
+        tau_solution_median *= bad_flux_nan_mask
+        tau_solution_std *= bad_flux_nan_mask
+        tau_solution_max *= bad_flux_nan_mask
 
         tau_Av_conversion_denom = (1.9e-25 * 1.9e21)
         tau_solution_median /= tau_Av_conversion_denom
         tau_solution_std /= tau_Av_conversion_denom
+        tau_solution_max /= tau_Av_conversion_denom
 
-        fig = plt.figure("Sampled $\\tau$ statistics", figsize=(9, 4))
-        ax1 = plt.subplot(121)
-        ax1.imshow(tau_solution_median, origin='lower', vmin=0, vmax=150)
+        fig = plt.figure("Sampled $\\tau$ statistics", figsize=(16, 10))
+        ax1 = plt.subplot(221)
+        im = ax1.imshow(tau_solution_median, origin='lower', vmin=0, vmax=150)
         ax1.set_title("Median")
-        ax2 = plt.subplot(122)
-        ax2.imshow(tau_solution_std, origin='lower', vmin=0, vmax=15)
+        fig.colorbar(im, ax=ax1, label='Av (mag)')
+
+        ax2 = plt.subplot(222)
+        im = ax2.imshow(tau_solution_std, origin='lower', vmin=0, vmax=15)
         ax2.set_title("StdDev")
-        plt.show()
+        fig.colorbar(im, ax=ax2, label='Av (mag)')
 
+        ax3 = plt.subplot(223)
+        im = ax3.imshow(cold_pixels, origin='lower', vmin=0, vmax=0.05)
+        ax3.set_title(f"Cold (<{cold_cutoff}) pixels")
+        fig.colorbar(im, ax=ax3, label='cold pixel fraction (0 is never cold, 1 is always cold)')
 
+        ax4 = plt.subplot(224)
+        im = ax4.imshow(tau_solution_max, origin='lower', vmin=0, vmax=300)
+        ax4.set_title("Maximum")
+        fig.colorbar(im, ax=ax4, label='Av (mag)')
+
+        plt.tight_layout()
+        # 2023-01-30, 2023-02-01
+        fig.savefig(f"/home/ramsey/Pictures/2023-02-01/cold_pixels_{nsamples}.png",
+            metadata=catalog.utils.create_png_metadata(title=f"nsamples {nsamples}",
+                file=__file__, func="calculate_dust_column_densities_and_masses_with_error"))
+    # Progress as of EOD Friday jan 27
+    # Starting back up Monday Jan 30 1:36 PM
+    # Next step: Convert to mass/area, integrate over pixels, convert pixels to area (another systematic uncertainty)
+    # This stuff is copied from m16_deepdive.calculate_dust_column_densities
+
+    Cext160 = 1.9e-25 * u.cm**2
+    N_H_samples = (tau_solution_samples / Cext160).to(u.cm**-2)
+    best_N_H = (best_tau_solution / Cext160).to(u.cm**-2)
+    del tau_solution_samples, best_tau_solution
+    # Pixel area and uncertainty
+    pixel_scale = misc_utils.get_pixel_scale(wcs_obj)
+    pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2.
+    err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16
+
+    # # TODO: calculate distance uncertainty effect on mass, compare to the others
+
+    mass_per_area_samples = (N_H_samples * Hmass).to(u.solMass/u.cm**2)
+    best_mass_per_area = (best_N_H * Hmass).to(u.solMass/u.cm**2)
+
+    ########################### toggle whether it's P1a/P1b/P2/P3 or heads and necks are separated
+    entire_pillar_mass = True
+    ############################
+    if entire_pillar_mass:
+        reg_filename_short = "catalogs/mass_boxes.reg" # update to be tighter around the pillars & mask
+    else:
+        reg_filename_short = "catalogs/p123_boxes_head_body_withlabels_v3.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    reg_dict = {reg.meta['label']: reg for reg in reg_list if 'noise' not in reg.meta['label']}
+
+    plot_hists = True
+    if debug and plot_hists:
+        fig = plt.figure("Mass and N_H distribution", figsize=(12, 8))
+        ax_col = plt.subplot(211)
+        ax_col.set_xlabel("cm$^{-2}$")
+        ax_col.set_title("Maximum N(H)")
+        ax_mass = plt.subplot(212)
+        ax_mass.set_xlabel("Solar masses")
+        ax_mass.set_title("Mass")
+    for reg in reg_dict:
+        print(f"REGION {reg}")
+        pix_reg = reg_dict[reg].to_pixel(wcs_obj)
+        reg_mask = pix_reg.to_mask().to_image(wcs_obj.array_shape).astype(bool).reshape(1, *wcs_obj.array_shape)
+        combined_mask = reg_mask & flux_mask # shape should be (1, imgI, imgJ) for obvious broadcasting to sampled img shape
+        print(f"Mask shape {combined_mask.shape}", end="; ")
+        # Due to restrictions on array bool indexing, I can't just index the 3D array with a 2D boolean array
+        # I also want to keep the 3D structure intact so I can keep each realization separate
+        # So instead of indexing, I will multiply by the masks
+        col_values_samples = N_H_samples * combined_mask
+        mass_values_samples = mass_per_area_samples * combined_mask
+
+        best_col_values = best_N_H * combined_mask[0]
+        best_mass_values  = best_mass_per_area * combined_mask[0]
+        n_pixels = combined_mask.sum()
+        print(f"npixels {n_pixels}")
+        max_col_samples = np.max(col_values_samples, axis=(1, 2)) # WAIT!!! Should do argmax on the "best" map and only use those pixels. not just a max like this
+        mass_samples = (np.sum(mass_values_samples, axis=(1, 2)) * pixel_area).to(u.solMass)
+        mass_err_samples = (np.sum(mass_values_samples, axis=(1, 2)) * err_pixel_area).to(u.solMass)
+
+        best_max_col = np.max(best_col_values)
+        best_mass = (np.sum(best_mass_values)*pixel_area).to(u.solMass)
+        best_mass_err = (np.sum(best_mass_values)*err_pixel_area).to(u.solMass)
+
+        print(f"There are {np.sum(np.isnan(max_col_samples))} bad samples")
+        print()
+        print("Column density")
+        print(f"Best val {best_max_col:.2E}")
+        col_median = np.nanmedian(max_col_samples)
+        col_std = np.nanstd(max_col_samples)
+        col_16, col_84 = misc_utils.flquantiles(max_col_samples, 6) # 6 is a good approximation to 16,84 (16.7, 83.3)
+        print(f"Median val {col_median:.2E}")
+        print(f"StdDev {col_std:.2E}")
+        print(f"16,84: {col_median-col_16:.2E},{col_84-col_median:.2E}. Avg: {(col_84-col_16)/2:.2E}")
+        """
+        There must be some very large column densities, perhaps due to near-0 temperatures?
+        Yeah that seems to be it. Shaking the flux around when it's already close to backgroud
+        will produce low temperatures and high column densities. It's all sort of continuous from low to reasonable temperatures,
+        so there's no natural place to decide what is "unreasonable" (i.e., 5? 10? 15? 20? also introduces a bias on one side of the MC)
+        """
+        print()
+        print("Mass")
+        print(f"Best val {best_mass:.2f}")
+        mass_median = np.nanmedian(mass_samples)
+        mass_std = np.nanstd(mass_samples)
+        mass_16, mass_84 = misc_utils.flquantiles(mass_samples, 6)
+        print(f"Median val {mass_median:.2f}")
+        print(f"StdDev {mass_std:.2f}")
+        print(f"16,84: {mass_median-mass_16:.2f},{mass_84-mass_median:.2f}. Avg: {(mass_84-mass_16)/2:.2f}")
+
+        if debug and plot_hists:
+            b = 32
+            col_range = (0, 4e23)
+            mass_range = (0, 160)
+            hist_col, _, p0 = ax_col.hist(max_col_samples.to_value(), label=reg, alpha=0.6, histtype='stepfilled', bins=b, range=col_range)
+            hist_mass, _, p1 = ax_mass.hist(mass_samples.to_value(), label=reg, alpha=0.6, histtype='stepfilled', bins=b, range=mass_range)
+            color = p0[0].get_facecolor()[:3]
+
+            ax_col.errorbar([col_median.to_value()], [np.max(hist_col)*1.1], xerr=[col_std.to_value()], marker='o', ecolor=color, mec=color, mfc='none', capsize=3)
+            ax_col.plot([best_max_col.to_value()], [np.max(hist_col)*1.1], marker='x', color=color)
+            ax_col.plot([col_16.to_value(), col_84.to_value()], [np.max(hist_col)*1.15]*2, marker='+', linestyle='--', color=color)
+
+            ax_mass.errorbar([mass_median.to_value()], [np.max(hist_mass)*1.1], xerr=[mass_std.to_value()], marker='o', ecolor=color, mec=color, mfc='none', capsize=3)
+            ax_mass.plot([best_mass.to_value()], [np.max(hist_mass)*1.1], marker='x', color=color)
+            ax_mass.plot([mass_16.to_value(), mass_84.to_value()], [np.max(hist_mass)*1.15]*2, marker='+', linestyle='--', color=color)
+
+            ax_col.set_xlim(col_range)
+            ax_mass.set_xlim(mass_range)
+
+        print()
+        print("Mass ERR")
+        print(f"Best val {best_mass_err:.2f}")
+        print(f"Median val {np.nanmedian(mass_err_samples):.2f}")
+        print(f"StdDev {np.nanstd(mass_err_samples):.2f}")
+        print(f"percent err: {100*(err_pixel_area/pixel_area).decompose()}")
+        print("="*12)
+        print()
+    if debug and plot_hists:
+        ax_col.legend()
+        plt.tight_layout()
+        # plt.subplots_adjust(top=0.99, bottom=0.03)
+        # 2023-01-30, 2023-02-01
+        fig.savefig(f"/home/ramsey/Pictures/2023-02-01/mass_uncertainty_{nsamples}.png",
+            metadata=catalog.utils.create_png_metadata(title=f"nsamples {nsamples}",
+                file=__file__, func="calculate_dust_column_densities_and_masses_with_error"))
+
+        # Make histograms of the values, see what the asymmetry is like
 
 
 def calculate_galactocentric_distance_and_12c13c_ratio():
@@ -4102,7 +4268,7 @@ The column density figure for the paper will be made in m16_pictures.column_dens
 if __name__ == "__main__":
 
     ...
-    calculate_dust_column_densities_and_masses_with_error(debug=True)
+    calculate_dust_column_densities_and_masses_with_error(nsamples=300, debug=True)
 
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
