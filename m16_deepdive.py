@@ -81,12 +81,15 @@ ratio_12co_to_13co = 44.65 # call it 45 in paper, the difference will be miniscu
 los_distance_M16 = 1740 * u.pc # Kuhn et al 2019
 err_los_distance_M16 = 130 * u.pc # Kuhn et al 2019; it was +130, -120, so for a symmetric error bar I'll take +/- 130
 
-H2_mass_permole = 2.016 * u.g / u.mol
-H2_mass = (H2_mass_permole / const.N_A).decompose()
-
 H_mass_amu = 1.00794
 Hmass = const.u * H_mass_amu
 # H2_mass is 1/1e4 larger than 2x Hmass. All of these ignore He
+# no longer using this: # H2_mass_permole = 2.016 * u.g / u.mol
+# no longer using this: H2_mass =  (H2_mass_permole / const.N_A).decompose()
+# Fix all instances of H2_mass to be 2*Hmass (easier to find them thru NameErrors)
+
+# Adopting Y = 0.25, Z=0
+mean_molecular_weight_neutral = 1.33
 
 
 # Let us begin with a rewrite of m16_investigation.compare_carma_to_sofia_pv
@@ -2982,6 +2985,63 @@ def test_optical_molecular_pillar_2_thing():
     print("done")
 
 
+def test_hcop_hcn_linewidth_magnet_thing():
+    """
+    Feburary 7, 2023
+    The Crutcher 2012 magnetic field molecular cloud review mentions comparing
+    linewidths of ions to neutral species. The ions should have thinner lines
+    because they are constrained against perpendicular motions to the B field.
+    Let me see what a ratio map looks like of their moment2s
+    """
+    ion_cube = cps2.cutout_subcube(length_scale_mult=None, data_filename='hcop')
+    atom_cube = cps2.cutout_subcube(length_scale_mult=None, data_filename='hcn')
+
+    mask1 = (ion_cube > 3*cube_utils.onesigmas['hcop']*u.K)
+    mask2 = (atom_cube > 3*cube_utils.onesigmas['hcn']*u.K)
+    mask = mask1.include() & mask2.include()
+
+    vel_lims = (22*kms, 27*kms)
+
+    ion_cube_m = ion_cube.with_mask(mask).spectral_slab(*vel_lims)
+    atom_cube_m = atom_cube.with_mask(mask).spectral_slab(*vel_lims)
+
+    ion_cube_mom2 = ion_cube_m.linewidth_sigma()
+    atom_cube_mom2 = atom_cube_m.linewidth_sigma()
+
+    fig = plt.figure(figsize=(17, 9))
+    ax1 = plt.subplot(231)
+    ax1.imshow(ion_cube_mom2.to_value(), origin='lower', vmin=0.3, vmax=1)
+    ax1.set_title("HCO+")
+    ax2 = plt.subplot(233)
+    im = ax2.imshow(atom_cube_mom2.to_value(), origin='lower', vmin=0.3, vmax=1)
+    ax2.set_title("HCN")
+    fig.colorbar(im, ax=ax2, label='1D velocity dispersion (km/s)')
+
+    ax_mid = plt.subplot(232)
+    im = ax_mid.imshow(atom_cube_mom2.to_value()-ion_cube_mom2.to_value(), origin='lower', vmin=-0.03, vmax=0.03, cmap='PiYG')
+    fig.colorbar(im, ax=ax_mid, label='HCN$-$HCO+ velocity dispersions (km/s)')
+
+
+    ion_mom0 = ion_cube_m.moment0().to_value()
+    atom_mom0 = atom_cube_m.moment0().to_value()
+
+    ax_lo = plt.subplot(235)
+    im = ax_lo.imshow(atom_mom0-ion_mom0, origin='lower', vmin=-4, vmax=4, cmap='PiYG')
+    fig.colorbar(im, ax=ax_lo, label="HCN$-$HCO+ int intens (K km/s)")
+
+
+    ax3 = plt.subplot(234)
+    ax3.imshow(ion_mom0, origin='lower', vmin=0, vmax=35)
+    ax4 = plt.subplot(236)
+    im = ax4.imshow(atom_mom0, origin='lower', vmin=0, vmax=35)
+    fig.colorbar(im, ax=ax4, label='Integrated intensity (K km/s)')
+    # 2023-02-07
+    fig.savefig("/home/ramsey/Pictures/2023-02-07/hcop_hcn_velocitydispersion_difference_magnetic_0.png",
+        metadata=catalog.utils.create_png_metadata(title=">3sigma in BOTH lines",
+            file=__file__, func="test_hcop_hcn_linewidth_magnet_thing"
+        ))
+
+
 def integrate_13_and_18_co_for_column_density():
     """
     May 25, 2022
@@ -3061,6 +3121,9 @@ def calculate_co_column_density():
     Updated Nov 29, 2022:
     Propagating statistical uncertanties through the calculation
 
+    Updated Feb 8, 2023:
+    Using mu=1.33 and rho_H2 = mu * 2 * Hmass * n (instead of independent H2_mass_permole number)
+
     Equations:
     N(13CO) = 4pi epsilon0 *
         (3 kB / 8pi^3 nu S mu^2) *
@@ -3121,12 +3184,13 @@ def calculate_co_column_density():
     err_N13CO = (np.sqrt(helper_1 + helper_2 + helper_3) * (prefactor_numerator / prefactor_denominator) / g).to(u.cm**-2)
 
 
-    # Mask on 2*integrated intensity error
+    # Mask on integrated intensity error
     masking_by_error = True
     if masking_by_error:
         unmasked_N13CO = N13CO.copy()
-        N13CO[integrated_intensity_unitless < 1.*err_intT.to_value()] = np.nan
-        err_N13CO[integrated_intensity_unitless < 1.*err_intT.to_value()] = np.nan
+        masking_by_error_coeff = 1.
+        N13CO[integrated_intensity_unitless < masking_by_error_coeff*err_intT.to_value()] = np.nan
+        err_N13CO[integrated_intensity_unitless < masking_by_error_coeff*err_intT.to_value()] = np.nan
     else:
         unmasked_N13CO = None
 
@@ -3171,7 +3235,9 @@ def calculate_co_column_density():
             NH2_cropped[178:235, 379:413] = np.nan
         wcs_cropped = WCS(intT_hdr)
 
-    from .dust_mass import get_physical_area_pixel
+    # from .dust_mass import get_physical_area_pixel
+    # pixel_area = get_physical_area_pixel(NH2, wcs_object, los_distance_M16.to(u.pc).to_value())
+    # This and the method we use below (misc_utils.get_pixel_scale) are the same within 1e-16
     """
     Save a FITS file of:
     13CO column density
@@ -3182,14 +3248,13 @@ def calculate_co_column_density():
     wcs_object = WCS(intT_hdr)
 
     pixel_scale = misc_utils.get_pixel_scale(wcs_object)
-    # pixel_area = get_physical_area_pixel(NH2, wcs_object, los_distance_M16.to(u.pc).to_value())
-    # These two methods are the same within 1e-16
     pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
     err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16
 
-    mass_per_pixel_map = (pixel_area * NH2 * H2_mass).to(u.solMass)
+    particle_mass = 2*mean_molecular_weight_neutral*Hmass # molecular H; 2*mu*mH
+    mass_per_pixel_map = (pixel_area * NH2 * particle_mass).to(u.solMass)
     # Include both error from column density as well as from LOS distance
-    err_mass_per_pixel_raw = np.sqrt((pixel_area * err_NH2 * H2_mass)**2 + (err_pixel_area * NH2 * H2_mass)**2).to(u.solMass)
+    err_mass_per_pixel_raw = np.sqrt((pixel_area * err_NH2 * particle_mass)**2 + (err_pixel_area * NH2 * particle_mass)**2).to(u.solMass)
     pixels_per_beam = (beam_13co.sr / pixel_scale**2).decompose()
     # sqrt(oversample_factor) to correct for correlated pixels
     err_mass_per_pixel = np.sqrt(pixels_per_beam) * err_mass_per_pixel_raw
@@ -3201,15 +3266,19 @@ def calculate_co_column_density():
         hdr['CREATOR'] = f"Ramsey, {__file__}.calculate_co_column_density"
         hdr['HISTORY'] = f"12CO/H2 = {ratio_12co_to_H2:.2E}"
         hdr['HISTORY'] = f"12C/13C = {ratio_12co_to_13co:.2f}"
-        hdr['HISTORY'] = f"H2_mass = {H2_mass:.3E}"
+        hdr['HISTORY'] = f"Hmass = {Hmass:.3E}"
+        hdr['HISTORY'] = f"mean molecular weight = {mean_molecular_weight_neutral:.2f}"
+        hdr['HISTORY'] = f"adopted particle mass = {particle_mass:.2E}"
         hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
         hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
         hdr['HISTORY'] = f"sqrt(pixels/beam) oversample = {np.sqrt(pixels_per_beam):.2f}"
         hdr['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f}"
+        if masking_by_error:
+            hdr['HISTORY'] = f"Masking by {masking_by_error_coeff:.1f} X integrated intensity error"
         return hdr
 
     savedir = os.path.dirname(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"))
-    savename = os.path.join(savedir, "13co10_column_density_and_more_with_uncertainty.fits")
+    savename = os.path.join(savedir, "13co10_column_density_and_more_with_uncertainty_v2.fits")
 
     phdu = fits.PrimaryHDU()
 
@@ -3291,10 +3360,11 @@ def calculate_pillar_lifetimes_from_columndensity():
     Use the 13CO column densities and a rough estimate of photoevaporative flow
     mass loss rate to make a lifetime map
     """
-    co_column_fn = catalog.utils.search_for_file("bima/13co10_column_density.fits")
-    N13CO, n13co_hdr = fits.getdata(co_column_fn, header=True)
+    co_column_fn = catalog.utils.search_for_file("bima/13co10_column_density_and_more_with_uncertainty_v2.fits")
+    NH2, NH2_hdr = fits.getdata(co_column_fn, header=True, extname='H2coldens')
+    NH2 = NH2 * u.cm**-2
     # Convert 13CO to H2 column using numbers from Tiwari 2021
-    NH2 = (N13CO * ratio_12co_to_13co / ratio_12co_to_H2) * u.cm**-2
+    # NH2 = (N13CO * ratio_12co_to_13co / ratio_12co_to_H2) * u.cm**-2
     """
     Estimate mass loss rate (in terms of H2 molecules / time)
     From Gorti & Hollenbach 2002, mass loss rate dm/dt = A * rho_base * v_f
@@ -3303,21 +3373,22 @@ def calculate_pillar_lifetimes_from_columndensity():
 
     Whether it's H or H2 is hazy but it's just a factor of 2
     """
-    n_base = 1e4 * u.cm**-3
-    v_f = 1.0*kms
+    n_base = 2e4 * u.cm**-3 # used to use 1e4, I think it's got to be closer to 2
+    v_f = 0.6*kms # used to use 1.0 km/s, but I know more now. Using both sides flow, since column will go out towards and away
     H2_loss_rate_per_area = n_base * v_f
     # Divide the H2 column map by this H2 loss rate per area
     lifetime_map = (NH2 / H2_loss_rate_per_area).to(u.Myr)
     print(lifetime_map.unit)
     fig = plt.figure(figsize=(10, 8))
-    plt.subplot(111, projection=WCS(n13co_hdr))
+    plt.subplot(111, projection=WCS(NH2_hdr))
     plt.imshow(lifetime_map.to_value(), origin='lower', vmin=0, cmap='terrain')
     plt.colorbar(label='Lifetime upper limit (Myr)')
     plt.title("Photoevaporative flow lifetime limits from N($^{13}$CO)")
     plt.xlabel("RA")
     plt.ylabel("Dec")
-    fig.savefig("/home/ramsey/Pictures/2022-08-08/lifetime_map_n13co_color.png",
-        metadata=catalog.utils.create_png_metadata(title='lifetime upper limits from N(13co), n_base = 10^4cm-3 v_f = 1km/s',
+    # 2022-08-08, 2023-02-08
+    fig.savefig("/home/ramsey/Pictures/2023-02-08/lifetime_map_n13co_color.png",
+        metadata=catalog.utils.create_png_metadata(title='lifetime upper limits from N(13co), n_base = 10^4cm-3 v_f = 0.3km/s',
             file=__file__, func='calculate_pillar_lifetimes_from_columndensity'))
 
 
@@ -3429,8 +3500,9 @@ def calculate_cii_column_density(filling_factor=1.0):
     integrated_H_column_map = integrated_column_map / Cp_H_ratio
     err_integrated_H_column_map = err_integrated_column_map / Cp_H_ratio
 
-    integrated_mass_column_map = integrated_H_column_map * Hmass
-    err_integrated_mass_column_map = err_integrated_H_column_map * Hmass
+    particle_mass = Hmass * mean_molecular_weight_neutral
+    integrated_mass_column_map = integrated_H_column_map * particle_mass
+    err_integrated_mass_column_map = err_integrated_H_column_map * particle_mass
 
     pixel_scale = misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs)
     pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
@@ -3455,6 +3527,8 @@ def calculate_cii_column_density(filling_factor=1.0):
         hdr['HISTORY'] = f"Cutout with length scale {lsm}"
         hdr['HISTORY'] = f"C+/H = {Cp_H_ratio:.2E}"
         hdr['HISTORY'] = f"Hmass = {Hmass:.3E}"
+        hdr['HISTORY'] = f"mean molecular weight = {mean_molecular_weight_neutral:.2f}"
+        hdr['HISTORY'] = f"adopted particle mass = {particle_mass:.2E}"
         hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
         hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
         hdr['HISTORY'] = f"sqrt(pixels/beam) oversample = {np.sqrt(pixels_per_beam):.2f}"
@@ -3520,7 +3594,7 @@ def calculate_cii_column_density(filling_factor=1.0):
 
     hdul = fits.HDUList([phdu, hdu_NCp, hdu_NH, hdu_mass, hdu_distance, hdu_Tex,
         hdu_eNCp, hdu_emass, hdu_eNH])
-    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}_with_uncertainty.fits")
+    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}_with_uncertainty_v2.fits")
     print(savename)
     hdul.writeto(savename, overwrite=True)
 
@@ -3559,6 +3633,9 @@ def calculate_dust_column_densities(v=1):
     some new column density and mass/pixel maps.
     upper and lower limits in independent files so that I can run them thru
     the mass estimator separately
+
+    As of Feb 2023, use the calculate_dust_column_densities_and_masses_with_error()
+    instead of this when possible. Monte Carlo uncertainty estimation
     """
     # raise RuntimeError("Already ran on November 21, 2022")
     cutout_center_coord = SkyCoord("18:18:55.9969 -13:50:56.169", unit=(u.hourangle, u.deg), frame=FK5)
@@ -3639,12 +3716,15 @@ def calculate_dust_column_densities(v=1):
     pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
     err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16 # d((p * L  / 1rad)^2) = p^2 * L dL / (1rad)^2
 
-    mass_per_pixel_map = (pixel_area * N_H * Hmass).to(u.solMass)
-    err_mass_per_pixel_map = (err_pixel_area * N_H * Hmass).to(u.solMass)
+    particle_mass = Hmass * mean_molecular_weight_neutral
+    mass_per_pixel_map = (pixel_area * N_H * particle_mass).to(u.solMass)
+    err_mass_per_pixel_map = (err_pixel_area * N_H * particle_mass).to(u.solMass)
 
     new_hdr2['EXTNAME'] = "mass"
     new_hdr2['BUNIT'] = str(mass_per_pixel_map.unit)
     new_hdr2['HISTORY'] = f"Hmass = {Hmass:.3E}"
+    new_hdr2['HISTORY'] = f"mean molecular weight = {mean_molecular_weight_neutral:.2f}"
+    new_hdr2['HISTORY'] = f"adopted particle mass = {particle_mass:.2E}"
     new_hdr2['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
     new_hdr2['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
     new_hdr2['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f} +/- {err_los_distance_M16.to(u.pc):.2f}"
@@ -3715,6 +3795,7 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
     This should correctly propagate the errors from flux to column density
     and mass.
     Hopefully this takes less than a couple hours... (starting at 12:54pm)
+    (i dont remember when i first finished this, I think Jan 30?)
 
     :param nsamples: Choose number of realizations (should be >100, maybe 1000 if that's fast enough)
         10-40 is good for testing. 400 takes about 1G of RAM and only ~5-10 seconds
@@ -3722,6 +3803,9 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
     # Seed a RNG
     rng = np.random.default_rng(1312)
     print("NSAMPLES", nsamples)
+
+    # for writing out filenames
+    suffix = ""
 
     # Step 1: Load and zero-point correct the observations.
     # This stuff is copied out of g0_dust.fir_intensity_2 for the most part (I rewrote it to look nicer the other day)
@@ -3784,7 +3868,11 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
         flux_cutoff = 3
         if band == 70:
             assert flux_mask is None
-            flux_mask = (img + corrections[band]) > flux_cutoff*onesigma_err_sys
+            flux_cutoff_70 = 3
+            if flux_cutoff_70 != flux_cutoff:
+                print("70um FLUX CUTOFF", flux_cutoff_70, "x sigma")
+                suffix += f"_70gt{flux_cutoff_70:1d}"
+            flux_mask = (img + corrections[band]) > flux_cutoff_70*onesigma_err_sys
             # Doing >3sigma to 70um really loses us a lot of Pillar 3. But the alternative is huge error bars and uncertainty due to low temperatures
         if band == 160:
             assert flux_mask is not None
@@ -3877,9 +3965,9 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
         fig.colorbar(im, ax=ax4, label='Av (mag)')
 
         plt.tight_layout()
-        # 2023-01-30, 2023-02-01
-        fig.savefig(f"/home/ramsey/Pictures/2023-02-01/cold_pixels_{nsamples}.png",
-            metadata=catalog.utils.create_png_metadata(title=f"nsamples {nsamples}",
+        # 2023-01-30, 2023-02-01,09
+        fig.savefig(f"/home/ramsey/Pictures/2023-02-09/cold_pixels_{nsamples}{suffix}.png",
+            metadata=catalog.utils.create_png_metadata(title=f"nsamples {nsamples}, cutoffs 70/160 {flux_cutoff_70} / {flux_cutoff}",
                 file=__file__, func="calculate_dust_column_densities_and_masses_with_error"))
     # Progress as of EOD Friday jan 27
     # Starting back up Monday Jan 30 1:36 PM
@@ -3888,25 +3976,79 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
 
     Cext160 = 1.9e-25 * u.cm**2
     N_H_samples = (tau_solution_samples / Cext160).to(u.cm**-2)
+    del tau_solution_samples
     best_N_H = (best_tau_solution / Cext160).to(u.cm**-2)
-    del tau_solution_samples, best_tau_solution
+    del best_tau_solution
     # Pixel area and uncertainty
     pixel_scale = misc_utils.get_pixel_scale(wcs_obj)
     pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2.
     err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16
 
+    # !!!! still need to do this
     # # TODO: calculate distance uncertainty effect on mass, compare to the others
+    # also would be nice to save these stats as a file
+    # the quantile thing will let me easily estimate a "symmetric" error
 
-    mass_per_area_samples = (N_H_samples * Hmass).to(u.solMass/u.cm**2)
-    best_mass_per_area = (best_N_H * Hmass).to(u.solMass/u.cm**2)
+    particle_mass = Hmass * mean_molecular_weight_neutral
+
+    stop_and_save_fits = False
+    if stop_and_save_fits:
+        # Do not calculate masses; just save the "best" and median and "standard deviation" mass and column density planes
+        median_N_H = np.median(N_H_samples, axis=0)
+        N_H_16, N_H_84 = misc_utils.flquantiles(N_H_samples, 6)
+        N_H_avg_err = (N_H_84 - N_H_16)/2
+        median_mass_dpix = (median_N_H * particle_mass*pixel_area).to(u.solMass).to_value()
+        mass_dpix_16, mass_dpix_84 = (N_H_16*particle_mass*pixel_area).to(u.solMass).to_value(), (N_H_84*particle_mass*pixel_area).to(u.solMass).to_value()
+        mass_dpix_avg_err = (mass_dpix_84 - mass_dpix_16)/2
+
+        best_mass_dpix = (best_N_H * particle_mass * pixel_area).to(u.solMass).to_value()
+
+        phdu = fits.PrimaryHDU()
+        hdr = wcs_obj.to_header()
+        def hdu_generator(data, extname):
+            if hasattr(data, 'unit'):
+                data = data.to_value()
+            new_hdr = hdr.copy()
+            new_hdr['EXTNAME'] = extname
+            new_hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+            new_hdr['CREATOR'] = f"Ramsey, {__file__}"
+            new_hdr['COMMENT'] = "Column density is H nucleus (divide by 2 for H2)"
+            new_hdr['COMMENT'] = f"mean molecular weight H {mean_molecular_weight_neutral}"
+            new_hdr['COMMENT'] = f"adopted particle mass {particle_mass:.3E}"
+            new_hdr['COMMENT'] = f"pixel scale, area {pixel_scale:.2E}, {pixel_area:.2E}"
+            new_hdr['COMMENT'] = f"pct err pixel area: {(err_pixel_area/pixel_area).decompose().to_value() *100:.4f} %"
+            new_hdr['COMMENT'] = f"mask using cutoffs 70/160 {flux_cutoff_70} / {flux_cutoff}"
+            return fits.ImageHDU(data=data, header=new_hdr)
+        hdu_list = [phdu,
+            hdu_generator(best_N_H, 'Hcoldens_best'),
+            hdu_generator(median_N_H, 'Hcoldens_median'), hdu_generator(N_H_16, 'Hcoldens_16'), hdu_generator(N_H_84, 'Hcoldens_84'), hdu_generator(N_H_avg_err, 'Hcoldens_avgerr'),
+            hdu_generator(best_mass_dpix, 'mass_best'),
+            hdu_generator(median_mass_dpix, 'mass_median'), hdu_generator(mass_dpix_16, 'mass_16'), hdu_generator(mass_dpix_84, 'mass_84'), hdu_generator(mass_dpix_avg_err, 'mass_avgerr'),
+            hdu_generator(100*mass_dpix_avg_err/best_mass_dpix, 'mass_avgerr_pct'),
+        ]
+        hdul = fits.HDUList(hdu_list)
+        hdul.writeto(f"/home/ramsey/Documents/Research/Feedback/m16_data/herschel/coldens_70-160_sampled_{nsamples}{suffix}.fits",
+            overwrite=True)
+        return
+    else:
+        # computationally expensive and unnecessary if just saving
+        mass_per_area_samples = (N_H_samples * particle_mass).to(u.solMass/u.cm**2)
+        best_mass_per_area = (best_N_H * particle_mass).to(u.solMass/u.cm**2)
+
+
+
+
+
+
 
     ########################### toggle whether it's P1a/P1b/P2/P3 or heads and necks are separated
-    entire_pillar_mass = True
+    entire_pillar_mass = False
     ############################
     if entire_pillar_mass:
-        reg_filename_short = "catalogs/mass_boxes.reg" # update to be tighter around the pillars & mask
+        reg_filename_short = "catalogs/mass_boxes_v2.reg" # v2: updated to be tighter around the pillars & mask
     else:
         reg_filename_short = "catalogs/p123_boxes_head_body_withlabels_v3.reg"
+        suffix += "_head-neck-boxes"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_dict = {reg.meta['label']: reg for reg in reg_list if 'noise' not in reg.meta['label']}
 
@@ -3931,17 +4073,20 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
         col_values_samples = N_H_samples * combined_mask
         mass_values_samples = mass_per_area_samples * combined_mask
 
-        best_col_values = best_N_H * combined_mask[0]
-        best_mass_values  = best_mass_per_area * combined_mask[0]
+        best_col_values = best_N_H * combined_mask[0, :, :]
+        best_mass_values  = best_mass_per_area * combined_mask[0, :, :]
         n_pixels = combined_mask.sum()
         print(f"npixels {n_pixels}")
-        max_col_samples = np.max(col_values_samples, axis=(1, 2)) # WAIT!!! Should do argmax on the "best" map and only use those pixels. not just a max like this
-        mass_samples = (np.sum(mass_values_samples, axis=(1, 2)) * pixel_area).to(u.solMass)
-        mass_err_samples = (np.sum(mass_values_samples, axis=(1, 2)) * err_pixel_area).to(u.solMass)
 
-        best_max_col = np.max(best_col_values)
+        # Keep location, we will reuse for samples
+        best_max_col_loc = np.unravel_index(np.argmax(best_col_values), best_col_values.shape)
+        best_max_col = best_col_values[best_max_col_loc]
         best_mass = (np.sum(best_mass_values)*pixel_area).to(u.solMass)
         best_mass_err = (np.sum(best_mass_values)*err_pixel_area).to(u.solMass)
+
+        max_col_samples = col_values_samples[(slice(None), *best_max_col_loc)]
+        mass_samples = (np.sum(mass_values_samples, axis=(1, 2)) * pixel_area).to(u.solMass)
+        mass_err_samples = (np.sum(mass_values_samples, axis=(1, 2)) * err_pixel_area).to(u.solMass)
 
         print(f"There are {np.sum(np.isnan(max_col_samples))} bad samples")
         print()
@@ -3972,7 +4117,7 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
         if debug and plot_hists:
             b = 32
             col_range = (0, 4e23)
-            mass_range = (0, 160)
+            mass_range = (0, 210)
             hist_col, _, p0 = ax_col.hist(max_col_samples.to_value(), label=reg, alpha=0.6, histtype='stepfilled', bins=b, range=col_range)
             hist_mass, _, p1 = ax_mass.hist(mass_samples.to_value(), label=reg, alpha=0.6, histtype='stepfilled', bins=b, range=mass_range)
             color = p0[0].get_facecolor()[:3]
@@ -4000,9 +4145,9 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
         ax_col.legend()
         plt.tight_layout()
         # plt.subplots_adjust(top=0.99, bottom=0.03)
-        # 2023-01-30, 2023-02-01
-        fig.savefig(f"/home/ramsey/Pictures/2023-02-01/mass_uncertainty_{nsamples}.png",
-            metadata=catalog.utils.create_png_metadata(title=f"nsamples {nsamples}",
+        # 2023-01-30, 2023-02-01,08,09
+        fig.savefig(f"/home/ramsey/Pictures/2023-02-09/mass_uncertainty_{nsamples}{suffix}.png",
+            metadata=catalog.utils.create_png_metadata(title=f"nsamples {nsamples}, cutoffs 70/160 {flux_cutoff_70} / {flux_cutoff}",
                 file=__file__, func="calculate_dust_column_densities_and_masses_with_error"))
 
         # Make histograms of the values, see what the asymmetry is like
@@ -4046,10 +4191,10 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     for mass and column density. I have taken regions for each
     """
     print("MASS AND COLUMN DENSITIES BASED ON", tracer)
-    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty.fits",
-        'co': "bima/13co10_column_density_and_more_with_uncertainty.fits",
-        'dust': "herschel/coldens_70-160.fits",
-        'dust250': "herschel/coldens_70-160-250.fits",
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty_v2.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",
+        # 'dust': "herschel/coldens_70-160.fits", # not using these
+        # 'dust250': "herschel/coldens_70-160-250.fits",
     }
     column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens', 'dust': 'Hcoldens', 'dust250': 'Hcoldens'}
     column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens'}
@@ -4060,7 +4205,7 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     entire_pillar_mass = True
     ############################
     if entire_pillar_mass:
-        reg_filename_short = "catalogs/mass_boxes.reg"
+        reg_filename_short = "catalogs/mass_boxes_v2.reg"
     else:
         reg_filename_short = "catalogs/p123_boxes_head_body_withlabels_v3.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
@@ -4084,6 +4229,8 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
             raise NotImplementedError(f"settings above 4 not approved (user setting = {setting})")
 
         fn = fn.replace('.fits', suffix)
+    else:
+        suffix = ""
 
     with fits.open(catalog.utils.search_for_file(fn)) as hdul:
         column_map = hdul[column_extnames[tracer]].data
@@ -4175,8 +4322,8 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
             print('='*8)
 
         axes_hist[0].legend()
-        # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16,23
-        plt.savefig(f"/home/ramsey/Pictures/2023-01-23/coldens_and_mass_noise_{tracer}{suffix}.png",
+        # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16,23;02-09
+        plt.savefig(f"/home/ramsey/Pictures/2023-02-09/coldens_and_mass_noise_{tracer}{suffix}.png",
             metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
                 file=__file__, func='estimate_uncertainty_mass_and_coldens'))
 
@@ -4207,7 +4354,7 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
         mass_stat_unc = np.sqrt(np.sum(err_mass_values**2))
         n_pixels = len(mass_values)
 
-        select_index = ('south' if ('p1b' in reg) else 'north')
+        select_index = ('south' if ('p1b' in reg.lower()) else 'north')
 
         if no_background_subtract:
             col_mean_bg = 0
@@ -4262,13 +4409,165 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
 The column density figure for the paper will be made in m16_pictures.column_density_figure() (2022-11-22)
 """
 
+def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
+    """
+    February 6, 2023
+    Pillar lifetime depends on CII velocity dispersion, but so does turbulent (and magnetic) pressure
+    I will make an image here to understand the tradeoff between the two
+
+    alpha is the fraction (quadrature) of the linewidth which is turbulent. (1-alpha) gives flow velocity
+    sigma_total^2 = sigma_turb^2 + sigma_flow^2
+    sigma_total^2 = alpha*sigma_total^2 + (1-alpha)*sigma_total^2
+    sigma_turb^2 = a*sigma_total^2 and so on
+
+    Ptot = Pturb + Pmag
+    Pturb = sigma^2 * rho
+    Pmag = sigma^2 * rho * (1/2)Q^2/sigma_th^2
+    Ptot = sigma^2 * rho * (1 + (1/2)Q^2/sigma_th^2)
+    Q = 0.5 (commonly, according to Pattle 2018)
+    sigma_th = 14.4 degrees (Pattle 2018 observational result)
+    The constant (1/2)Q^2/sigma_th^2 is approximately 1.979
+    So Ptot = sigma^2 * rho * 2.979
+
+    """
+    # rho is mass density
+    n = n * u.cm**-3 # or 2e4
+    mmw = 1.4
+    rho = (n*mmw*Hmass).to(u.g/u.cm**3)
+    # Let the total CII 1D velocity dispersion be ~1--1.5
+    # Consider looping thru and overplotting
+    mag_coeff = 0.5 * 0.5**2 / (14.4*u.deg).to(u.rad).to_value()**2
+
+    def sigma_turb(alpha, sigma_total):
+        return np.sqrt(alpha) * sigma_total
+
+    def sigma_flow(alpha, sigma_total):
+        return np.sqrt(1 - alpha) * sigma_total
+
+    """
+    There is a unit issue in the pressure expression; check on Wolfram that my combination of P_B(Bfield) has valid units
+    """
+
+    def total_pressure(alpha, sigma_total):
+        # Combining magnetic and turbulent pressure, which have the same dependence on the quantity rho*sigma^2
+        return ((1. + mag_coeff) * rho * sigma_turb(alpha, sigma_total)**2 / const.k_B).to(u.K / u.cm**3)
+    pillar_properties = { # area (pc2), mass (solMass from CO)
+        'P1a-head': (0.17886, 64.12), 'P2-head': (0.07557, 11.32), 'P3-head': (0.02191, 4.27)
+    }
+    def mdot_and_pillar_lifetime(alpha, sigma_total, pillar_label):
+        # Return both so we can make 2 plots
+        area_pc2, mass_solMass = pillar_properties[pillar_label]
+        area = area_pc2 * u.pc**2
+        mass = mass_solMass * u.solMass
+        mass_loss_rate = (sigma_flow(alpha, sigma_total) * rho * area / 2.).to(u.solMass / u.Myr)
+        lifetime = (mass / mass_loss_rate).to(u.Myr)
+        return mass_loss_rate, lifetime
+
+    alpha_range = np.arange(0, 1, 0.05)
+
+    fig = plt.figure(figsize=(10, 9))
+    ax1 = plt.subplot(221)
+    ax2 = plt.subplot(222)
+    ax3 = plt.subplot(223)
+    ax4 = plt.subplot(224)
+
+    transparency = 0.2
+    p_nontherm_lo = n.to_value()*100/1e6
+    p_nontherm_hi = n.to_value()*250/1e6
+
+    colors = marcs_colors[:3]
+    # selected_pillar = "P2-head"
+
+    for i, sigma_total in enumerate([1.1, 1.2, 1.4][::-1]*kms):
+        label = "$\\sigma_{\\rm tot} =$ " + f"{sigma_total:.2f}"
+        ax1.plot(alpha_range, sigma_turb(alpha_range, sigma_total).to_value(), color=colors[i], label=label)
+        ax1.plot(alpha_range, sigma_flow(alpha_range, sigma_total).to_value(), color=colors[i], linestyle='--')
+
+        p_tot = total_pressure(alpha_range, sigma_total).to_value()/1e6
+        ax2.fill_between(alpha_range, p_nontherm_lo+p_tot, y2=p_nontherm_hi+p_tot, color=colors[i], alpha=transparency)
+
+        mass_loss_rate, lifetime = mdot_and_pillar_lifetime(alpha_range, sigma_total, selected_pillar)
+        ax3.plot(alpha_range, mass_loss_rate.to_value(), color=colors[i])
+        ax4.plot(alpha_range, lifetime.to_value(), color=colors[i])
+
+    ax1.legend()
+
+    ax1.set_title(f"bottom plots using {selected_pillar}")
+    ax2.set_title(f"Density n={n:.1E}")
+
+    ax2.set_ylim([0, 37])
+    ax2.axhspan(20, 29, color=marcs_colors[5], alpha=transparency, label='$P_{{\\rm H}_2}$') # fill region
+    ax2.axhspan(18, 36, color=marcs_colors[6], alpha=transparency, label='$P_{\\rm HII}$') # fill region
+    ax2.axhspan(p_nontherm_lo, p_nontherm_hi, color=marcs_colors[7], alpha=transparency, label='$P_{{\\rm HI,therm}}$')
+    ax2.legend(loc='upper left')
+
+    ax3.set_xlabel("$\\alpha$")
+    ax4.set_xlabel("$\\alpha$")
+    ax1.set_ylabel("1D Velocity dispersion $\\sigma$ (km s-1)")
+    ax2.set_ylabel("Total non-thermal pressure (cm-3)")
+    ax3.set_ylabel(f"{selected_pillar}" + " $M_{\\odot}$ (solMass Myr-1)")
+    ax3.set_ylim([0, 100])
+    ax4.set_ylabel(f"{selected_pillar} Pillar lifetime (Myr)")
+    ax4.axhspan(1, 3, color=marcs_colors[5], alpha=transparency)
+    ax4.set_ylim([0, 8])
+    # 2023-02-06
+    fig.savefig(f"/home/ramsey/Pictures/2023-02-06/pressure_mdot_tradeoff_{selected_pillar}_{n.to_value():.1E}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"pressure coeff 1 + {mag_coeff:.4f}; {selected_pillar}; n={n:.1E}",
+            file=__file__, func="lifetime_pressure_velocitydispersion_tradeoff"))
+
+
+def get_samples_at_locations(img, wcs_obj):
+    """
+    February 9, 2023
+    Use the regions in pillar123_pointsofinterest_v2 and grab a value at each location from the given map.
+    Return as dictionary using region names as keys. Img can be array or quantity, as long as WCS works
+    """
+    reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar123_pointsofinterest_v2.reg"))
+    return_dict = {}
+    for reg in reg_list:
+        coords = tuple(round(x) for x in reg.to_pixel(wcs_obj).center.xy[::-1]) # xy[::-1] = ij
+        return_dict[reg.meta['label']] = img[coords]
+    return return_dict
+
+
+def column_of_table_sample_peak_brightness_temperatures(line_stub):
+    """
+    February 9, 2023
+    Get peak brightness temperatures for a given line
+    Also test out the get_samples_at_locations() function before I use it on column density
+    """
+    cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=line_stub)
+    max_cube = cube.max(axis=0)
+    return get_samples_at_locations(max_cube, max_cube.wcs)
+
+
+def table_sample_peak_brightness_temperatures():
+    """
+    February 9, 2023
+    Get brightness temperatures for every line towards regions, save table (csv)
+    Looks like this works easily! Need to fill out the line list and rerun for the final table, but the written table is very clean and will be easy to open in Calc
+    """
+    line_list = ['cii', '12co10',]# '13co10']
+    super_dict = {}
+    for line_stub in line_list:
+        super_dict[line_stub] = column_of_table_sample_peak_brightness_temperatures(line_stub)
+    df = pd.DataFrame.from_dict(super_dict).applymap(lambda x: f"{x:.2f}")
+    # print(df)
+    # 2023-02-09
+    df.to_csv("/home/ramsey/Pictures/2023-02-09/max_brightness_temperatures.csv")
 
 
 
 if __name__ == "__main__":
 
     ...
-    calculate_dust_column_densities_and_masses_with_error(nsamples=300, debug=True)
+    calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)
+
+    # table_sample_peak_brightness_temperatures()
+
+    # for p in ['P1a-head', 'P2-head', 'P3-head']:
+    #     for n in (1e4, 2e4):
+    #         lifetime_pressure_velocitydispersion_tradeoff(n, p)
 
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
@@ -4279,13 +4578,7 @@ if __name__ == "__main__":
     # estimate_uncertainty_mass_and_coldens(tracer='co')
     # estimate_uncertainty_mass_and_coldens(tracer='dust')
 
-    # estimate_uncertainty_mass_and_coldens(tracer='dust250')
-
-    # Amplitudes = [1, 1.1, 1.25, 1.5, 1.7, 2, 2.5, 3, 3.5, 4, 5, 8, 10, 15]
-    # Velocities = [0, 0.1, 0.2, 0.5, 0.7, 1, 1.25, 1.5, 1.8, 2, 2.5, 3, 3.5, 4, 5, 8]
-    # Sigmas = [1, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05]
-    # for j, x in enumerate(Sigmas):
-    #     test_fitting_2_gaussians_with_1(j, x, "changingSigma")
+    # estimate_uncertainty_mass_and_coldens(tracer='co')
 
     # for s in (None, 'W', 'E', 'N', 'S'):
     #     if s is None:
@@ -4329,17 +4622,4 @@ if __name__ == "__main__":
 
     # correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
-    # test_fitting_uncertainties_with_emcee(which_line='cii')
-    # investigate_emcee_result('cii')
-
-    # test_fitting_2_gaussians_with_2(snr=50)
-    # test_fitting_2G_with_2G_wrapper()
-
     # plot_selected_hcop_spectra_fits()
-    # prepare_pdrt_tables('oiCONV', convert_units=True, reg_filename=1)
-    # prepare_pdrt_tables('12co32', regions_to_do=None, convert_units=True, reg_filename=1)
-    # prepare_pdrt_tables('12co10CONV', regions_to_do=None, convert_units=True, reg_filename=1)
-    # prepare_pdrt_tables('ciCONV', regions_to_do=None, convert_units=True, reg_filename=1)
-    # ##### prepare_pdrt_tables('oiCONV', regions_to_do=None, convert_units=True, reg_filename=1)
-    # prepare_pdrt_tables_fir(reg_filename=1)
-    # prepare_pdrt_tables_g0(reg_filename=1)
