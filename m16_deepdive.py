@@ -3188,6 +3188,7 @@ def calculate_co_column_density():
     masking_by_error = True
     if masking_by_error:
         unmasked_N13CO = N13CO.copy()
+        unmasked_err_N13CO = err_N13CO.copy()
         masking_by_error_coeff = 1.
         N13CO[integrated_intensity_unitless < masking_by_error_coeff*err_intT.to_value()] = np.nan
         err_N13CO[integrated_intensity_unitless < masking_by_error_coeff*err_intT.to_value()] = np.nan
@@ -3203,8 +3204,10 @@ def calculate_co_column_density():
 
     if unmasked_N13CO is not None:
         unmasked_NH2 = unmasked_N13CO * ratio_12co_to_13co / ratio_12co_to_H2
+        unmasked_err_NH2 = unmasked_err_N13CO * ratio_12co_to_13co / ratio_12co_to_H2
     else:
         unmasked_NH2 = None
+        unmasked_err_NH2 = None
 
     if False:
         crop = { # i, j
@@ -3345,7 +3348,13 @@ def calculate_co_column_density():
         header2a['COMMENT'] = "all values"
         hdu_H2_all = fits.ImageHDU(data=unmasked_NH2.to_value(), header=header2a)
 
-        list_of_hdus.extend([hdu_13co_all, hdu_H2_all])
+        header3a = make_and_fill_header()
+        header3a['EXTNAME'] = "err_H2coldens_all"
+        header3a['BUNIT'] = str(unmasked_err_NH2.unit)
+        header3a['COMMENT'] = "all values"
+        hdu_eH2_all = fits.ImageHDU(data=unmasked_err_NH2.to_value(), header=header3a)
+
+        list_of_hdus.extend([hdu_13co_all, hdu_H2_all, hdu_eH2_all])
 
 
     hdul = fits.HDUList(list_of_hdus)
@@ -3868,7 +3877,7 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
         flux_cutoff = 3
         if band == 70:
             assert flux_mask is None
-            flux_cutoff_70 = 3
+            flux_cutoff_70 = 0
             if flux_cutoff_70 != flux_cutoff:
                 print("70um FLUX CUTOFF", flux_cutoff_70, "x sigma")
                 suffix += f"_70gt{flux_cutoff_70:1d}"
@@ -4202,7 +4211,7 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     mass_err_extname = 'err_mass'
 
     ########################### toggle whether it's P1a/P1b/P2/P3 or heads and necks are separated
-    entire_pillar_mass = True
+    entire_pillar_mass = False
     ############################
     if entire_pillar_mass:
         reg_filename_short = "catalogs/mass_boxes_v2.reg"
@@ -4516,13 +4525,19 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
             file=__file__, func="lifetime_pressure_velocitydispersion_tradeoff"))
 
 
+persisent_regions_list = None # Save the list for future uses in same run, avoid loading from disk repeatedly
 def get_samples_at_locations(img, wcs_obj):
     """
     February 9, 2023
     Use the regions in pillar123_pointsofinterest_v2 and grab a value at each location from the given map.
     Return as dictionary using region names as keys. Img can be array or quantity, as long as WCS works
     """
-    reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar123_pointsofinterest_v2.reg"))
+    global persisent_regions_list
+    if persisent_regions_list is None:
+        reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar123_pointsofinterest_v2.reg"))
+        persisent_regions_list = reg_list
+    else:
+        reg_list = persisent_regions_list
     return_dict = {}
     for reg in reg_list:
         coords = tuple(round(x) for x in reg.to_pixel(wcs_obj).center.xy[::-1]) # xy[::-1] = ij
@@ -4557,13 +4572,45 @@ def table_sample_peak_brightness_temperatures():
     df.to_csv("/home/ramsey/Pictures/2023-02-09/max_brightness_temperatures.csv")
 
 
+def table_sample_column_densities():
+    """
+    February 10, 2023
+    Repeat the table_sample_peak_brightness_temperatures() method on
+    the column density and error maps
+    There is background correction and systematic error to add before these make it to the paper,
+    but I will do that in a spreadsheet! This will just be direct samples.
+    Values are N(H) for C+ and N(H2) for CO. I will make the conversion to N(H)/2 later
+    """
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty_v2.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",}
+    column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens_all',}
+    column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens_all'}
+
+    super_dict = {}
+    for line_stub in filenames_dict:
+        with fits.open(catalog.utils.search_for_file(filenames_dict[line_stub])) as hdul:
+            column_map = hdul[column_extnames[line_stub]].data
+            wcs_obj = WCS(hdul[column_extnames[line_stub]].header)
+            err_column_map = hdul[column_err_extnames[line_stub]].data
+        # TODO: Finish this! use get_samples_at_locations() to get samples and make table
+        super_dict[line_stub] = get_samples_at_locations(column_map, wcs_obj)
+        super_dict[line_stub+"_err"] = get_samples_at_locations(err_column_map, wcs_obj)
+    # then copy the csv table into excel and add in background correction, do errors, etc
+    df = pd.DataFrame.from_dict(super_dict).applymap(lambda x: f"{x:.2E}")
+    # print(df)
+    # 2023-02-11
+    df.to_csv("/home/ramsey/Pictures/2023-02-11/max_brightness_temperatures.csv")
+
+
+
 
 if __name__ == "__main__":
 
     ...
-    calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)
+    # calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)
 
     # table_sample_peak_brightness_temperatures()
+    table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
     #     for n in (1e4, 2e4):
@@ -4577,8 +4624,6 @@ if __name__ == "__main__":
     # estimate_uncertainty_mass_and_coldens(tracer='cii')
     # estimate_uncertainty_mass_and_coldens(tracer='co')
     # estimate_uncertainty_mass_and_coldens(tracer='dust')
-
-    # estimate_uncertainty_mass_and_coldens(tracer='co')
 
     # for s in (None, 'W', 'E', 'N', 'S'):
     #     if s is None:
