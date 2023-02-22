@@ -6,6 +6,7 @@ Created: July 9, 2021
 Starting with investigating the "light feature" over P2 and repeating some
 transverse PV diagrams
 I hope the paper is within reach. Maybe august?? Rise and grind
+(Feb 2023: lol, lmao)
 
 m16_investigation got too long so I'm starting this one. I estimate that I'll
 need maybe just one more to wrap up M16. After that, I should see if I can
@@ -3407,7 +3408,7 @@ def calculate_cii_column_density(filling_factor=1.0):
     Following Okada 2015 Sec 3.3 (pg 10)
     Several equations and some rules on how to assume Tex
     """
-    lsm = 6
+    lsm = 8
     cii_cube = cps2.cutout_subcube(length_scale_mult=lsm)
     # cii_cube = cii_cube - cps2.get_cii_background()[:, np.newaxis, np.newaxis]
 
@@ -4438,14 +4439,82 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     The constant (1/2)Q^2/sigma_th^2 is approximately 1.979
     So Ptot = sigma^2 * rho * 2.979
 
+
+    Update, Feburary 21, 2023
+    Xander explained that the B field measurement by Pattle relies on the turbulent velocity dispersion
+    measured in the same place as the sigma_th angle dispersion. So I can't just swap in the CII
+    velocity dispersion.
+    Best option is just to scale the B field down with the mass density rho, and if it's not enough,
+    say that the B field might have relatively weakened in the molecular gas due to ambipolar diffusion.
+    i.e. (I think) the C+ ions/electrons in the atomic gas probably couple that gas to a B field better
+    than in the molecular
+
     """
-    # rho is mass density
-    n = n * u.cm**-3 # or 2e4
-    mmw = 1.4
-    rho = (n*mmw*Hmass).to(u.g/u.cm**3)
-    # Let the total CII 1D velocity dispersion be ~1--1.5
-    # Consider looping thru and overplotting
-    mag_coeff = 0.5 * 0.5**2 / (14.4*u.deg).to(u.rad).to_value()**2
+    # (1 Gauss / (1 cm^−(1/2) * g^(1/2) *  s^−1))
+    cgs_to_gauss = (u.Gauss / (u.cm**(-1/2) * u.g**(1/2) * u.s**-1))
+
+
+    def calc_B_field_Pattle(nH2, sigma_v, mmw=1.4):
+        """
+        Implementing the equation for B field using Pattle's numbers but allowing
+        mean molecular weight, sigma_v and nH2 to change
+        I will use MMW = 1.33 but I want to check equations using theirs, 1.4
+        """
+        Q = 0.5
+        sigma_th = (14.4*u.deg).to(u.rad).to_value()
+        rho = (2 * nH2 * mmw * Hmass).to(u.g/u.cm**3)
+        return (Q * np.sqrt(4 * np.pi * rho) * (sigma_v / sigma_th) * cgs_to_gauss).to(u.microGauss)
+
+    def calc_turbulent_pressure(nH2, sigma_v):
+        """
+        Now default to mmw=1.33
+        """
+        return ((2 * nH2 * mean_molecular_weight_neutral * Hmass) * sigma_v**2 / const.k_B).to(u.K * u.cm**-3)
+
+    b_170ug = calc_B_field_Pattle(5e4 * u.cm**-3, 0.5 * kms)
+    print(f"This should be ~170uG: {b_170ug:.1f}")
+
+    nH2_lo = 5e4
+    nH2_hi = 1.3e5
+
+    b_molecular_lo = calc_B_field_Pattle(nH2_lo * u.cm**-3, 0.6 * kms, mmw=mean_molecular_weight_neutral)
+    b_molecular_hi = calc_B_field_Pattle(nH2_hi * u.cm**-3, 0.6 * kms, mmw=mean_molecular_weight_neutral)
+    print(f"This is my best number for molecular gas: {b_molecular_lo:.1f} -- {b_molecular_hi:.1f}")
+
+    def calc_Bpressure_Pattle(B_field):
+        return ((B_field/cgs_to_gauss)**2 / (8*np.pi * const.k_B)).to(u.K * u.cm**-3)
+
+    pB_mol_lo = calc_Bpressure_Pattle(b_molecular_lo)
+    pB_mol_hi = calc_Bpressure_Pattle(b_molecular_hi)
+    print(f"Molecular B pressures: {pB_mol_lo:.2E} -- {pB_mol_hi:.2E}")
+    p_therm_mol_lo = 25 * nH2_lo
+    p_therm_mol_hi = 25 * nH2_hi
+    p_turb_mol_lo = calc_turbulent_pressure(nH2_lo*u.cm**-3, 0.6*kms)
+    p_turb_mol_hi = calc_turbulent_pressure(nH2_hi*u.cm**-3, 0.6*kms)
+    print(f"Molecular thermal pressure: {p_therm_mol_lo:.1E} -- {p_therm_mol_hi:.1E} ")
+    print(f"Molecular turbulent pressure: {p_turb_mol_lo:.1E} -- {p_turb_mol_hi:.1E}")
+
+    p_tot_mol_lo = (pB_mol_lo.to_value() + p_turb_mol_lo.to_value() + p_therm_mol_lo) / 1e6
+    p_tot_mol_hi = (pB_mol_hi.to_value() + p_turb_mol_hi.to_value() + p_therm_mol_hi) / 1e6
+
+    print(f"Total molecular pressures: {p_tot_mol_lo:.1f} -- {p_tot_mol_hi:.1f}")
+
+    p_atom_lo = pB_mol_lo * (n/(2*nH2_lo))
+    p_atom_hi = pB_mol_hi * (n/(2*nH2_hi))
+    # print(f"Atomic pressures: {p_atom_lo:.2E} -- {p_atom_hi:.2E}")
+
+    # n/2 because I baked in the 2xmH for molecular H2 into that function
+    b_atom = calc_B_field_Pattle(n/2 * u.cm**-3, 0.6*kms, mmw=mean_molecular_weight_neutral)
+    pB_atom = calc_Bpressure_Pattle(b_atom)
+    print(f"Final atomic values: {b_atom:.1f}, {pB_atom:.2E}")
+
+
+
+    """
+    There is a unit issue in the pressure expression; check on Wolfram that my combination of P_B(Bfield) has valid units
+    It works it's just the Gaussian units thing
+    """
+
 
     def sigma_turb(alpha, sigma_total):
         return np.sqrt(alpha) * sigma_total
@@ -4453,13 +4522,21 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     def sigma_flow(alpha, sigma_total):
         return np.sqrt(1 - alpha) * sigma_total
 
-    """
-    There is a unit issue in the pressure expression; check on Wolfram that my combination of P_B(Bfield) has valid units
-    """
+    # rho is mass density
+    n = n * u.cm**-3 # or 2e4
+    # Neutral mass density
+    rho = (n*mean_molecular_weight_neutral*Hmass).to(u.g/u.cm**3)
 
-    def total_pressure(alpha, sigma_total):
+    def turb_pressure(alpha, sigma_total):
         # Combining magnetic and turbulent pressure, which have the same dependence on the quantity rho*sigma^2
-        return ((1. + mag_coeff) * rho * sigma_turb(alpha, sigma_total)**2 / const.k_B).to(u.K / u.cm**3)
+        return (rho * sigma_turb(alpha, sigma_total)**2 / const.k_B).to(u.K / u.cm**3)
+
+
+    p_turb_atomic = (rho * (1.2*kms)**2 / const.k_B).to(u.K / u.cm**3)
+    print(f"Atomic turbulent pressure: {p_turb_atomic:.2E}")
+
+
+
     pillar_properties = { # area (pc2), mass (solMass from CO)
         'P1a-head': (0.17886, 64.12), 'P2-head': (0.07557, 11.32), 'P3-head': (0.02191, 4.27)
     }
@@ -4481,8 +4558,9 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     ax4 = plt.subplot(224)
 
     transparency = 0.2
-    p_nontherm_lo = n.to_value()*100/1e6
-    p_nontherm_hi = n.to_value()*250/1e6
+    p_therm_lo = n.to_value()*100/1e6
+    p_therm_hi = n.to_value()*250/1e6
+    pB_atom_val = pB_atom.to_value()/1e6
 
     colors = marcs_colors[:3]
     # selected_pillar = "P2-head"
@@ -4492,8 +4570,8 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
         ax1.plot(alpha_range, sigma_turb(alpha_range, sigma_total).to_value(), color=colors[i], label=label)
         ax1.plot(alpha_range, sigma_flow(alpha_range, sigma_total).to_value(), color=colors[i], linestyle='--')
 
-        p_tot = total_pressure(alpha_range, sigma_total).to_value()/1e6
-        ax2.fill_between(alpha_range, p_nontherm_lo+p_tot, y2=p_nontherm_hi+p_tot, color=colors[i], alpha=transparency)
+        p_turb = turb_pressure(alpha_range, sigma_total).to_value()/1e6
+        ax2.fill_between(alpha_range, p_therm_lo+pB_atom_val+p_turb, y2=p_therm_hi+pB_atom_val+p_turb, color=colors[i], alpha=transparency)
 
         mass_loss_rate, lifetime = mdot_and_pillar_lifetime(alpha_range, sigma_total, selected_pillar)
         ax3.plot(alpha_range, mass_loss_rate.to_value(), color=colors[i])
@@ -4504,10 +4582,11 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     ax1.set_title(f"bottom plots using {selected_pillar}")
     ax2.set_title(f"Density n={n:.1E}")
 
-    ax2.set_ylim([0, 37])
-    ax2.axhspan(20, 29, color=marcs_colors[5], alpha=transparency, label='$P_{{\\rm H}_2}$') # fill region
+    ax2.set_ylim([0, 40])
+    ax2.axhspan(p_tot_mol_lo, p_tot_mol_hi, color=marcs_colors[5], alpha=transparency, label='$P_{{\\rm H}_2}$') # fill region
     ax2.axhspan(18, 36, color=marcs_colors[6], alpha=transparency, label='$P_{\\rm HII}$') # fill region
-    ax2.axhspan(p_nontherm_lo, p_nontherm_hi, color=marcs_colors[7], alpha=transparency, label='$P_{{\\rm HI,therm}}$')
+    ax2.axhline(pB_atom_val, color=marcs_colors[5], alpha=transparency, label='$P_{{\\rm HI,B}}$')
+    ax2.axhspan(p_therm_lo + pB_atom_val, p_therm_hi + pB_atom_val, color=marcs_colors[7], alpha=transparency, label='$P_{{\\rm HI,B}} + P_{{\\rm HI,therm}}$')
     ax2.legend(loc='upper left')
 
     ax3.set_xlabel("$\\alpha$")
@@ -4519,9 +4598,9 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     ax4.set_ylabel(f"{selected_pillar} Pillar lifetime (Myr)")
     ax4.axhspan(1, 3, color=marcs_colors[5], alpha=transparency)
     ax4.set_ylim([0, 8])
-    # 2023-02-06
-    fig.savefig(f"/home/ramsey/Pictures/2023-02-06/pressure_mdot_tradeoff_{selected_pillar}_{n.to_value():.1E}.png",
-        metadata=catalog.utils.create_png_metadata(title=f"pressure coeff 1 + {mag_coeff:.4f}; {selected_pillar}; n={n:.1E}",
+    # 2023-02-06,21
+    fig.savefig(f"/home/ramsey/Pictures/2023-02-21/pressure_mdot_tradeoff_{selected_pillar}_{n.to_value():.1E}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"B pressure scaled by density only; {selected_pillar}; n={n:.1E}",
             file=__file__, func="lifetime_pressure_velocitydispersion_tradeoff"))
 
 
@@ -4581,10 +4660,11 @@ def table_sample_column_densities():
     but I will do that in a spreadsheet! This will just be direct samples.
     Values are N(H) for C+ and N(H2) for CO. I will make the conversion to N(H)/2 later
     """
-    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty_v2.fits",
-        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",}
-    column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens_all',}
-    column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens_all'}
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm8_ff1.0_with_uncertainty_v2.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",
+        'dust': "herschel/coldens_70-160_sampled_1000.fits"}
+    column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens_all', 'dust': 'Hcoldens_best'}
+    column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens_all', 'dust': 'Hcoldens_avgerr'}
 
     super_dict = {}
     for line_stub in filenames_dict:
@@ -4599,7 +4679,7 @@ def table_sample_column_densities():
     df = pd.DataFrame.from_dict(super_dict).applymap(lambda x: f"{x:.2E}")
     # print(df)
     # 2023-02-11
-    df.to_csv("/home/ramsey/Pictures/2023-02-11/max_brightness_temperatures.csv")
+    df.to_csv("/home/ramsey/Pictures/2023-02-11/column_densities.csv")
 
 
 
@@ -4610,11 +4690,12 @@ if __name__ == "__main__":
     # calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)
 
     # table_sample_peak_brightness_temperatures()
-    table_sample_column_densities()
+    # table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
     #     for n in (1e4, 2e4):
-    #         lifetime_pressure_velocitydispersion_tradeoff(n, p)
+    lifetime_pressure_velocitydispersion_tradeoff(1e4, 'P1a-head')
+    lifetime_pressure_velocitydispersion_tradeoff(2e4, 'P1a-head')
 
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()
