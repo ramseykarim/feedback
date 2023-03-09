@@ -17,6 +17,7 @@ if __name__ == "__main__":
     matplotlib.rc('font', **font)
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+import matplotlib.gridspec as gridspec
 import sys
 import os
 import datetime
@@ -385,7 +386,7 @@ def single_parallel_pillar_pvs():
         cut for pillar 1 goes between the horns, doesn't go over either
 
     Updated September 23, 2021: regridding to CO10 instead of CII to take advantage
-    of CII spectral resolution
+    of CO spectral resolution
     """
     colors = marcs_colors[:2][::-1] # ['r', 'k']
     reg_filename = catalog.utils.search_for_file("catalogs/parallelpillars_single.reg") # 3 regions in this file
@@ -467,7 +468,7 @@ def single_parallel_pillar_pvs():
             handles.append(mpatches.Patch(color=colors[1], label="CO (1$-$0)"))
 
         ##########
-        ### Now CO
+        ### Now Cii
         ##########
         sl_cii = pvextractor.extract_pv_slice(subcube_cii.spectral_slab(*vel_lims), path)
         ####################################################
@@ -921,14 +922,24 @@ def background_samples_figure():
     cii_cube = cps2.cutout_subcube(length_scale_mult=7)
     bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_5.reg" # this used to be "5_v2" but I renamed "5_v2" to "5", so "5" is the most updated as of Dec 6, 2022
     bg_reg = regions.read_ds9(catalog.utils.search_for_file(bg_reg_filename_short))
-    cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg[:-1]).mean(axis=(1, 2))
+
+    #### Average north or all?
+    average_north_or_all = 'all'
+    if average_north_or_all == 'north':
+        avg_stub = average_north_or_all
+        bg_reg_subset = bg_reg[:-1]
+    elif average_north_or_all == 'all':
+        avg_stub = average_north_or_all
+        bg_reg_subset = bg_reg
+
+    cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg_subset).mean(axis=(1, 2))
     kwargs = {'fill': False}
     fig = plt.figure(figsize=(14, 6))
     ax_img = plt.subplot2grid((1, 3), (0, 0), projection=cii_cube[0, :, :].wcs)
     ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2)
     vel_lims = (19*kms, 27*kms)
     ax_img.imshow(cii_cube.spectral_slab(*vel_lims).moment0().to_value(), origin='lower')
-    ax_spec.plot(cii_cube.spectral_axis.to_value(), cii_bg_spectrum.to_value(), color='k', lw=4, label='Average background', alpha=0.6)
+    ax_spec.plot(cii_cube.spectral_axis.to_value(), cii_bg_spectrum.to_value(), color='k', lw=4, label=f'Average ({avg_stub}) background', alpha=0.6)
     for idx, reg in enumerate(bg_reg):
         if idx == len(bg_reg)-1:
             color = 'k'
@@ -964,9 +975,9 @@ def background_samples_figure():
     ax_spec.set_ylabel("CII line intensity (K)")
     ax_spec.legend()
     plt.tight_layout()
-    # 2022-01-14, 2022-11-29
-    fig.savefig("/home/ramsey/Pictures/2022-11-29/cii_background_spectra.png",
-        metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}',
+    # 2022-01-14, 2022-11-29, 2023-02-22
+    fig.savefig(f"/home/ramsey/Pictures/2023-02-22/cii_background_spectra_avg{avg_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}, avg {avg_stub}',
             file=__file__, func='background_samples_figure'))
 
 
@@ -1697,10 +1708,241 @@ def multi_panel_moment_images():
     plt.show()
 
 
+def pv_vertical_series_thru_pillars(pillar_name, line_stub):
+    save_dir = "/home/ramsey/Pictures/2023-02-23/pv_anim"
+    if pillar_name == 'p2':
+        path_info = pvdiagrams.linear_series_from_ds9(catalog.utils.search_for_file("catalogs/pillar_series_p2.reg"), pvpath_width=None, n_steps=30)
+        save_dir = os.path.join(save_dir, "p2")
+        pv_hi = {'hcop': 12, 'cii': 27, '12co10': 12, 'n2hp': 4, 'cs': 6}[line_stub]
+        vel_lims = (18, 26)
+    else:
+        print("no")
+        return
+    cube = cube_utils.CubeData(line_stub)
+    cube.convert_to_K()
+    pvdiagrams.run_plot_and_save_series(cube, vel_lims, *path_info,
+        os.path.join(save_dir, f"img_{cube.filename_stub()}.png"),
+        pv_lims=(0, cube_utils.onesigmas[line_stub]*pv_hi), contours=cube_utils.onesigmas[line_stub]*1)
+
+
+
+def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
+    """
+    March 7, 2023
+    The PV diagrams that I will put into the paper
+    Based off m16_pictures.single_parallel_pillar_pvs, but for a wider variety of
+    pv slices
+    Keep the "high res background", "CII resolution contours" scheme and colors
+    But put the finder image as a 4th panel in line (or in 2x2 grid)
+
+
+    molecular_line_stub = "12co10" # whatever it is must have a valid "CONV" counterpart
+    """
+
+
+    """ Setup paths """
+    colors = marcs_colors[:2][::-1] # ['r', 'k']
+    reg_filename_dict = {
+        'large-along': "parallelpillars_single.reg",
+        'threads': "pillar1_threads_pv_v6_withboxes.reg",
+        'cap': "p1_IDgradients_thru_head.reg",
+        'misc': "eagpvcuts3.reg",
+        'p2': "pillar2_across.reg",
+    }
+
+    # I don't think I have python 3.10 so I don't have switch or case or whatever it's called
+    # So instead, I have this!
+    if choose_file == 0:
+        reg_key = 'large-along'
+        reg_slice = slice(0, 3)
+    elif choose_file in [1, 2]:
+        reg_key = 'threads'
+        if choose_file == 1:
+            reg_slice = slice(0, 3)
+        else:
+            reg_slice = slice(3, 6)
+    elif choose_file == 3:
+        reg_key = 'cap'
+        reg_slice = slice(0, 3)
+    elif choose_file == 4:
+        reg_key = 'p2'
+        reg_slice = slice(0, 3)
+    elif choose_file >= 5:
+        reg_key = 'misc'
+        if choose_file == 5:
+            reg_slice = (2, 0, 4)
+        else:
+            raise NotImplementedError("havent set this up yet")
+
+    path_names = ['Pillar 1', 'Pillar 2', 'Pillar 3']
+    path_names = ['1', '2', '3']
+    marker_styles = ['-', '--', ':']
+
+    pv_vel_lims = (18*u.km/u.s, 30*u.km/u.s)
+
+    reg_filename_short = reg_filename_dict[reg_key]
+    reg_filename = catalog.utils.search_for_file("catalogs/"+reg_filename_short) # 3 regions in this file
+    pvpath_width = pvdiagrams.m16_allpillars_series_kwargs['pvpath_width']
+    pvpath_width = None
+    path_list = pvdiagrams.path_from_ds9(reg_filename, None, width=pvpath_width)
+    if isinstance(reg_slice, slice):
+        # Slice object
+        path_list = path_list[reg_slice]
+    else:
+        # Tuple of indices (out of order in the reg file)
+        path_list = [path_list[i] for i in reg_slice]
+
+
+    """ Setup colors """
+    chosen_cmap = 'Greys' # 'cool'
+    line_color = marcs_colors[0]
+
+    # paths = [] # delete if it doesnt crash
+
+    """ Load cubes """
+    default_region_filename = catalog.utils.search_for_file("catalogs/parallelpillars_single.reg") # good for the cutout
+    subcube_kwargs = dict(reg_index=1, length_scale_mult=2, reg_filename=default_region_filename)
+    # CII, native resolution
+    subcube_cii = cps2.cutout_subcube(**subcube_kwargs) # TODO: move away from cutout_subcube here and just load the whole cube
+
+    def process_mol(line_stub):
+        cube_obj = cube_utils.CubeData(line_stub)
+        cube_obj.convert_to_K()
+        return cube_obj
+    # Get both native and convolved resolution cubes
+    cube_obj_mol_natres = process_mol(molecular_line_stub)
+    cube_obj_mol_ciires = process_mol(molecular_line_stub+"CONV")
+
+    def make_make_pv_slice(path):
+        """
+        I'm just doing this for fun, gotta use 61A for something
+        """
+        def make_pv_slice(cube_obj, just_cube=False):
+            if just_cube:
+                cube = cube_obj
+            else:
+                cube = cube_obj.data
+            return pvextractor.extract_pv_slice(cube.with_spectral_unit(kms).spectral_slab(*pv_vel_lims), path)
+        return make_pv_slice
+
+    """ Grid stuff """
+    fig = plt.figure(figsize=(20, 7))
+    gs_whole = gridspec.GridSpec(1, 4, wspace=0.15, left=0.06, right=0.98)
+
+    # Start reference image stuff
+    # I need the WCS of the image
+    img_vel_lims = (20*u.km/u.s, 26*u.km/u.s)
+    img_vel_str = make_vel_stub(img_vel_lims)
+    img = subcube_cii.spectral_slab(*img_vel_lims).moment0().to(u.K * u.km / u.s)
+    ref_wcs = img.wcs
+
+    # Make image Axes
+    ax_img = fig.add_subplot(gs_whole[0, :1], projection=ref_wcs)
+
+    # Briefly finish reference image stuff because I don't want the image hanging out in memory forever
+    img = img.to_value()
+    stretch = np.arcsinh
+    stretch_vlims = lambda a, b: dict(vmin=stretch(a), vmax=stretch(b))
+    vlims = stretch_vlims(10, 200)
+    im = ax_img.imshow(stretch(img), origin='lower', **vlims, cmap=chosen_cmap)
+    del img # save memory i guess?
+
+    gs_sl = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs_whole[0, 1:], wspace=0.02)
+
+    def make_sl_ax(flat_index, wcs_obj):
+        """
+        Given flat index 0-2 of path, assign grid location within grid_shape
+        """
+        return fig.add_subplot(gs_sl[0, flat_index], projection=wcs_obj)
+
+    """ end grid stuff """
+
+
+    """ Loop through paths """
+    for idx, path in enumerate(path_list):
+        make_pv_slice = make_make_pv_slice(path)
+
+        sl_mol_ciires = make_pv_slice(cube_obj_mol_ciires)
+        sl_mol_natres = make_pv_slice(cube_obj_mol_natres)
+        # WCSs are equivalent, resolution doesn't matter
+
+        sl_mol_ciires.header['CTYPE2'] = 'VRAD'
+        sl_wcs = WCS(sl_mol_ciires.header)
+
+        ax_sl = make_sl_ax(idx, sl_wcs)
+        ax_sl.imshow(sl_mol_natres.data, origin='lower', aspect=(sl_mol_natres.data.shape[1]/sl_mol_natres.data.shape[0]), cmap=chosen_cmap)
+        ax_sl.coords[1].set_format_unit(u.km/u.s)
+        ax_sl.coords[0].set_format_unit(u.arcsec)
+        ax_sl.coords[0].set_major_formatter('x')
+        cube_obj_mol_ciires.help_plot_pv(ax_sl)
+
+        if idx == 0:
+            ax_sl.tick_params(axis='x', direction='in')
+            ax_sl.tick_params(axis='y', direction='in')
+            ax_sl.set_xlabel("Offset, from SE to NW (arcseconds)")
+            ax_sl.set_ylabel("Velocity (km/s)")
+        else:
+            ax_sl.tick_params(axis='x', direction='in')
+            ax_sl.tick_params(axis='y', direction='in', labelleft=False)
+            ax_sl.set_xlabel(" ")
+        # ax_sl.set_title(f"{path_names[idx]} PV diagram")
+        contour_args = (sl_mol_ciires.data,)
+        if choose_file == 0 and idx == 2:
+            levels = np.arange(8, 81, 4)
+        else:
+            levels = np.arange(10, 131, 10)
+        contour_kwargs = dict(linewidths=1.2, colors=colors[1], alpha=1, levels=levels)
+        c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=10)
+        try:
+            ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
+        except:
+            pass
+        if idx == 0:
+            handles = []
+            handles.append(mpatches.Patch(color=colors[1], label="CO (1$-$0)"))
+
+        sl_cii = make_pv_slice(subcube_cii, just_cube=True)
+        contour_args = (reproject_interp((sl_cii.data, sl_cii.header), sl_wcs, shape_out=sl_mol_ciires.data.shape, return_footprint=False),)
+        contour_kwargs['colors'] = colors[0]
+        contour_kwargs['alpha'] = 1
+        c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=9)
+        try:
+            ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
+        except:
+            pass
+        if idx == 0:
+            handles.append(mpatches.Patch(color=colors[0], label="[CII]"))
+            ax_sl.legend(handles=handles, loc='lower right')
+
+    def plot_ellipse_patch(ax, wcs_obj, subcube):
+        patch = subcube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_obj))
+        patch.set_alpha(0.5)
+        patch.set_facecolor('grey')
+        patch.set_edgecolor('k')
+        ax.add_artist(patch)
+
+    """ Finish reference image stuff """
+    handles = []
+    for idx, p in enumerate(path_list):
+        l = ax_img.plot([c.ra.deg for c in p._coords], [c.dec.deg for c in p._coords], color=line_color, linestyle=marker_styles[idx], lw=3, transform=ax_img.get_transform('world'), label=path_names[idx])
+    # ax_img.set_title(f"[CII] integrated {img_vel_str} with paths overlaid")
+    ax_img.legend()
+    ax_img.set_xlabel("RA")
+    ax_img.set_ylabel("Dec")
+    ax_img.tick_params(axis='x', direction='in')
+    ax_img.tick_params(axis='y', direction='in')
+    ticks = [10, 20, 50, 100, 200]
+    cbar = fig.colorbar(im, ax=ax_img, ticks=stretch(ticks))
+    cbar.ax.set_yticklabels([f"{x:d}" for x in ticks])
+    cbar.ax.set_ylabel("Integrated intensity (K km/s)")
+    plot_ellipse_patch(ax_img, ref_wcs, subcube_cii)
+
+    plt.savefig(f"/home/ramsey/Pictures/2023-03-08/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'pv_along {reg_filename_short}',
+            file=__file__, func="paper_pv_diagrams"))
+
 
 if __name__ == "__main__":
-    # m16_channel_maps()
-    # save_fits_thin_channel_maps()
     # single_parallel_pillar_pvs() # most recently uncommented (april 21, 2022)
 
     # simple_mom0_carma_molecules('cii')
@@ -1708,7 +1950,10 @@ if __name__ == "__main__":
 
     # background_samples_figure()
 
+    # pv_vertical_series_thru_pillars('p2', 'cs')
+    paper_pv_diagrams(choose_file=3)
+
     # try_component_velocity_figure()
     # column_density_figure()
 
-    multi_panel_moment_images()
+    # multi_panel_moment_images()

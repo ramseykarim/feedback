@@ -4454,6 +4454,14 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     cgs_to_gauss = (u.Gauss / (u.cm**(-1/2) * u.g**(1/2) * u.s**-1))
 
 
+    #### check what B field needed for 1-2 x 10^7 K cm-3
+    reverse_engineer_B_field = lambda p : ((p*8*np.pi*const.k_B)**(1/2) * cgs_to_gauss).to(u.microGauss)
+    print(reverse_engineer_B_field(3e6*u.K/u.cm**3))
+    print(reverse_engineer_B_field(1e7*u.K/u.cm**3))
+    print(reverse_engineer_B_field(2e7*u.K/u.cm**3))
+    return
+
+
     def calc_B_field_Pattle(nH2, sigma_v, mmw=1.4):
         """
         Implementing the equation for B field using Pattle's numbers but allowing
@@ -4506,7 +4514,7 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     # n/2 because I baked in the 2xmH for molecular H2 into that function
     b_atom = calc_B_field_Pattle(n/2 * u.cm**-3, 0.6*kms, mmw=mean_molecular_weight_neutral)
     pB_atom = calc_Bpressure_Pattle(b_atom)
-    print(f"Final atomic values: {b_atom:.1f}, {pB_atom:.2E}")
+    print(f"Atomic B values: {b_atom:.1f}, {pB_atom:.2E}")
 
 
 
@@ -4560,6 +4568,8 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     transparency = 0.2
     p_therm_lo = n.to_value()*100/1e6
     p_therm_hi = n.to_value()*250/1e6
+    print(f"Atomic thermal pressure {p_therm_lo} -- {p_therm_hi}")
+    print(f"Atomic total pressure {(p_turb_atomic+pB_atom).to_value()/1e6 + p_therm_lo:.1f} -- {(p_turb_atomic+pB_atom).to_value()/1e6 + p_therm_hi:.1f}")
     pB_atom_val = pB_atom.to_value()/1e6
 
     colors = marcs_colors[:3]
@@ -4694,8 +4704,8 @@ if __name__ == "__main__":
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
     #     for n in (1e4, 2e4):
-    lifetime_pressure_velocitydispersion_tradeoff(1e4, 'P1a-head')
-    lifetime_pressure_velocitydispersion_tradeoff(2e4, 'P1a-head')
+    # lifetime_pressure_velocitydispersion_tradeoff(1e4, 'P1a-head')
+    lifetime_pressure_velocitydispersion_tradeoff(2.6e4, 'P1a-head')
 
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()

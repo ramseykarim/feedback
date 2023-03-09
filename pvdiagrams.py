@@ -382,9 +382,10 @@ def prepare_reference_image(spectr_cube_obj, flat_wcs, center_coord, size=None):
 def plot_path(cube, subcube, path,
     center_coord=None, coord_to_mark=None,
     img_to_plot=None, img_stretch='linear', pv_stretch='linear',
-    img_lims=None,
+    img_lims=None, pv_lims=None,
     img_subplot=(121,), pv_subplot=(122,),
-    fig=None, show=True):
+    fig=None, show=True,
+    contours=False):
     """
     :param cube: CubeData
     :param subcube: a SpectralCube instance, already trimmed to the correct
@@ -410,12 +411,16 @@ def plot_path(cube, subcube, path,
         img_stretch
     :param img_lims: vlims for the image. If None, lets imshow do its own thing.
         If not None, should be a tuple of numbers: (vmin, vmax)
+    :param pv_lims: vlims for the pv diagram. If None, lets imshow do its own
+        thing. If not None, should be a tuple of numbers: (vmin, vmax)
     :param img_subplot: Number indicator of img axis.
         subplot number/tuple for img. Has to be tuple,
         even if only one number. Args unpacked into plt.subplot()
     :param pv_subplot_number: same as img_subplot, for pv plot
     :param fig: figure object to use
     :param show: whether or not to show the plot
+    :param contours: None if no contours, else pass in the spacing between
+        contours (like sigma)
     :returns: the figure used
     """
     c0, c1 = SkyCoord(path._coords[0]), SkyCoord(path._coords[1])
@@ -425,7 +430,7 @@ def plot_path(cube, subcube, path,
     pv_stretch = misc_utils.check_stretch(pv_stretch)
 
     if fig is None:
-        fig = plt.figure(figsize=(8, 4))
+        fig = plt.figure(figsize=(9.5, 4))
     else:
         plt.figure(fig.number)
 
@@ -435,8 +440,21 @@ def plot_path(cube, subcube, path,
         subcube = prepare_subcube(cube, subcube)
     sl = pvextractor.extract_pv_slice(subcube, path)
     ax2 = plt.subplot(*pv_subplot, projection=WCS(sl.header))
-    ax2.imshow(pv_stretch(sl.data), origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]))
-    # plt.contour(sl.data, cmap='autumn_r', linewidths=0.5, levels=[10., 15., 20., 25., 30., 35.,])
+
+    # Figure out visual pv limits
+    if pv_lims is not None:
+        pv_vlim_kwargs = dict(vmin=pv_stretch(pv_lims[0]), vmax=pv_stretch(pv_lims[1]))
+    else:
+        pv_vlim_kwargs = dict()
+
+
+    im = ax2.imshow(pv_stretch(sl.data), origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), **pv_vlim_kwargs)
+    fig.colorbar(im, ax=ax2, label='T (K)')
+
+    if contours:
+        levels = np.arange(pv_lims[0], pv_lims[1]*3, contours)
+        ax2.contour(sl.data, colors='k', linewidths=0.5, levels=levels)
+
     ax2.coords[1].set_format_unit(u.km/u.s)
     cube.help_plot_pv(ax2)
     ax2.set_ylabel("Velocity (km/s)")
@@ -469,11 +487,13 @@ def plot_path(cube, subcube, path,
     ax1.arrow(*(x.to(u.deg).to_value() for x in (c0.ra, c0.dec)),
         *(x.to(u.deg).to_value() for x in ((c1.ra - c0.ra), (c1.dec - c0.dec))), # this is somehow correct; no cos(dec) term is necessary.
         color='white', transform=ax1.get_transform('world'), length_includes_head=True,
-        width=path.width.to(u.deg).to_value(), fill=False, lw=0.6, alpha=0.7,
+        width=(path.width.to(u.deg).to_value() if path.width else 0.001), fill=(path.width is None), lw=0.6, alpha=0.7,
     )
     ax1.set_xlabel("RA")
     ax1.set_ylabel("Dec")
-    ax1.set_title(f"{cube.name()} integrated intensity (within PV plot limits)")
+    ax1.set_title(f"{cube.name()} integrated intensity (within PV plot limits)", fontsize=8)
+
+    plt.subplots_adjust(left=0.05, right=0.95, wspace=0.05)
 
     if show:
         plt.show()
@@ -552,7 +572,7 @@ SERIES OF PATHS FUNCTIONS
 """
 
 def linear_series_from_description(start_center, end_center, pvpath_length,
-    pvpath_angle, pvpath_width=None, points_not_paths=False):
+    pvpath_angle, pvpath_width=None, points_not_paths=False, n_steps=30):
     """
     Create a linear series of parallel Paths. Generator function, so generates
     lazily.
@@ -580,6 +600,7 @@ def linear_series_from_description(start_center, end_center, pvpath_length,
         rathern than the pvextractor PathFromCenter object itself, in
         the generator.
         If points_not_paths is True, then all the keyword
+    :param n_steps: if pvpath_width is None, take n_steps from start to finish
     :returns: three useful things:
         1) the center coordinate of the path
         2) the longest characteristic length of the system (the max of
@@ -594,12 +615,11 @@ def linear_series_from_description(start_center, end_center, pvpath_length,
     center_coord = catalog.utils.coordinate_midpoint(start_center, end_center)
     # Get the stepwidth, somehow
     if pvpath_width is None:
-        # We want 30 steps (including the endpoints)
-        n_steps = 30
+        # Default n_steps
         stepwidth = series_length / float(n_steps - 1)
     elif not hasattr(pvpath_width, 'unit'):
         # Assume we gave it a number of steps...
-        n_steps = pvpath_width
+        n_steps = pvpath_width # Override n_steps
         stepwidth = series_length / float(n_steps - 1)
         # Set width to None to be safe
         pvpath_width = None
@@ -609,7 +629,7 @@ def linear_series_from_description(start_center, end_center, pvpath_length,
         n_steps = int(ceil(series_length / stepwidth)) + 1
     print(f"Preparing series of {n_steps} steps over length of {series_length.to(u.arcmin):.2f} at a position angle of {series_position_angle.to(u.deg):.2f}")
     if not points_not_paths:
-        print(f"Each Path has a length of {pvpath_length.to(u.arcmin):.2f}, width of {(pvpath_width if pvpath_width else 0.).to(u.arcsec):.2f}, and position angle of {pvpath_angle.to(u.deg):.2f}")
+        print(f"Each Path has a length of {pvpath_length.to(u.arcmin):.2f}, width of {(pvpath_width if pvpath_width else 0.*u.arcsec).to(u.arcsec):.2f}, and position angle of {pvpath_angle.to(u.deg):.2f}")
     # Gather the PathFromCenter kwargs
     path_kwargs = dict(length=pvpath_length, width=pvpath_width, angle=pvpath_angle)
     def path_generator():
@@ -629,7 +649,7 @@ def linear_series_from_description(start_center, end_center, pvpath_length,
 
 
 def linear_series_from_ds9(reg_file_name, pvpath_length=None,
-    pvpath_angle=None, pvpath_width=None):
+    pvpath_angle=None, pvpath_width=None, **kwargs):
     """
     Creates a linear series of parallel Paths. Generator function, so generates
     lazily. Sources the
@@ -678,7 +698,7 @@ def linear_series_from_ds9(reg_file_name, pvpath_length=None,
     # finish the job
     return linear_series_from_description(series_coords[0], series_coords[1],
         pvpath_length, pvpath_angle, pvpath_width=pvpath_width,
-        points_not_paths=points_not_paths)
+        points_not_paths=points_not_paths, **kwargs)
 
 
 def run_plot_and_save_series(cube, vlims,
