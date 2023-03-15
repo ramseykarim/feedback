@@ -200,7 +200,7 @@ def easy_pv_2():
     fig.colorbar(im, ax=ax_img, label='K km/s')
     ax_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color='red', linestyle='-', lw=3, transform=ax_img.get_transform('world'))
     ax_img.text(pv_path._coords[0].ra.deg, pv_path._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color='red', fontsize=10, va='bottom', ha='center', transform=ax_img.get_transform('world'))
-    ax_img.text(pv_path._coords[1].ra.deg, pv_path._coords[1].dec.deg - 4*u.arcsec.to(u.deg), f'Offset = {pv_path_length.to_value():.1f}\"', color='red', fontsize=10, va='top', ha='center', transform=ax_img.get_transform('world'))
+    ax_img.text(pv_path._coords[1].ra.deg, pv_path._coords[1].dec.deg - 4*u.arcsec.to(u.deg), f'Offset = {pv_path_length.to_value():.1f}\"', color='red', fontsize=12, va='top', ha='center', transform=ax_img.get_transform('world'))
     ax_sl = plt.subplot2grid((1, 2), (0, 0), projection=WCS(sl.header))
     im = ax_sl.imshow(sl.data, origin='lower', aspect=1.4)
     fig.colorbar(im, ax=ax_sl, label='K')

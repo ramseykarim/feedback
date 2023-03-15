@@ -53,12 +53,16 @@ cubenames = {
     '12co10': '$^{12}$CO(1-0)', '12co10CONV': '$^{12}$CO(1-0) (CII beam)',
     '12co10APEX': '$^{12}$CO(1-0) (CO(3-2) beam)',
     '13co10': "$^{13}$CO(1-0)", '13co10CONV': "$^{13}$CO(1-0) (CII beam)",
-    'c18o10': "C$^{18}$O(1-0) (smooth)", 'c18o10CONV': "C$^{18}$O(1-0) (CII beam, smooth)",
+    'c18o10': "C$^{18}$O(1-0)", 'c18o10CONV': "C$^{18}$O(1-0) (CII beam)", # i removed "smooth"
     'co65': "$^{12}$CO(6-5)", 'co65CONV': "$^{12}$CO(6-5)  (CII beam)",
     '12co32': "$^{12}$CO(3-2)", '13co32': "$^{13}$CO(3-2)",
     'n2hp': 'N$_2$H+(1-0)', 'n2hpCONV': 'N$_2$H+(1-0) (CII beam)',
     'cs': 'CS(2-1)', 'csCONV': 'CS(2-1) (CII beam)',
-    'oiCONV': '[O I] (CII beam)', 'ciCONV': '[C I] (CII beam)'
+    'oi': '[O I]', 'ci': '[C I]',
+    'oiCONV': '[O I] (CII beam)', 'ciCONV': '[C I] (CII beam)',
+
+    # For convenience, some frequently used non-cube names
+    '8um': "8 $\mu$m", '70um': "70 $\mu$m", '160um': "160 $\mu$m",
 }
 
 
@@ -75,6 +79,7 @@ cubefilenames = {
     'c18o10': "bima/M16.BIMA.c18o.cm.SMOOTH.fits", 'c18o10CONV': "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits",
     'co65': "apex/M16_CO6-5.fits", 'co65CONV': "apex/M16_CO6-5.SOFIAbeam.fits",
     '12co32': "apex/M16_12CO3-2_truncated.fits", '13co32': "apex/M16_13CO3-2_truncated.fits", # spectra trimmed to approx. CII limits
+    'oi': "sofia/m16_OI_63.fits", 'ci': "apex/M16_CI.fits",
     'oiCONV': "sofia/m16_OI_63.SMOOTH.SOFIAbeam.fits", 'ciCONV': "apex/M16_CI.SMOOTH.SOFIAbeam.fits",
 }
 
@@ -199,7 +204,7 @@ class CubeData:
                     print(self.header)
                     raise NotImplementedError
                 beam = self.data.beam
-                beam_area = 2.*np.pi*beam.major*beam.minor/2.355**2
+                beam_area = beam.sr
                 self.equivalencies = u.brightness_temperature(restfrq, beam_area)
             else:
                 print(f"\'beam\' not in unit: {str(self.data.unit).lower()}")

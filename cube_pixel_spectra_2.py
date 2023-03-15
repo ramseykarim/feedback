@@ -1794,6 +1794,10 @@ def rebin_channels(centers_old, centers_new, values_old):
     """
     Dec 6, 2021
     Rebin a spectrum to another set of bins. The new bins should be wider.
+
+    looking at this March 15, 2023: I think I used this for testing/learning while preparing to regrid HCO+ to CII both spatial/spectral, for the modeling
+    but I think it is better (and looks like I ultimately used the better method in cube_pixel_spectra_2.regrid_hcop) to do spectral_cube's way of smooth and then interpolate
+    see this section in their documentation: https://spectral-cube.readthedocs.io/en/latest/smoothing.html#spectral-smoothing
     """
     n_bins_new = centers_new.size
     width_old = centers_old[1] - centers_old[0]
@@ -1914,14 +1918,41 @@ def regrid_hcop():
         raise RuntimeError("I already ran this on Dec 7, 2021 and Jan 20, 2022!")
 
 
+def regrid_spectral_cii():
+    """
+    March 15, 2023
+    Downsample CII to 1 km/s channels for a good channel map figure.
+    Follow the cube_pixel_spectra_2.regrid_hcop (above) spectral regrid so that
+    I downsample properly.
+    Use a triangular window 3 pixels long, which is [0.5, 1, 0.5] and I think fairly
+    accounts for the reuse of the upper and lower channels by the adjacent new channels.
+    I will have to repeat this for CO if I want to put those in too, but I'll cross that bridge later.
+    """
+    cii_cube_obj = cube_utils.CubeData('cii')
+    # Get some footprint and make a cutout to it
+    jwst_footprint_fn = catalog.utils.search_for_file("catalogs/jwst_reproj_footprint.reg")
+    cii_cube_obj.data = cii_cube_obj.data.subcube_from_regions(regions.Regions.read(jwst_footprint_fn)).with_spectral_unit(u.km/u.s)
+    cii_cube_obj.refresh_wcs()
+
+    # 3 spaxel triangular filter, I think it's the best for  this
+    # I guess all the benefits of a triangular filter are also in a gaussian filter, idk
+    smoothing_kernel = convolution.CustomKernel(signal.triang(3))
+    out_spectral_axis = np.arange(15, 35) * u.km / u.s
+    cii_cube = cii_cube_obj.data.spectral_smooth(smoothing_kernel)
+    cii_cube = cii_cube.spectral_interpolate(out_spectral_axis)
+    save_fn = cii_cube_obj.full_path.replace(".fits", "_1kms_jwstfootprint.fits")
+    cii_cube.write(save_fn)
+
+
+
 
 if __name__ == "__main__":
-
+    regrid_spectral_cii()
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
 
     # test_cii_background()
 
-    if True:
+    if False:
         #### HCOP
         # regrid = False
         # if regrid:
@@ -1959,7 +1990,7 @@ if __name__ == "__main__":
 
     # check_if_wings_trace_peak_emission(subcube)
 
-    if True:
+    if False:
         #############
         ##### TEMPLATE MODEL SETUP
         #############
@@ -2001,7 +2032,7 @@ if __name__ == "__main__":
     #     filename_stub="models/gauss_fit_13co10_3G_v1",
     #     ylim_max=50, show='mom0')
 
-    investigate_template_model_fit(3, line='13co10', version=1)
+    # investigate_template_model_fit(3, line='13co10', version=1)
 
     # regrid_hcop()
 

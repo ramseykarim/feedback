@@ -1605,17 +1605,47 @@ def multi_panel_moment_images():
     n2hp, c18o10, and any other limited-emission lines can go in a contour overlay somewhere (maybe on this plot?)
     """
     selected_data = [
-        '12co10', '13co10', '12co32', '12co65', 'hcop', 'cs',
-        'cii', 'oi', 'hcn', '8um', '70um']
+        'cii', 'oi', 'ci',  '8um',
+        '12co10', '13co10', '12co32', 'co65',
+        'cs', 'hcop', 'hcn', '70um',
+    ]
     overlays = { # overlay: image on which to overlay
         'c18o10': '12co10', '13co32': '12co32', 'n2hp': 'hcn', '160um': '70um'
     }
-    grid_shape = (2, 6)
+    grid_shape = (3, 4) # production
+    figsize=(23, 15.5)
+    plots_adjust_kwargs = dict(left=0.05, right=0.96, top=0.95, bottom=0.05, wspace=0.16, hspace=0.08)
 
-    # for the draft version
-    selected_data = ['12co10', 'cii', '8um']
-    overlays = {'13co10': '12co10'}
-    grid_shape = (1, 3)
+    contour_levels_base = np.arange(2, 111, 5)
+    contour_levels_coeff = {
+        '13co10': 2., 'c18o10': 0.25, '160um': 15000, '13co32': 2., 'n2hp': 1,
+    }
+    img_limits = {
+        '12co10': (0, 300), '13co10': (0, 55), 'cii': (0, 230), '8um': (None, 1200), 'ci': (-3, 11), 'oi': (-5, 40),
+    }
+    img_stretches = {'8um': np.arcsinh, '70um': np.arcsinh, '160um': np.arcsinh} # if not here, linear
+    stretch_inverses = {np.arcsinh: np.sinh}
+    def apply_stretch(value_or_image, label, invert=False):
+        """ Apply stretch. If key not in img_stretches, it's linear. invert=True does inverse stretch """
+        if value_or_image is None:
+            # Short circuit for vmin/vmaxes left unset
+            return None
+        if label in img_stretches:
+            stretch_fn = img_stretches[label]
+            if invert:
+                return stretch_inverses[stretch_fn](value_or_image)
+            else:
+                return stretch_fn(value_or_image)
+        else:
+            return value_or_image
+    def get_vlims(label):
+        return dict(vmin=apply_stretch(img_limits[label][0], label), vmax=apply_stretch(img_limits[label][1], label)) if label in img_limits else {} # empty dict if not there
+    # img_ticks = {'160um': ()}
+
+    ################################ for the draft version
+    # selected_data = ['12co10', 'cii', '70um']
+    # overlays = {'c18o10': '12co10', '160um': '70um'}
+    # grid_shape = (1, 3) # testing
 
     # Set up reference grid and velocity limits
     reference_grid_stub = '12co10'
@@ -1625,10 +1655,24 @@ def multi_panel_moment_images():
     vel_lims = tuple(x*kms for x in vel_lims)
     vel_lims_stub = make_vel_stub(vel_lims)
 
-    # Lookup table for 2D data filenames and info
+    # Lookup table for 2D data filenames and info (beams!)
+    herschel_dir_stub = "/herschel/anonymous1603389167/1342218995/level2_5/"
+    # Beam is tuple (major, minor, PA) where major,minor are in arcseconds and PA in degrees
     photometry_lookup = {
-        '8um': ("spitzer/SPITZER_I4_mosaic.fits",)
+        # (filename, needs_unit_conversion,)
+        '8um': ("spitzer/SPITZER_I4_mosaic.fits", (1.98, 1.98, 0)), '12co10': ("bima/M16_12CO1-0_7x4_mom0.fits", None), '13co10': ("bima/M16.BIMA.13co.mom0.fits", None), 'c18o10': ("bima/M16.BIMA.c18o.masked_mom0.fits", None),
+        '70um': (herschel_dir_stub+"HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz", (9.0, 5.75, 62)), '160um': (herschel_dir_stub+"HPPJSMAPR/hpacs_25HPPJSMAPR_1822_m1337_00_v1.0_1471714553094.fits.gz", (13.32, 11.31, 40.9)),
+        'hcop': ("carma/M16.ALL.hcop.sdi.mom0pv.fits", None), 'cs': ("carma/M16.ALL.cs.sdi.mom0pv.fits", None), 'hcn': ("carma/M16.ALL.hcn.sdi.mom0pv.fits", None), 'n2hp': ("carma/M16.ALL.n2hp.sdi.mom0pv.fits", None),
     }
+
+    def print_stats(stub, img):
+        """
+        Print out the min, max, mean, median, stddev values for the image
+        """
+        print(f"---{stub}---")
+        for f in (np.min, np.max, np.mean, np.median, np.std):
+            print(f"{f.__name__}: {f(img[np.isfinite(img)])}")
+        print('-'*(6 + len(stub)))
 
 
     def load_helper(cube_or_image_stub):
@@ -1641,71 +1685,251 @@ def multi_panel_moment_images():
         But it's pretty simple and DataLayer does a lot of other stuff that I don't need to do here,
         so I'm going to rewrite the wheel. It's just a circle.
         """
-        if cube_or_image_stub in cube_utils.cubefilenames:
-            cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=cube_or_image_stub)
-            mom0 = cube.spectral_slab(*vel_lims).moment0()
-            img = mom0.to_value()
-            wcs_obj = mom0.wcs
-        else:
-            filename, = photometry_lookup[cube_or_image_stub]
+        if cube_or_image_stub in photometry_lookup:
+            filename, beam_info = photometry_lookup[cube_or_image_stub]
             img, header = fits.getdata(catalog.utils.search_for_file(filename), header=True)
-            wcs_obj = WCS(header)
-        return img, wcs_obj
+            wcs_obj = WCS(header, naxis=2)
+            img = np.squeeze(img)
+            if beam_info is None:
+                beam = cube_utils.Beam.from_fits_header(header)
+            else:
+                major, minor, pa = beam_info
+                beam = cube_utils.Beam(major=major*u.arcsec, minor=minor*u.arcsec, pa=pa*u.deg)
+            if 'RESTFREQ' in header: # Catches all the line cubes, nothing else
+                # This routine I think is pretty specific to MIRIAD, and Marc did both the bima and carma mom0s in MIRIAD
+                restfrq = header['RESTFREQ'] * u.Hz
+                data_units = tuple(u.Unit(y.lower().replace('jy', 'Jy')) for y in header['BUNIT'].split('.'))
+                print(header['BUNIT'])
+                print(data_units)
+                img = (img*data_units[0]).to(u.K, equivalencies=u.brightness_temperature(restfrq, beam.sr)) * data_units[1]
+                print(img.unit)
+            else:
+                try:
+                    img = img * u.Unit(header['BUNIT'])
+                    print(f"successfully obtained unit {img.unit} for data {cube_or_image_stub}")
+                except Exception as e:
+                    print(e)
+                    img_unit = header['BUNIT']
+                    print(f"Failed to obtain unit {img_unit} for data {cube_or_image_stub}")
+            if img.unit == u.Jy/u.pix:
+                mjysr = u.MJy/u.sr
+                print(f"Converting {img.unit} to {mjysr}")
+                # Note that u.pix is unfortunately locked in as a distance unit rather than area, so while this conversion looks clean, it is a little sketchy but will work
+                img = (img * (u.pix / misc_utils.get_pixel_scale(ref_wcs)**2)).to(mjysr)
 
-    # use np.unravel_index(i, grid_shape)
+        else:
+            cube_obj = cube_utils.CubeData(cube_or_image_stub)
+            cube_obj.convert_to_K()
+            mom0 = cube_obj.data.spectral_slab(*vel_lims).moment0().to(u.K*kms)
+            img = mom0.quantity
+            wcs_obj = mom0.wcs
+            beam = cube_obj.data.beam
+        print_stats(cube_or_image_stub, img)
+        return img, wcs_obj, beam
 
-    # Plotting config and defaults
-    fig = plt.figure(figsize=(8, 6))
-    plot_kwargs = dict(origin='lower', cmap='viridis')
-    contour_kwargs = dict(cmap='magma_r')
+    def make_regrid_stub(data_stub, order):
+        order_stub = f"_{order:d}" if (order is not None) else ""
+        return f"misc_regrids/{data_stub}_regrid{order_stub}.fits"
+
+    def load_helper_memoize(cube_or_image_stub, order=None):
+        """
+        Check if there's a saved regridded 2D version of the cube/image and load that instead
+        :param order: order of interpolation. 0 is nearest neighbor, good for showing pixellation in images
+            1 is bilinear, good for contours. None is no interpolation, good for the reference image.
+            order is saved to the filename so that we don't misuse different interpolations if we change the data presentation
+        """
+        try:
+            fn = catalog.utils.search_for_file(make_regrid_stub(cube_or_image_stub, order))
+            print(f"Found memoized data for {cube_or_image_stub} order={order}")
+        except FileNotFoundError:
+            print(f"No memoized data found for {cube_or_image_stub} order={order}")
+            return False
+        data, header = fits.getdata(fn, header=True)
+        wcs_obj = WCS(header)
+        beam = cube_utils.Beam.from_fits_header(header)
+        return data*u.Unit(header['BUNIT']), wcs_obj, beam
+
+    def save_helper_memoize(cube_or_image_stub, img_reproj, wcs_obj, beam, unit, order=None):
+        """
+        Save a regridded version with the beam info in the header
+        """
+        fn = f"{catalog.utils.m16_data_path}{make_regrid_stub(cube_or_image_stub, order)}"
+        header = wcs_obj.to_header()
+        header['BUNIT'] = str(unit)
+        header['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        header['AUTHOR'] = "Ramsey Karim"
+        header['CREATOR'] = f"rkarim, via {__file__}.multi_panel_moment_images"
+        header.update(beam.to_header_keywords())
+        header['COMMENT'] = f"reprojected to {reference_grid_stub} grid"
+        hdu = fits.PrimaryHDU(data=img_reproj, header=header)
+        print(f"Memoizing data for {cube_or_image_stub} order={order}")
+        hdu.writeto(fn)
+
+    """ Plotting config and defaults """
+    fig = plt.figure(figsize=figsize)
+    plot_kwargs = dict(origin='lower', cmap='Greys')
+    contour_kwargs = dict(cmap='magma', linewidths=1)
+    cbar_orientation = 'vertical'
+    def config_cbar_labels(cbar_ax, cbar_obj, im_obj, cbar_label, data_stub):
+        if cbar_orientation == 'horizontal':
+            cbar_ax.xaxis.set_ticks_position('top')
+            labelpad = -53
+        else:
+            cbar_ax.yaxis.set_ticks_position('right')
+            labelpad = None
+        cbar_obj.set_label(cbar_label, labelpad=labelpad)
+        if True and data_stub in img_stretches: # only do this if there is a nonlinear stretch
+            # flip True to False if it breaks
+            """ This might break for other photometric images, but it works ok now! """
+
+            print(cbar_obj.get_ticks())
+            default_tick_list = np.array([x for x in cbar_obj.get_ticks() if (im_obj.norm.vmin <= x <= im_obj.norm.vmax)])
+            if np.any(default_tick_list <= 0):
+                print("below zero ticks: ", default_tick_list)
+            lowest_tick_power = int(np.round(np.log10(np.min(apply_stretch(default_tick_list[default_tick_list > 0], data_stub, invert=True)))))
+            print("Lowest tick power ", lowest_tick_power)
+            best_tick_list_unstretched = [np.round(apply_stretch(x, data_stub, invert=True), decimals=-lowest_tick_power) for x in default_tick_list]
+            if lowest_tick_power > 2:
+                denom = 10**lowest_tick_power
+                cbar_obj.set_label(cbar_label+" $\\times~10^" + f"{lowest_tick_power:d}" + "$")
+            else:
+                denom = 1
+            cbar_obj.set_ticks(apply_stretch(best_tick_list_unstretched, data_stub), labels=[f"{int(x/denom)}" for x in best_tick_list_unstretched])
+    default_text_kwargs = dict(fontsize=15, color='k', ha='left', va='center')
+    text_x = 0.06
+    beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
 
     # First, grab the reference grid data and plot it while we have it loaded
     # Save the wcs to an object which we will use for the rest of them
     # Assumption is cube, change it if it's a 2d image
 
-    ref_img, ref_wcs = load_helper(reference_grid_stub)
+    memoized_data = load_helper_memoize(reference_grid_stub)
+    if memoized_data:
+        ref_img, ref_wcs, ref_beam = memoized_data
+        del memoized_data # just to clean up references to arrays
+    else:
+        ref_img, ref_wcs, ref_beam = load_helper(reference_grid_stub)
+        save_helper_memoize(reference_grid_stub, ref_img.to_value(), ref_wcs, ref_beam, ref_img.unit)
     ref_shape = ref_img.shape
 
     # Memoize axes, and use the ref_wcs to make the Axes objects
+    gs = fig.add_gridspec(*grid_shape, **plots_adjust_kwargs)
     axes = {}
     def get_axis(index):
         # Index is 1D index of stub in selected_data list
         if index not in axes:
-            ax = plt.subplot2grid(grid_shape, np.unravel_index(index, grid_shape), projection=ref_wcs)
+            # ax = plt.subplot2grid(grid_shape, np.unravel_index(index, grid_shape), projection=ref_wcs)
+            ax = fig.add_subplot(gs[np.unravel_index(index, grid_shape)], projection=ref_wcs)
             axes[index] = ax
         return axes[index]
 
     # Plot the reference image while we have it loaded
     ax = get_axis(selected_data.index(reference_grid_stub))
     # And remember to skip the reference when we come by it in the general loop
-    ax.imshow(ref_img, **plot_kwargs)
-    # # TODO: vlims
-    # # TODO: colorbars
+    ref_plot_im = ax.imshow(apply_stretch(ref_img.to_value(), reference_grid_stub), **plot_kwargs, **get_vlims(reference_grid_stub))
+    ref_img_units = ref_img.unit
+    del ref_img
+    """ end plot config and defaults """
 
-    # General loop over the rest of the images
-    for i, stub in enumerate(selected_data):
-        if stub == reference_grid_stub:
+    """ General loop over the (non-reference) images """
+    for i, data_stub in enumerate(selected_data):
+        ax = get_axis(i)
+        # Stuff to do to ALL images
+        ax.tick_params(axis='both', direction='in')
+        ax.coords.grid(color='grey', alpha=0.5, linestyle='solid')
+        # ax.coords[1].set_format_unit(u.deg)
+        # ax.coords[0].set_format_unit(u.deg)
+        # ax.coords[0].set_major_formatter('hh:mm:ss')
+        # Colorbar
+        if cbar_orientation == 'horizontal':
+            ax_cbar = ax.inset_axes([0, 1, 1, 0.05])
+        else:
+            ax_cbar = ax.inset_axes([1, 0, 0.05, 1])
+
+
+        ss = ax.get_subplotspec()
+        ax.set_xlabel(" ")
+        ax.set_ylabel(" ")
+        if not ss.is_last_row():
+            # hide ticklabels all but bottom row
+            ax.tick_params(axis='x', labelbottom=False)
+        if not ss.is_first_col():
+            # hide ticklabels all but left column
+            ax.tick_params(axis='y', labelleft=False)
+
+        if data_stub == reference_grid_stub:
             # Skip the reference, we already plotted it
             # Could use this loop to dress it up, add titles and colorbars and stuff
-            continue
-        raw_img, raw_wcs = load_helper(stub)
-        # Regrid to reference wcs. Use nearest-neighbor (order=0) to preserve pixellation
-        img_reproj = reproject_interp((raw_img, raw_wcs), ref_wcs, shape_out=ref_shape, order=0, return_footprint=False)
-        ax = get_axis(i)
-        ax.imshow(img_reproj, **plot_kwargs)
-        ax.coords.grid(color='white', alpha=0.5, linestyle='solid')
+            im = ref_plot_im
+            unit_stub = str(ref_img_units)
+            beam = ref_beam
+            del ref_beam
+        else:
+            # Stuff to do to ONLY the non-reference images
+            interp_order = 0
+            memoized_data = load_helper_memoize(data_stub, order=interp_order)
+            if memoized_data:
+                img_reproj, _, beam = memoized_data
+                del memoized_data
+                unit = img_reproj.unit
+                img_reproj = img_reproj.to_value()
+            else:
+                raw_img, raw_wcs, beam = load_helper(data_stub)
+                # Regrid to reference wcs. Use nearest-neighbor (order=0) to preserve pixellation
+                img_reproj = reproject_interp((raw_img.to_value(), raw_wcs), ref_wcs, shape_out=ref_shape, order=interp_order, return_footprint=False)
+                unit = raw_img.unit
+                save_helper_memoize(data_stub, img_reproj, ref_wcs, beam, raw_img.unit, order=interp_order)
 
-    for stub in overlays:
-        # the key, stub, is the overlay data name`
+            im = ax.imshow(apply_stretch(img_reproj, data_stub), **plot_kwargs, **get_vlims(data_stub))
+            unit_stub = str(unit)
+        cbar = fig.colorbar(im, cax=ax_cbar, orientation=cbar_orientation)
+        config_cbar_labels(ax_cbar, cbar, im, unit_stub, data_stub)
+        # Beam
+        patch = beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(ref_wcs))
+        patch.set(**beam_patch_kwargs)
+        ax.add_artist(patch)
+        ax.text(text_x, 0.94, cube_utils.cubenames[data_stub], transform=ax.transAxes, **default_text_kwargs)
+
+
+    """ Loop over contour data """
+    for data_stub in overlays:
+        # the key, data_stub, is the overlay data name`
         # the value is the image to be overlayed on. find its index in selected data
-        i = selected_data.index(overlays[stub])
+        i = selected_data.index(overlays[data_stub])
         ax = get_axis(i)
-        raw_img, raw_wcs = load_helper(stub)
-        # Use bilinear (order=1) for contours, they don't need to be pixellated like the images should be
-        img_reproj = reproject_interp((raw_img, raw_wcs), ref_wcs, shape_out=ref_shape, order=1, return_footprint=False)
-        ax.contour(img_reproj, **contour_kwargs)
 
-    plt.show()
+        # raw_img, raw_wcs, beam = load_helper(data_stub)
+        # img_reproj = reproject_interp((raw_img.to_value(), raw_wcs), ref_wcs, shape_out=ref_shape, order=1, return_footprint=False)
+        ##### keep this around until ur sure u did it right
+
+        interp_order = 1
+        memoized_data = load_helper_memoize(data_stub, order=interp_order)
+        if memoized_data:
+            img_reproj, _, beam = memoized_data
+            del memoized_data
+            unit = img_reproj.unit
+            img_reproj = img_reproj.to_value()
+        else:
+            raw_img, raw_wcs, beam = load_helper(data_stub)
+            # Use bilinear (order=1) for contours, they don't need to be pixellated like the images should be
+            img_reproj = reproject_interp((raw_img.to_value(), raw_wcs), ref_wcs, shape_out=ref_shape, order=interp_order, return_footprint=False)
+            unit = raw_img.unit
+            save_helper_memoize(data_stub, img_reproj, ref_wcs, beam, raw_img.unit, order=interp_order)
+
+        ax.contour(img_reproj, **contour_kwargs, levels=contour_levels_base*contour_levels_coeff[data_stub])
+        # Beam
+        patch = beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.8, 0.1]), misc_utils.get_pixel_scale(ref_wcs))
+        patch.set(**beam_patch_kwargs)
+        ax.add_artist(patch)
+        ax.text(text_x, 0.86, cube_utils.cubenames[data_stub] + " contours", transform=ax.transAxes, **default_text_kwargs)
+
+    fig.supxlabel("Right Ascension")
+    fig.supylabel("Declination")
+
+    # 2023-03-09,10,13
+    plt.savefig("/home/ramsey/Pictures/2023-03-13/moment_panel.png",
+        metadata=catalog.utils.create_png_metadata(title="moment panel img for paper",
+            file=__file__, func='multi_panel_moment_images'))
 
 
 def pv_vertical_series_thru_pillars(pillar_name, line_stub):
@@ -1746,39 +1970,52 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         'large-along': "parallelpillars_single.reg",
         'threads': "pillar1_threads_pv_v6_withboxes.reg",
         'cap': "p1_IDgradients_thru_head.reg",
-        'misc': "eagpvcuts3.reg",
         'p2': "pillar2_across.reg",
+        'misc': "misc_pillar_pv_cuts.reg",
     }
+    cii_contour_levels_options = [np.arange(10, 131, 10), np.arange(8, 81, 4), np.arange(5, 101, 5)]
+    if molecular_line_stub == '12co10':
+        molecular_contour_levels_options = cii_contour_levels_options
+    else:
+        molecular_contour_levels_options = [np.arange(1, 26, 2)]*3
 
     # I don't think I have python 3.10 so I don't have switch or case or whatever it's called
     # So instead, I have this!
     if choose_file == 0:
         reg_key = 'large-along'
         reg_slice = slice(0, 3)
+        pv_vel_lims = (18, 30)
     elif choose_file in [1, 2]:
         reg_key = 'threads'
         if choose_file == 1:
             reg_slice = slice(0, 3)
         else:
             reg_slice = slice(3, 6)
+        pv_vel_lims = (20, 28)
     elif choose_file == 3:
         reg_key = 'cap'
         reg_slice = slice(0, 3)
+        pv_vel_lims = (20, 28)
     elif choose_file == 4:
         reg_key = 'p2'
         reg_slice = slice(0, 3)
+        pv_vel_lims = (18, 26)
     elif choose_file >= 5:
         reg_key = 'misc'
+        pv_vel_lims = (18, 30)
         if choose_file == 5:
-            reg_slice = (2, 0, 4)
+            reg_slice = slice(0, 3)
+        elif choose_file == 6:
+            reg_slice = slice(3, 6)
         else:
             raise NotImplementedError("havent set this up yet")
 
-    path_names = ['Pillar 1', 'Pillar 2', 'Pillar 3']
-    path_names = ['1', '2', '3']
-    marker_styles = ['-', '--', ':']
+    # path_names = ['Pillar 1', 'Pillar 2', 'Pillar 3']
+    # path_names = ['1', '2', '3']
+    # marker_styles = ['-', '--', ':']
 
-    pv_vel_lims = (18*u.km/u.s, 30*u.km/u.s)
+    pv_vel_lims = tuple(x*kms for x in pv_vel_lims)
+
 
     reg_filename_short = reg_filename_dict[reg_key]
     reg_filename = catalog.utils.search_for_file("catalogs/"+reg_filename_short) # 3 regions in this file
@@ -1795,7 +2032,7 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
 
     """ Setup colors """
     chosen_cmap = 'Greys' # 'cool'
-    line_color = marcs_colors[0]
+    line_color = marcs_colors[1]
 
     # paths = [] # delete if it doesnt crash
 
@@ -1826,28 +2063,41 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         return make_pv_slice
 
     """ Grid stuff """
-    fig = plt.figure(figsize=(20, 7))
-    gs_whole = gridspec.GridSpec(1, 4, wspace=0.15, left=0.06, right=0.98)
+    fig = plt.figure(figsize=(21, 7))
+    gs_whole = gridspec.GridSpec(1, 4, wspace=0.15, left=0.05, right=0.99, top=0.98, bottom=0.05)
 
     # Start reference image stuff
     # I need the WCS of the image
-    img_vel_lims = (20*u.km/u.s, 26*u.km/u.s)
-    img_vel_str = make_vel_stub(img_vel_lims)
-    img = subcube_cii.spectral_slab(*img_vel_lims).moment0().to(u.K * u.km / u.s)
-    ref_wcs = img.wcs
+    reference_img_instead_of_cube = True
+    if reference_img_instead_of_cube:
+        img, hdr = fits.getdata(catalog.utils.search_for_file("jwst/MAST_2022-10-26T1800/JWST/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits"), header=True)
+        ref_wcs = WCS(hdr)
+        stretch = np.arcsinh
+        vlims = (1, 100)
+        img_ticks = [1, 2, 5, 10, 25, 50, 100]
+    else:
+        img_vel_lims = (20*u.km/u.s, 26*u.km/u.s)
+        img_vel_str = make_vel_stub(img_vel_lims)
+        img = subcube_cii.spectral_slab(*img_vel_lims).moment0().to(u.K * u.km / u.s)
+        ref_wcs = img.wcs
+        img = img.to_value()
+        stretch = np.arcsinh
+        vlims = (10, 200)
+        img_ticks = [10, 20, 50, 100, 200]
+
 
     # Make image Axes
-    ax_img = fig.add_subplot(gs_whole[0, :1], projection=ref_wcs)
+    gs_img = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs_whole[0, :1], width_ratios=(3, 1), wspace=0) # leave whitespace around the plot to make room for axes labels and colorbar
+    ax_img = fig.add_subplot(gs_img[0, 0], projection=ref_wcs)
+    ax_cbar = ax_img.inset_axes([1, 0, 0.05, 1])
+    # ax_cbar = fig.add_subplot(gs_img[0, 1])
 
     # Briefly finish reference image stuff because I don't want the image hanging out in memory forever
-    img = img.to_value()
-    stretch = np.arcsinh
     stretch_vlims = lambda a, b: dict(vmin=stretch(a), vmax=stretch(b))
-    vlims = stretch_vlims(10, 200)
-    im = ax_img.imshow(stretch(img), origin='lower', **vlims, cmap=chosen_cmap)
+    im = ax_img.imshow(stretch(img), origin='lower', **stretch_vlims(*vlims), cmap=chosen_cmap)
     del img # save memory i guess?
 
-    gs_sl = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs_whole[0, 1:], wspace=0.02)
+    gs_sl = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs_whole[0, 1:], wspace=0.01)
 
     def make_sl_ax(flat_index, wcs_obj):
         """
@@ -1879,40 +2129,45 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         if idx == 0:
             ax_sl.tick_params(axis='x', direction='in')
             ax_sl.tick_params(axis='y', direction='in')
-            ax_sl.set_xlabel("Offset, from SE to NW (arcseconds)")
-            ax_sl.set_ylabel("Velocity (km/s)")
+            ax_sl.set_xlabel("Offset (arcseconds)")
+            ax_sl.set_ylabel("Velocity (km s$^{-1}$)")
         else:
             ax_sl.tick_params(axis='x', direction='in')
             ax_sl.tick_params(axis='y', direction='in', labelleft=False)
             ax_sl.set_xlabel(" ")
         # ax_sl.set_title(f"{path_names[idx]} PV diagram")
+
+        """ Contours """
         contour_args = (sl_mol_ciires.data,)
-        if choose_file == 0 and idx == 2:
-            levels = np.arange(8, 81, 4)
+        if (choose_file == 0 and idx == 2):
+            contour_levels_selection = 1
+        elif choose_file in [1, 4, 5]:
+            contour_levels_selection = 2
         else:
-            levels = np.arange(10, 131, 10)
-        contour_kwargs = dict(linewidths=1.2, colors=colors[1], alpha=1, levels=levels)
-        c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=10)
+            contour_levels_selection = 0
+        contour_kwargs = dict(linewidths=1.2, colors=colors[1], alpha=1)
+        c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=10, levels=molecular_contour_levels_options[contour_levels_selection])
         try:
-            ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
-        except:
-            pass
+            ax_sl.clabel(c, molecular_contour_levels_options[contour_levels_selection], inline=True, fontsize=10, fmt='%.0f')
+        except Exception as e:
+            print(e)
         if idx == 0:
             handles = []
-            handles.append(mpatches.Patch(color=colors[1], label="CO (1$-$0)"))
+            handles.append(mpatches.Patch(color=colors[1], label=cube_utils.cubenames[molecular_line_stub]))
 
         sl_cii = make_pv_slice(subcube_cii, just_cube=True)
         contour_args = (reproject_interp((sl_cii.data, sl_cii.header), sl_wcs, shape_out=sl_mol_ciires.data.shape, return_footprint=False),)
         contour_kwargs['colors'] = colors[0]
         contour_kwargs['alpha'] = 1
-        c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=9)
+        c = ax_sl.contour(*contour_args, **contour_kwargs, zorder=9, levels=cii_contour_levels_options[contour_levels_selection])
         try:
-            ax_sl.clabel(c, levels, inline=True, fontsize=10, fmt='%.0f')
-        except:
-            pass
+            ax_sl.clabel(c, cii_contour_levels_options[contour_levels_selection], inline=True, fontsize=10, fmt='%.0f')
+        except Exception as e:
+            print(e)
         if idx == 0:
-            handles.append(mpatches.Patch(color=colors[0], label="[CII]"))
+            handles.append(mpatches.Patch(color=colors[0], label=cube_utils.cubenames['cii']))
             ax_sl.legend(handles=handles, loc='lower right')
+        """ end contours """
 
     def plot_ellipse_patch(ax, wcs_obj, subcube):
         patch = subcube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_obj))
@@ -1922,24 +2177,119 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         ax.add_artist(patch)
 
     """ Finish reference image stuff """
-    handles = []
+    # handles = []
     for idx, p in enumerate(path_list):
-        l = ax_img.plot([c.ra.deg for c in p._coords], [c.dec.deg for c in p._coords], color=line_color, linestyle=marker_styles[idx], lw=3, transform=ax_img.get_transform('world'), label=path_names[idx])
+        l = ax_img.plot([c.ra.deg for c in p._coords], [c.dec.deg for c in p._coords], color=line_color, linestyle='-', lw=3, transform=ax_img.get_transform('world'))#, label=path_names[idx])
+        ax_img.text(p._coords[0].ra.deg + 8*u.arcsec.to(u.deg), p._coords[0].dec.deg - 2*u.arcsec.to(u.deg), f"{idx +1}", color=line_color, fontsize=16, va='top', ha='center', transform=ax_img.get_transform('world'))
+
     # ax_img.set_title(f"[CII] integrated {img_vel_str} with paths overlaid")
-    ax_img.legend()
+    # ax_img.legend()
     ax_img.set_xlabel("RA")
     ax_img.set_ylabel("Dec")
     ax_img.tick_params(axis='x', direction='in')
     ax_img.tick_params(axis='y', direction='in')
-    ticks = [10, 20, 50, 100, 200]
-    cbar = fig.colorbar(im, ax=ax_img, ticks=stretch(ticks))
-    cbar.ax.set_yticklabels([f"{x:d}" for x in ticks])
-    cbar.ax.set_ylabel("Integrated intensity (K km/s)")
-    plot_ellipse_patch(ax_img, ref_wcs, subcube_cii)
-
-    plt.savefig(f"/home/ramsey/Pictures/2023-03-08/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
+    cbar = fig.colorbar(im, cax=ax_cbar, ticks=stretch(img_ticks))
+    cbar.ax.set_yticklabels([(f"{x:d}" if isinstance(x, int) else f"{x:.1f}") for x in img_ticks])
+    if reference_img_instead_of_cube:
+        cbar.ax.set_ylabel("3.3$\mu$m flux density (MJy sr$^{-1}$)")
+    else:
+        cbar.ax.set_ylabel("Integrated intensity (K km s$^{-1}$)")
+    if not reference_img_instead_of_cube:
+        plot_ellipse_patch(ax_img, ref_wcs, subcube_cii)
+    # 2023-03-08,09
+    plt.savefig(f"/home/ramsey/Pictures/2023-03-09/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
         metadata=catalog.utils.create_png_metadata(title=f'pv_along {reg_filename_short}',
             file=__file__, func="paper_pv_diagrams"))
+
+
+def paper_channel_maps():
+    """
+    March 15, 2023
+    Channel maps for paper. Would like an overlay here but not sure what yet.
+    Reference: the channel maps at the top of this file, m16_pictures, as well as
+    m16_threads.channel_maps_again, where I do overlay channel maps.
+
+    I will need to bin all cubes to 1km/s for this, and I have started with CII.
+    I should do the same to CO or HCO+, which may be a little more complex (but I can just use a gaussian, see spectral_cube documentation for this)
+
+    It's only fair to give the spectral_cube method plot_channel_maps a shot, but I think it falls short for several reasons.
+    First, even though they try to expose some of the plot options via kwargs sent to imshow, I think you still lose a ton of control.
+    Second, that simple command below has a really strange aspect ratio and spacings between plots.
+    Third, it forces nx * ny to be equal to the number of channels. Fourth, you specify channels by index (I guess that's fine but I don't like it personally.)
+    Fifth, it's not clear that it returns the Figure or list of Axes for further editing.
+    I think it's good for quick-look type plots, but to be honest, I don't see a benefit over DS9 for quick looks.
+    I think a publication quality plot must be done by hand for this.
+    # cii_cube.plot_channel_maps(5, 3, list(range(3, 18)))
+    # plt.show()
+    """
+    # Load spectrally rebinned cube
+    cii_fn_stub = "sofia/M16_CII_U_1kms_jwstfootprint.fits"
+    cii_cube = cube_utils.SpectralCube.read(catalog.utils.search_for_file(cii_fn_stub))
+    wcs_flat = cii_cube[0,:,:].wcs
+    print("First and last available channels: ", cii_cube.spectral_axis[0], cii_cube.spectral_axis[-1])
+    # Get channels by velociy (can expose these as arguments later)
+    first_channel, last_channel = 17*kms, 32*kms
+    first_channel_idx, last_channel_idx = (cii_cube.closest_spectral_channel(x) for x in (first_channel, last_channel))
+    # Make subcube (this is how spectral_slab works under the hood, but I want to be explicit about it)
+    # Announce how many channels need to be plotted (then I can make the gridspec)
+    print(f"Will plot {last_channel_idx+1-first_channel_idx} channels from {first_channel} to {last_channel}")
+    print(f"That's indices from {first_channel_idx} to {last_channel_idx} (inclusive, so +1)")
+    # Figure and Gridspec
+    grid_shape = (3, 7)
+    plots_adjust_kwargs = {}
+    fig = plt.figure(figsize=(12, 7))
+    # Messed up gridspec setup so I can get a big colorbar on the side
+    mega_gridspec = fig.add_gridspec(right=0.85)
+    mega_axis = mega_gridspec.subplots()
+    mega_axis.set_axis_off() # Hide this axis but use it as a frame for the colorbar
+    gs = mega_gridspec[0,0].subgridspec(*grid_shape, **plots_adjust_kwargs)
+    # Memoize axes
+    axes = {}
+    def get_axis(index):
+        # Index is 1D index of channel, first_channel_idx -> 0
+        if index not in axes:
+            # I prefer this to GridSpec.subplots() because I may have blank axes so lazy creation is easier
+            axes[index] = fig.add_subplot(gs[np.unravel_index(index-first_channel_idx, grid_shape)], projection=wcs_flat)
+        return axes[index]
+
+    # Text
+    text_x, text_y = 0.06, 0.94
+    default_text_kwargs = dict(fontsize=12, color='k', ha='left', va='center')
+    # Colors
+    cmap = 'Greys'
+
+    for channel_idx in range(first_channel_idx, last_channel_idx+1):
+        print(channel_idx - first_channel_idx)
+        velocity = cii_cube.spectral_axis[channel_idx]
+        channel_data = cii_cube[channel_idx].to_value()
+        # Setup axis
+        ax = get_axis(channel_idx)
+        ss = ax.get_subplotspec()
+        # Formatting
+        ax.tick_params(axis='both', direction='in')
+        ax.set_xlabel(" ")
+        ax.set_ylabel(" ")
+        if not ss.is_last_row():
+            ax.tick_params(axis='x', labelbottom=False)
+        if not ss.is_first_col():
+            ax.tick_params(axis='y', labelleft=False)
+
+        # Check data limits
+        print([f(channel_data) for f in (np.min, np.mean, np.median, np.max)])
+        im = ax.imshow(channel_data, origin='lower', cmap=cmap)
+
+    # Colorbar
+    cbar_ax = mega_axis.inset_axes([1.05, 0, 0.05, 1])
+    cbar = fig.colorbar(im, cax=cbar_ax, label='T (K)')
+    # Beam
+    first_ax = get_axis(first_channel_idx)
+    patch = cii_cube.beam.ellipse_to_plot(*(first_ax.transAxes + first_ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
+    patch.set(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
+    first_ax.add_artist(patch)
+
+    fig.savefig("/home/ramsey/Pictures/2023-03-15/cii_channel_maps.png",
+        metadata=catalog.utils.create_png_metadata(title=f'cii {cii_fn_stub}',
+        file=__file__, func="paper_channel_maps"))
 
 
 if __name__ == "__main__":
@@ -1951,9 +2301,9 @@ if __name__ == "__main__":
     # background_samples_figure()
 
     # pv_vertical_series_thru_pillars('p2', 'cs')
-    paper_pv_diagrams(choose_file=3)
 
     # try_component_velocity_figure()
     # column_density_figure()
 
     # multi_panel_moment_images()
+    paper_channel_maps()

@@ -58,7 +58,7 @@ def search_for_file(filename):
         if os.path.exists(potential_filename):
             # print("HEY ", os.path.abspath(potential_filename))
             return os.path.abspath(potential_filename)
-    raise RuntimeError(f"Invalid data filename: \"{filename}\"")
+    raise FileNotFoundError(f"Invalid data filename: \"{filename}\"")
 
 
 def load_irac(n=1, header=True):
