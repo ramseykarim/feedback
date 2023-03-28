@@ -4454,12 +4454,16 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     cgs_to_gauss = (u.Gauss / (u.cm**(-1/2) * u.g**(1/2) * u.s**-1))
 
 
-    #### check what B field needed for 1-2 x 10^7 K cm-3
-    reverse_engineer_B_field = lambda p : ((p*8*np.pi*const.k_B)**(1/2) * cgs_to_gauss).to(u.microGauss)
-    print(reverse_engineer_B_field(3e6*u.K/u.cm**3))
-    print(reverse_engineer_B_field(1e7*u.K/u.cm**3))
-    print(reverse_engineer_B_field(2e7*u.K/u.cm**3))
-    return
+    #### check what B field needed for 1-3 x 10^7 K cm-3
+    def reverse_engineer_B_field(p):
+        print(f"For pressure P = {p:.1E}, ", end='')
+        b = ((p*8*np.pi*const.k_B)**(1/2) * cgs_to_gauss).to(u.microGauss)
+        print(f"B = {b:.2f}")
+    reverse_engineer_B_field(3e6*u.K/u.cm**3)
+    reverse_engineer_B_field(1e7*u.K/u.cm**3)
+    reverse_engineer_B_field(2e7*u.K/u.cm**3)
+    reverse_engineer_B_field(3e7*u.K/u.cm**3)
+    print()
 
 
     def calc_B_field_Pattle(nH2, sigma_v, mmw=1.4):
@@ -4482,7 +4486,7 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     b_170ug = calc_B_field_Pattle(5e4 * u.cm**-3, 0.5 * kms)
     print(f"This should be ~170uG: {b_170ug:.1f}")
 
-    nH2_lo = 5e4
+    nH2_lo = 1.3e5
     nH2_hi = 1.3e5
 
     b_molecular_lo = calc_B_field_Pattle(nH2_lo * u.cm**-3, 0.6 * kms, mmw=mean_molecular_weight_neutral)
@@ -4540,7 +4544,7 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
         return (rho * sigma_turb(alpha, sigma_total)**2 / const.k_B).to(u.K / u.cm**3)
 
 
-    p_turb_atomic = (rho * (1.2*kms)**2 / const.k_B).to(u.K / u.cm**3)
+    p_turb_atomic = (rho * (1.3*kms)**2 / const.k_B).to(u.K / u.cm**3)
     print(f"Atomic turbulent pressure: {p_turb_atomic:.2E}")
 
 
@@ -4575,7 +4579,7 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     colors = marcs_colors[:3]
     # selected_pillar = "P2-head"
 
-    for i, sigma_total in enumerate([1.1, 1.2, 1.4][::-1]*kms):
+    for i, sigma_total in enumerate([1.0, 1.1, 1.3][::-1]*kms):
         label = "$\\sigma_{\\rm tot} =$ " + f"{sigma_total:.2f}"
         ax1.plot(alpha_range, sigma_turb(alpha_range, sigma_total).to_value(), color=colors[i], label=label)
         ax1.plot(alpha_range, sigma_flow(alpha_range, sigma_total).to_value(), color=colors[i], linestyle='--')
@@ -4608,8 +4612,8 @@ def lifetime_pressure_velocitydispersion_tradeoff(n, selected_pillar):
     ax4.set_ylabel(f"{selected_pillar} Pillar lifetime (Myr)")
     ax4.axhspan(1, 3, color=marcs_colors[5], alpha=transparency)
     ax4.set_ylim([0, 8])
-    # 2023-02-06,21
-    fig.savefig(f"/home/ramsey/Pictures/2023-02-21/pressure_mdot_tradeoff_{selected_pillar}_{n.to_value():.1E}.png",
+    # 2023-02-06,21, 03-16,25
+    fig.savefig(f"/home/ramsey/Pictures/2023-03-25/pressure_mdot_tradeoff_{selected_pillar}_{n.to_value():.1E}.png",
         metadata=catalog.utils.create_png_metadata(title=f"B pressure scaled by density only; {selected_pillar}; n={n:.1E}",
             file=__file__, func="lifetime_pressure_velocitydispersion_tradeoff"))
 
@@ -4692,6 +4696,52 @@ def table_sample_column_densities():
     df.to_csv("/home/ramsey/Pictures/2023-02-11/column_densities.csv")
 
 
+def remake_leflochlazareff_Bfield_graph():
+    """
+    March 27, 2023
+    Remake Figures 10-11, Lefloch and Lazareff 1994. Shows gravitational collapse
+    parameter space: clump mass and ionizing flux.
+    I'm remaking it with a more accurate B field pressure term
+    """
+    ionizing_photons = 2e50 / u.s
+    d_stars_lims = (1.5*u.pc, 2.5*u.pc)
+    photon_rate_to_flux = lambda dist : ((ionizing_photons / (4 * np.pi * dist**2)) / (1e7 / (u.s * u.cm**2))).decompose()
+    ionizing_photon_flux_lims = np.log10(list(photon_rate_to_flux(dist) for dist in d_stars_lims))
+    masses = np.log10(([119, 115, 21]*u.solMass).to_value())
+    beta = 10
+    T = 20 # K
+    ionizing_photon_flux_array = np.linspace(-3, 6, 50)
+    phi = np.log(10**ionizing_photon_flux_array)
+
+    # IF: photon flux mainly consumed in ionization front
+    # IBL: photon flux mainly consumed in recombinations in outflowing gas
+    IBL_IF_boundary_mass = 2.42 - 2*ionizing_photon_flux_array + np.log10(beta * T / 100.)
+    IBL_IF_boundary_mass2 = 2.42 - 2*phi + np.log(beta * T / 100.)
+
+    plt.plot(ionizing_photon_flux_array, IBL_IF_boundary_mass, color='red') # plot is in LOG10 and so is the math
+    # plt.plot(phi, IBL_IF_boundary_mass2, color='red', linestyle=':') # plot is in LOG_E and so is the math
+    plt.plot(ionizing_photon_flux_array, np.log10(np.exp(IBL_IF_boundary_mass2)), color='red', linestyle='--') # plot is in LOG10 but math is in LOG_E (worst option but looks closest to their plots)
+
+    ibl_collapse = 1.21  - (1./3)*ionizing_photon_flux_array + (7./3)*np.log10(beta*T/100.)
+    ibl_collapse2 = 1.21  - (1./3)*phi + (7./3)*np.log(beta*T/100.)
+
+    plt.plot(ionizing_photon_flux_array, ibl_collapse, color='blue')  # plot is in LOG10 and so is the math
+    # plt.plot(phi, ibl_collapse2, color='blue', linestyle=':') # plot is in LOG_E and so is the math
+    plt.plot(ionizing_photon_flux_array, np.log10(np.exp(ibl_collapse2)), color='blue', linestyle='--') # plot is in LOG10 but math is in LOG_E (worst option but looks closest to their plots)
+
+    plt.ylim([-5, 5])
+    plt.xlim([-2, 6])
+
+    plt.axvspan(*ionizing_photon_flux_lims, alpha=0.2, color='k')
+    for m in masses:
+        plt.axhline(m, alpha=0.3, color='k')
+
+
+    plt.show()
+
+
+
+
 
 
 if __name__ == "__main__":
@@ -4705,7 +4755,8 @@ if __name__ == "__main__":
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
     #     for n in (1e4, 2e4):
     # lifetime_pressure_velocitydispersion_tradeoff(1e4, 'P1a-head')
-    lifetime_pressure_velocitydispersion_tradeoff(2.6e4, 'P1a-head')
+    # lifetime_pressure_velocitydispersion_tradeoff(1.8e4, 'P1a-head')
+    remake_leflochlazareff_Bfield_graph()
 
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()

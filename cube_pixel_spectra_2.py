@@ -1944,6 +1944,14 @@ def regrid_spectral_cii():
     cii_cube.write(save_fn)
 
 
+def regrid_spectral_co():
+    """
+    March 21, 2023
+    Same as above but different
+    """
+    co_cube_obj = cube_utils.CubeData('12co10')
+    # TODO: finish this
+
 
 
 if __name__ == "__main__":

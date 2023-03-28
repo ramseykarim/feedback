@@ -966,6 +966,12 @@ def pillar_sample_spectra(selected_region, short_names=None, reg_filename_short=
 
     August 19, 2022: Adding CO6-5 and 3-2
     October 29, 2022: more closely looking at P2,3, other features
+    March 28, 2023: copying a bunch of this over to m16_pictures.paper_spectra for the paper
+        I checked this image for colorblindness compatibility and it's the least friendly of the
+        figures I'm using. Mainly the reds and browns are too similar for certain types of CB.
+        I should test out linestyles or some other distinguishing style. It seems like I'm using
+        default colors (letting matplotlib do it) which I thought was supposed to be pretty decent,
+        but I will make sure the final product is ok.
     """
     reg_list_raw = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_list = []

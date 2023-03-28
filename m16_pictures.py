@@ -55,6 +55,7 @@ mpatches = pvdiagrams.mpatches
 
 make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
+# nice blue 50a8ec
 
 kms = u.km/u.s
 
@@ -1551,31 +1552,108 @@ def column_density_figure():
     Side-by-side of the column density figures
     I will try interpolating-nearest to keep the pixelization of the lower-resolution maps
     """
-    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0.fits",
-        'co': "bima/13co10_column_density_and_more_unmasked.fits",
-        'dust': "herschel/coldens_70-160.fits",
-        'dust250': "herschel/coldens_70-160-250.fits",
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm8_ff1.0_with_uncertainty_v2.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",
+        'dust': "herschel/coldens_70-160_sampled_1000.fits",
     }
-    column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens', 'dust': 'Hcoldens', 'dust250': 'Hcoldens'}
+    column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens_all', 'dust': 'Hcoldens_best'}
+
+    # divide by something (dust: N(H) -> N(H2))
+    column_factors = {'dust': 2}
+    h_label, h2_label = "{\\rm H}", "{\\rm H}_2"
+    column_labels = {'cii': h_label, 'co': h2_label, 'dust': h2_label}
+    panel_labels = {'cii': cube_utils.cubenames['cii'], 'co': 'CO (1$-$0)', 'dust': 'FIR dust'}
+    vmaxes = {'cii': 3e22, 'co': 1.5e23, 'dust': 7e22}
+
+    # JWST footprint for plotting
+    # jwst_footprint_fn = catalog.utils.search_for_file("catalogs/jwst_reproj_footprint.reg")
 
     # The map whose WCS we will use for the image
     reference_name = 'co'
     ref_hdr = fits.getheader(catalog.utils.search_for_file(filenames_dict[reference_name]), extname=column_extnames[reference_name])
     ref_wcs = WCS(ref_hdr)
 
-    fig = plt.figure(figsize=(10, 5))
-    axes = [plt.subplot(x, projection=ref_wcs) for x in range(141, 145)]
+    fig = plt.figure(figsize=(18, 5))
+    gs = fig.add_gridspec(1, 4, left=0.05, right=0.99, top=0.98, bottom=0.05, wspace=0.25)
+    axes = []
+    tick_labelsize = 9
 
-    for i, line_name in enumerate(['cii', 'co', 'dust', 'dust250']):
+    """ Cycle thru the column densities """
+    for i, line_name in enumerate(['cii', 'co', 'dust']):
+        ax = fig.add_subplot(gs[0, i], projection=ref_wcs)
+        axes.append(ax)
+
         img_raw, hdr_raw = fits.getdata(catalog.utils.search_for_file(filenames_dict[line_name]), extname=column_extnames[line_name], header=True)
         if line_name == reference_name:
             img = img_raw
         else:
             img = reproject_interp((img_raw, hdr_raw), ref_hdr, order='nearest-neighbor', return_footprint=False)
-        im = axes[i].imshow(img, origin='lower', vmin=0, vmax=1e23, cmap='nipy_spectral')
-        axes[i].set_title(line_name)
-    fig.colorbar(im, ax=axes[3])
-    plt.show()
+        if line_name in column_factors:
+            img = img/column_factors[line_name]
+        im = ax.imshow(img, origin='lower', vmin=0, vmax=vmaxes[line_name], cmap='plasma')
+        # Colorbar
+        cax = ax.inset_axes([1, 0, 0.05, 1])
+        cbar = fig.colorbar(im, cax=cax)
+        cax.tick_params(labelsize=tick_labelsize)
+        cbar_tick_labelsize = tick_labelsize + 1
+        cbar.set_label("$N("+column_labels[line_name]+")$ ("+(u.cm**-2).to_string('latex_inline')+")", size=cbar_tick_labelsize)
+        cax.yaxis.offsetText.set(size=cbar_tick_labelsize)
+        # Label
+        text_x = 0.1 # 0.025
+        ax.text(text_x, 0.94, panel_labels[line_name], transform=ax.transAxes, fontsize=tick_labelsize+2, color=marcs_colors[1], weight='bold', ha='left', va='center')
+
+
+    """ JWST reference image """
+    img_fn = catalog.utils.search_for_file("jwst/MAST_2022-10-26T1800/JWST/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits")
+    img, hdr = fits.getdata(img_fn, header=True)
+    img = reproject_interp((img, hdr), ref_hdr, order='bilinear', return_footprint=False)
+
+    ax = fig.add_subplot(gs[0, 3], projection=ref_wcs)
+    stretch = np.arcsinh
+    img_vlims = (1, 100)
+    ax.imshow(stretch(img), origin='lower', vmin=stretch(img_vlims[0]), vmax=stretch(img_vlims[1]), cmap='Greys')
+
+    """ Regions: points """
+    reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/pillar123_pointsofinterest_v2.reg"))
+    xs, ys = [], []
+    for reg in reg_list:
+        x, y = reg.to_pixel(ref_wcs).center.xy
+        xs.append(x)
+        ys.append(y)
+    ax.plot(xs, ys, linestyle='None', marker='s', markersize=8, mfc=marcs_colors[1], mec='k')
+    axes.append(ax)
+
+    """ Regions: boxes """
+    chosen_colors = [marcs_colors[x] for x in [0, 7]]
+    for i, box_reg_filenames in enumerate(["catalogs/mass_boxes_v2.reg", "catalogs/p123_boxes_head_body_withlabels_v3.reg"]):
+        reg_list = regions.Regions.read(catalog.utils.search_for_file(box_reg_filenames))
+        for j, reg in enumerate(reg_list):
+            if 'noise' in reg.meta['label']:
+                continue
+            box_artist = reg.to_pixel(ref_wcs).as_artist(ec=chosen_colors[i], fill=False)
+            ax.add_artist(box_artist)
+
+    """ Ticks, labels, etc """
+    for ax in axes:
+        ax.coords[0].set_ticklabel(rotation=30, rotation_mode='anchor', pad=13, fontsize=tick_labelsize, ha='right', va='top')
+        ax.coords[1].set_ticklabel(fontsize=tick_labelsize)
+        ss = ax.get_subplotspec()
+        ax.tick_params(axis='both', direction='in')
+        ax.coords.grid(color='grey', alpha=0.5, linestyle='solid')
+        ss = ax.get_subplotspec()
+        ax.set_xlabel(" ")
+        ax.set_ylabel(" ")
+        if not ss.is_first_col():
+            # hide ticklabels all but left column
+            ax.tick_params(axis='y', labelleft=False)
+
+    # Titles
+    fig.supxlabel("Right Ascension")
+    fig.supylabel("Declination")
+    # 2023-03-21,22
+    fig.savefig("/home/ramsey/Pictures/2023-03-22/column_density_figure.png",
+        metadata=catalog.utils.create_png_metadata(title='column figure',
+                file=__file__, func='column_density_figure'))
 
 
 def multi_panel_moment_images():
@@ -1767,17 +1845,17 @@ def multi_panel_moment_images():
 
     """ Plotting config and defaults """
     fig = plt.figure(figsize=figsize)
-    plot_kwargs = dict(origin='lower', cmap='Greys')
-    contour_kwargs = dict(cmap='magma', linewidths=1)
+    plot_kwargs = dict(origin='lower', cmap='magma')
+    contour_kwargs = dict(colors='cyan', linewidths=1)
     cbar_orientation = 'vertical'
-    def config_cbar_labels(cbar_ax, cbar_obj, im_obj, cbar_label, data_stub):
+    def config_cbar_labels(cbar_ax, cbar_obj, im_obj, cbar_label_unit, data_stub):
         if cbar_orientation == 'horizontal':
             cbar_ax.xaxis.set_ticks_position('top')
             labelpad = -53
         else:
             cbar_ax.yaxis.set_ticks_position('right')
             labelpad = None
-        cbar_obj.set_label(cbar_label, labelpad=labelpad)
+        cbar_obj.set_label(cbar_label_unit.to_string('latex_inline'), labelpad=labelpad)
         if True and data_stub in img_stretches: # only do this if there is a nonlinear stretch
             # flip True to False if it breaks
             """ This might break for other photometric images, but it works ok now! """
@@ -1791,12 +1869,13 @@ def multi_panel_moment_images():
             best_tick_list_unstretched = [np.round(apply_stretch(x, data_stub, invert=True), decimals=-lowest_tick_power) for x in default_tick_list]
             if lowest_tick_power > 2:
                 denom = 10**lowest_tick_power
-                cbar_obj.set_label(cbar_label+" $\\times~10^" + f"{lowest_tick_power:d}" + "$")
+                cbar_obj.set_label(cbar_label_unit.to_string('latex_inline'))
+                cbar_obj.ax.text(1, 1, f"1e{lowest_tick_power:d}", transform=ax.transAxes, va='bottom', ha='center')
             else:
                 denom = 1
             cbar_obj.set_ticks(apply_stretch(best_tick_list_unstretched, data_stub), labels=[f"{int(x/denom)}" for x in best_tick_list_unstretched])
-    default_text_kwargs = dict(fontsize=15, color='k', ha='left', va='center')
-    text_x = 0.06
+    default_text_kwargs = dict(fontsize=15, color='LimeGreen', ha='left', va='center')
+    text_x = 0.1
     beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
 
     # First, grab the reference grid data and plot it while we have it loaded
@@ -1861,7 +1940,7 @@ def multi_panel_moment_images():
             # Skip the reference, we already plotted it
             # Could use this loop to dress it up, add titles and colorbars and stuff
             im = ref_plot_im
-            unit_stub = str(ref_img_units)
+            unit = ref_img_units
             beam = ref_beam
             del ref_beam
         else:
@@ -1881,9 +1960,8 @@ def multi_panel_moment_images():
                 save_helper_memoize(data_stub, img_reproj, ref_wcs, beam, raw_img.unit, order=interp_order)
 
             im = ax.imshow(apply_stretch(img_reproj, data_stub), **plot_kwargs, **get_vlims(data_stub))
-            unit_stub = str(unit)
         cbar = fig.colorbar(im, cax=ax_cbar, orientation=cbar_orientation)
-        config_cbar_labels(ax_cbar, cbar, im, unit_stub, data_stub)
+        config_cbar_labels(ax_cbar, cbar, im, unit, data_stub)
         # Beam
         patch = beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(ref_wcs))
         patch.set(**beam_patch_kwargs)
@@ -1926,8 +2004,8 @@ def multi_panel_moment_images():
     fig.supxlabel("Right Ascension")
     fig.supylabel("Declination")
 
-    # 2023-03-09,10,13
-    plt.savefig("/home/ramsey/Pictures/2023-03-13/moment_panel.png",
+    # 2023-03-09,10,13,20,22
+    plt.savefig("/home/ramsey/Pictures/2023-03-22/moment_panel.png",
         metadata=catalog.utils.create_png_metadata(title="moment panel img for paper",
             file=__file__, func='multi_panel_moment_images'))
 
@@ -1972,6 +2050,7 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         'cap': "p1_IDgradients_thru_head.reg",
         'p2': "pillar2_across.reg",
         'misc': "misc_pillar_pv_cuts.reg",
+        'paper': "paper_pv_cuts.reg",
     }
     cii_contour_levels_options = [np.arange(10, 131, 10), np.arange(8, 81, 4), np.arange(5, 101, 5)]
     if molecular_line_stub == '12co10':
@@ -2000,12 +2079,20 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         reg_key = 'p2'
         reg_slice = slice(0, 3)
         pv_vel_lims = (18, 26)
-    elif choose_file >= 5:
+    elif choose_file in [5, 6]:
         reg_key = 'misc'
         pv_vel_lims = (18, 30)
         if choose_file == 5:
             reg_slice = slice(0, 3)
         elif choose_file == 6:
+            reg_slice = slice(3, 6)
+    elif choose_file >= 7:
+        reg_key = 'paper'
+        if choose_file == 7:
+            pv_vel_lims = (18, 30)
+            reg_slice = slice(0, 3)
+        elif choose_file == 8:
+            pv_vel_lims = (18, 28)
             reg_slice = slice(3, 6)
         else:
             raise NotImplementedError("havent set this up yet")
@@ -2120,7 +2207,7 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         sl_wcs = WCS(sl_mol_ciires.header)
 
         ax_sl = make_sl_ax(idx, sl_wcs)
-        ax_sl.imshow(sl_mol_natres.data, origin='lower', aspect=(sl_mol_natres.data.shape[1]/sl_mol_natres.data.shape[0]), cmap=chosen_cmap)
+        ax_sl.imshow(sl_mol_natres.data, origin='lower', aspect=(sl_mol_natres.data.shape[1]/sl_mol_natres.data.shape[0]), cmap=chosen_cmap, vmin=0)
         ax_sl.coords[1].set_format_unit(u.km/u.s)
         ax_sl.coords[0].set_format_unit(u.arcsec)
         ax_sl.coords[0].set_major_formatter('x')
@@ -2196,8 +2283,8 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         cbar.ax.set_ylabel("Integrated intensity (K km s$^{-1}$)")
     if not reference_img_instead_of_cube:
         plot_ellipse_patch(ax_img, ref_wcs, subcube_cii)
-    # 2023-03-08,09
-    plt.savefig(f"/home/ramsey/Pictures/2023-03-09/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
+    # 2023-03-08,09,20
+    plt.savefig(f"/home/ramsey/Pictures/2023-03-20/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
         metadata=catalog.utils.create_png_metadata(title=f'pv_along {reg_filename_short}',
             file=__file__, func="paper_pv_diagrams"))
 
@@ -2235,14 +2322,13 @@ def paper_channel_maps():
     print(f"Will plot {last_channel_idx+1-first_channel_idx} channels from {first_channel} to {last_channel}")
     print(f"That's indices from {first_channel_idx} to {last_channel_idx} (inclusive, so +1)")
     # Figure and Gridspec
-    grid_shape = (3, 7)
-    plots_adjust_kwargs = {}
-    fig = plt.figure(figsize=(12, 7))
+    grid_shape = (3, 6)
+    fig = plt.figure(figsize=(14, 8))
     # Messed up gridspec setup so I can get a big colorbar on the side
-    mega_gridspec = fig.add_gridspec(right=0.85)
+    mega_gridspec = fig.add_gridspec(right=0.85, left=0.1, top=0.98, bottom=0.1)
     mega_axis = mega_gridspec.subplots()
     mega_axis.set_axis_off() # Hide this axis but use it as a frame for the colorbar
-    gs = mega_gridspec[0,0].subgridspec(*grid_shape, **plots_adjust_kwargs)
+    gs = mega_gridspec[0,0].subgridspec(*grid_shape, hspace=0, wspace=0)
     # Memoize axes
     axes = {}
     def get_axis(index):
@@ -2255,6 +2341,8 @@ def paper_channel_maps():
     # Text
     text_x, text_y = 0.06, 0.94
     default_text_kwargs = dict(fontsize=12, color='k', ha='left', va='center')
+    tick_labelsize = 9
+    tick_labelrotation = 45
     # Colors
     cmap = 'Greys'
 
@@ -2269,27 +2357,153 @@ def paper_channel_maps():
         ax.tick_params(axis='both', direction='in')
         ax.set_xlabel(" ")
         ax.set_ylabel(" ")
-        if not ss.is_last_row():
+        if ss.is_last_row() and ss.is_first_col():
+            ax.coords[0].set_ticklabel(rotation=30, rotation_mode='anchor', pad=13, fontsize=tick_labelsize, ha='right', va='top')
+            ax.coords[1].set_ticklabel(fontsize=tick_labelsize)
+        else:
             ax.tick_params(axis='x', labelbottom=False)
-        if not ss.is_first_col():
             ax.tick_params(axis='y', labelleft=False)
 
         # Check data limits
         print([f(channel_data) for f in (np.min, np.mean, np.median, np.max)])
-        im = ax.imshow(channel_data, origin='lower', cmap=cmap)
+        im = ax.imshow(channel_data, origin='lower', cmap=cmap, vmin=1, vmax=50)
+        ax.text(text_x, text_y, f"{velocity.to_value():.0f} {velocity.unit.to_string('latex_inline')}", transform=ax.transAxes, **default_text_kwargs)
+        # Beam (on every panel)
+        patch = cii_cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
+        patch.set(alpha=0.9, facecolor='white', edgecolor='grey')
+        ax.add_artist(patch)
+
 
     # Colorbar
-    cbar_ax = mega_axis.inset_axes([1.05, 0, 0.05, 1])
-    cbar = fig.colorbar(im, cax=cbar_ax, label='T (K)')
-    # Beam
-    first_ax = get_axis(first_channel_idx)
-    patch = cii_cube.beam.ellipse_to_plot(*(first_ax.transAxes + first_ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
-    patch.set(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
-    first_ax.add_artist(patch)
+    cbar_ax = mega_axis.inset_axes([1.03, 0, 0.03, 1])
+    cbar = fig.colorbar(im, cax=cbar_ax, label='T$_{\\rm MB}$ (K)')
+    cbar.set_ticks([1, 10, 20, 30, 40, 50])
+    # Titles
+    fig.supxlabel("Right Ascension")
+    fig.supylabel("Declination")
 
-    fig.savefig("/home/ramsey/Pictures/2023-03-15/cii_channel_maps.png",
+    # 2023-03-15,20
+    fig.savefig("/home/ramsey/Pictures/2023-03-20/cii_channel_maps.png",
         metadata=catalog.utils.create_png_metadata(title=f'cii {cii_fn_stub}',
         file=__file__, func="paper_channel_maps"))
+
+def paper_spectra():
+    """
+    March 28, 2023
+    Show spectra through selected points. Use the same points as the tables.
+    Very similar code to m16_investigation.pillar_sample_spectra
+    For now, use CII resolutions for all lines, but consider using native resolution
+    """
+    reg_filename_short = "catalogs/pillar123_pointsofinterest_v2.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    multiplier = {'cii': 1,
+        '12co10CONV': 0.5, '13co10CONV': 4, 'c18o10CONV': 15,
+        'co65CONV': 2, '12co32': 1, '13co32': 1,
+        'hcopCONV': 2, 'hcnCONV': 4, 'csCONV': 4, 'n2hpCONV': 8,
+        'oiCONV': 2, 'ciCONV': 2}
+
+    def get_multiplier(stub):
+        if stub in multiplier:
+            return multiplier[stub]
+        elif stub+"CONV" in multiplier:
+            return multiplier[stub+"CONV"]
+        else:
+            # intentionally throw error
+            return multiplier[stub]
+
+
+    short_names = ['cii', '12co10', '12co32', 'co65', 'hcop', 'cs']
+    # if any([x[-4:] == 'CONV' for x in short_names]): # check if I put any CONV in there; replacing with using_conv being a controlling variable
+    #     using_conv = True
+    # else:
+    #     using_conv = False
+    using_conv = True # set to True to use CONV versions if applicable
+    if using_conv:
+        short_names = [(x if x in ("cii", "12co32", "13co32") else x+"CONV") for x in short_names]
+
+    def check_if_region_is_southern(reg_name):
+        """
+        Based on what I said in the table in my paper, check if I should use northern or southern background.
+        'south' if southern, 'north' if northern. Also 'north' for other strings, so be careful.
+        """
+        # Southern regions are Horns, Shared Base, and Shelf. All others are northern
+        if reg_name[-4:] == "Horn":
+            return 'south'
+        elif reg_name[:2] == 'Sh':
+            # Shared base and Shelf
+            return 'south'
+        else:
+            return 'north'
+
+    # Create Figure and Axes
+    fig = plt.figure(figsize=(18, 18))
+    grid_shape = (4, 3)
+    gs = fig.add_gridspec(*grid_shape, hspace=0.05, wspace=0.05, left=0.05, right=0.95, bottom=0.05, top=0.95)
+    axes = [] # hold the axes in same order as reg_list
+    # Iterate thru reg_list and make an Axes for each
+    for reg_idx in range(len(reg_list)):
+        ax = fig.add_subplot(gs[np.unravel_index(reg_idx, grid_shape)])
+        axes.append(ax)
+
+    # Iterate thru cubes, and then thru regs inside of those (load 1 cube at a time, regs are much quicker already loaded)
+    for line_idx, line_stub in enumerate(short_names):
+        cube = cube_utils.CubeData(line_stub)
+        cube.convert_to_K()
+        cube.data = cube.data.with_spectral_unit(kms)
+        if line_stub == 'cii':
+            bgs = {ns: cps2.get_cii_background(cii_cube=cube.data, select=ns) for ns in ('north', 'south')}
+        for reg_idx, reg in enumerate(reg_list):
+            pixreg = reg.to_pixel(cube.wcs_flat)
+            j, i = [int(round(c)) for c in pixreg.center.xy]
+            try:
+                spectrum = cube.data[:, i, j]
+            except IndexError:
+                spectrum = np.full(cube.data.shape[0], np.nan) * cube.data.unit
+            if line_stub == 'cii':
+                spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['label'])]
+            multiplier_stub = '' if get_multiplier(line_stub) == 1 else f' $\\times${get_multiplier(line_stub)}'
+            line_name = cube_utils.cubenames[line_stub.replace("CONV", "")]
+            p = axes[reg_idx].plot(cube.data.spectral_axis.to_value(), spectrum.to_value()*get_multiplier(line_stub), label=f"{line_name}{multiplier_stub}")
+        if line_stub == 'cii':
+            del bgs
+
+    # Iterate thru regs/Axes again and dress up the plots
+    for reg_idx in range(len(reg_list)):
+        ax = axes[reg_idx]
+        ss = ax.get_subplotspec()
+        ax.set_xlabel(" ")
+        ax.set_ylabel(" ")
+        ax.xaxis.set_ticks_position('both')
+        ax.yaxis.set_ticks_position('both')
+        ax.xaxis.set_tick_params(direction='in', which='both')
+        ax.yaxis.set_tick_params(direction='in', which='both')
+        if not ss.is_last_row():
+            # hide ticklabels except bottom row
+            ax.tick_params(axis='x', labelbottom=False)
+        if not ss.is_first_col():
+            # hide ticklabels except left column
+            ax.tick_params(axis='y', labelleft=False)
+        if reg_list[reg_idx].meta['label'].lower()[:2] == "p3":
+            ax.legend(loc='upper right', fontsize=13)
+        ax.set_xlim((15, 35))
+        ax.set_ylim((-5, 45))
+        ax.text(0.06, 0.94, reg_list[reg_idx].meta['label'], transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
+        for v in range(20, 29):
+            # Some light velocity gridlines around the important velocities
+            ax.axvline(v, color='k', alpha=0.07)
+        ax.axhline(0, color='k', alpha=0.1)
+        # Use this line to verify background subtractions done correctly
+        # print(f"{reg_list[reg_idx].meta['label']} {check_if_region_is_southern(reg_list[reg_idx].meta['label'])}")
+
+    fig.supxlabel(f"Velocity ({kms.to_string('latex_inline')})")
+    fig.supylabel(f"Line intensity ({u.K.to_string('latex_inline')})")
+
+    conv_text = "using " + ("conv" if using_conv else "native") + " resolutions"
+    conv_stub = "" if using_conv else "_unconv"
+    # 2023-03-28
+    fig.savefig(f"/home/ramsey/Pictures/2023-03-28/sample_spectra{conv_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"{conv_text}, points: {reg_filename_short}",
+        file=__file__, func="paper_spectra"))
 
 
 if __name__ == "__main__":
@@ -2305,5 +2519,4 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
-    # multi_panel_moment_images()
-    paper_channel_maps()
+    paper_spectra()
