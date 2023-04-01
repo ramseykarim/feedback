@@ -44,6 +44,7 @@ onesigmas = { # all values in K. These are the 1sigma noise levels, which contou
     'n2hp': 0.56, 'n2hpCONV': 0.24, # Finally checked these on April 25 and 26, 2022
     'cs': 0.60, 'csCONV': 0.24, # Both cs and n2hp CONV are 0.24, it's not just copy-paste
     'oiCONV': 0.45, 'ciCONV': 0.53, # checked October 11, 2022; the OI was by eye since the baselines wobble around a lot and make the median estimate a lot higher (0.76). 0.45 is a little generous (high), but should be ok
+    'oi': 1.86, # checked March 31, 2023 on oi.SMOOTH, which is smoothed to about 0.4 km/s
 }
 
 cubenames = {
@@ -79,7 +80,7 @@ cubefilenames = {
     'c18o10': "bima/M16.BIMA.c18o.cm.SMOOTH.fits", 'c18o10CONV': "bima/M16.BIMA.c18o.cm.SOFIAbeam.SMOOTH.fits",
     'co65': "apex/M16_CO6-5.fits", 'co65CONV': "apex/M16_CO6-5.SOFIAbeam.fits",
     '12co32': "apex/M16_12CO3-2_truncated.fits", '13co32': "apex/M16_13CO3-2_truncated.fits", # spectra trimmed to approx. CII limits
-    'oi': "sofia/m16_OI_63.fits", 'ci': "apex/M16_CI.fits",
+    'oi': "sofia/m16_OI_63.SMOOTH.fits", 'ci': "apex/M16_CI.fits",
     'oiCONV': "sofia/m16_OI_63.SMOOTH.SOFIAbeam.fits", 'ciCONV': "apex/M16_CI.SMOOTH.SOFIAbeam.fits",
 }
 
@@ -110,6 +111,24 @@ def beam_area(theta_a, theta_b):
     :returns: Quantity, solid angle, beam area
     """
     return (np.pi * theta_a * theta_b / (4 * np.log(2))).to(u.sr)
+
+gaincurve_path = "bima/gaincurves/"
+carma_gain_template = lambda line_stub : f"M16.ALL.{line_stub}.sdi.gain.fits"
+bima_gain_template = lambda th : "M16.BIMA."+('13' if th else '')+"co.gain.fits"
+gaincurve_filenames = {line_stub: carma_gain_template(line_stub) for line_stub in ('hcop', 'hcn', 'cs', 'n2hp')}
+gaincurve_filenames.update({'12co10': bima_gain_template(False), '13co10': bima_gain_template(True)})
+def get_gain_map(line_stub):
+    """
+    March 30, 2023
+    Check for a gain map, return (None, None) if no map.
+    If there is a map, return a tuple (2d gain array, WCS)
+    """
+    if line_stub in gaincurve_filenames:
+        filename = catalog.utils.search_for_file(gaincurve_path + gaincurve_filenames[line_stub])
+        data, hdr = fits.getdata(filename, header=True)
+        return data, WCS(hdr)
+    else:
+        return None, None
 
 
 class CubeData:
@@ -211,10 +230,22 @@ class CubeData:
                 raise NotImplementedError("Why's this happening?")
         return self.equivalencies
 
-    def convert_to_K(self):
+    def convert_to_K(self, value=None):
+        """
+        Convert the entire cube, or just a single Quantity (array), to K using the correct equivalency
+        If value=None, the entire cube will be converted, which in some cases can throw an error.
+        """
         if self.data.unit != u.K:
-            self.data = self.data.to(u.K, equivalencies=self.equivalency())
-        return self
+            if value is not None:
+                return value.to(u.K, equivalencies=self.equivalency())
+            else:
+                self.data = self.data.to(u.K, equivalencies=self.equivalency())
+                return self
+        else:
+            if value is not None:
+                return value
+            else:
+                return self
 
     def refresh_wcs(self):
         """

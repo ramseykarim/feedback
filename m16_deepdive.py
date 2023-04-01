@@ -3543,6 +3543,8 @@ def calculate_cii_column_density(filling_factor=1.0):
         hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
         hdr['HISTORY'] = f"sqrt(pixels/beam) oversample = {np.sqrt(pixels_per_beam):.2f}"
         hdr['HISTORY'] = f"filling factor = {filling_factor:.2f}"
+
+        # hdr['HISTORY'] = "TEST3: lsm8, Tex variable"
         return hdr
 
     phdu = fits.PrimaryHDU()
@@ -3604,7 +3606,7 @@ def calculate_cii_column_density(filling_factor=1.0):
 
     hdul = fits.HDUList([phdu, hdu_NCp, hdu_NH, hdu_mass, hdu_distance, hdu_Tex,
         hdu_eNCp, hdu_emass, hdu_eNH])
-    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}_with_uncertainty_v2.fits")
+    savename = cube_utils.os.path.join(cps2.cube_info['dir'], f"Cp_coldens_and_mass_lsm{lsm}_ff{filling_factor:.1f}_with_uncertainty.fits")
     print(savename)
     hdul.writeto(savename, overwrite=True)
 
@@ -4623,7 +4625,8 @@ def get_samples_at_locations(img, wcs_obj):
     """
     February 9, 2023
     Use the regions in pillar123_pointsofinterest_v2 and grab a value at each location from the given map.
-    Return as dictionary using region names as keys. Img can be array or quantity, as long as WCS works
+    Return as dictionary using region names as keys. Img can be array or quantity, as long as WCS works.
+    If img=='coords' (set to a string, instead of a Quantity or array), then returns the coordinates as nicely formatted strings. wcs_obj will not be used in this case.
     """
     global persisent_regions_list
     if persisent_regions_list is None:
@@ -4632,9 +4635,17 @@ def get_samples_at_locations(img, wcs_obj):
     else:
         reg_list = persisent_regions_list
     return_dict = {}
-    for reg in reg_list:
-        coords = tuple(round(x) for x in reg.to_pixel(wcs_obj).center.xy[::-1]) # xy[::-1] = ij
-        return_dict[reg.meta['label']] = img[coords]
+    if img == 'coords':
+        for reg in reg_list:
+            print(reg.center.frame)
+            return_dict[reg.meta['label']] = reg.center.to_string(style='hmsdms')
+    else:
+        for reg in reg_list:
+            coords = tuple(round(x) for x in reg.to_pixel(wcs_obj).center.xy[::-1]) # xy[::-1] = ij
+            try:
+                return_dict[reg.meta['label']] = img[coords]
+            except IndexError:
+                return_dict[reg.meta['label']] = np.nan * img.unit
     return return_dict
 
 
@@ -4644,9 +4655,16 @@ def column_of_table_sample_peak_brightness_temperatures(line_stub):
     Get peak brightness temperatures for a given line
     Also test out the get_samples_at_locations() function before I use it on column density
     """
-    cube = cps2.cutout_subcube(length_scale_mult=None, data_filename=line_stub)
-    max_cube = cube.max(axis=0)
-    return get_samples_at_locations(max_cube, max_cube.wcs)
+    cube_obj = cube_utils.CubeData(line_stub)
+    try:
+        max_cube = cube_obj.data.max(axis=0)
+    except ValueError:
+        cube_obj.data.allow_huge_operations=True
+        print("DOING HUGE OPERATION ON ", line_stub)
+        max_cube = cube_obj.data.max(axis=0)
+    # Convert the 2D max array, which should be much faster than converting the 3D cube
+    max_cube_values = cube_obj.convert_to_K(value=max_cube)
+    return get_samples_at_locations(max_cube_values, max_cube.wcs)
 
 
 def table_sample_peak_brightness_temperatures():
@@ -4655,14 +4673,29 @@ def table_sample_peak_brightness_temperatures():
     Get brightness temperatures for every line towards regions, save table (csv)
     Looks like this works easily! Need to fill out the line list and rerun for the final table, but the written table is very clean and will be easy to open in Calc
     """
-    line_list = ['cii', '12co10',]# '13co10']
+    line_list = ['cii', 'oi', '12co10', '13co10', '12co32', '13co32', 'co65', 'hcn', 'hcop', 'cs', 'n2hp']
+    uncertainty_list = []
     super_dict = {}
+
+    # get_samples_at_locations('coords', None)
+    # return
+
     for line_stub in line_list:
-        super_dict[line_stub] = column_of_table_sample_peak_brightness_temperatures(line_stub)
-    df = pd.DataFrame.from_dict(super_dict).applymap(lambda x: f"{x:.2f}")
-    # print(df)
-    # 2023-02-09
-    df.to_csv("/home/ramsey/Pictures/2023-02-09/max_brightness_temperatures.csv")
+        super_dict[cube_utils.cubenames[line_stub]] = column_of_table_sample_peak_brightness_temperatures(line_stub)
+        uncertainty_list.append(f"{cube_utils.onesigmas[line_stub]*u.K:.1f}")
+
+    df = pd.DataFrame.from_dict(super_dict).applymap(lambda x: f"{x:.1f}")
+    df['Coordinates'] = pd.Series(get_samples_at_locations('coords', None))
+    df = df[['Coordinates'] + [x for x in df.columns if x!='Coordinates']]
+    df.loc['T_RMS'] = [''] + uncertainty_list
+
+    # 2023-02-09, 03-28,29
+    save_path = "/home/ramsey/Pictures/2023-03-31/max_brightness_temperatures"
+    df.to_csv(save_path+".csv")
+    table_as_latex = df.to_latex().replace('nan K', '')
+    with open(save_path+".txt", 'w') as f:
+        f.write(table_as_latex)
+
 
 
 def table_sample_column_densities():
@@ -4749,14 +4782,13 @@ if __name__ == "__main__":
     ...
     # calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)
 
-    # table_sample_peak_brightness_temperatures()
+    table_sample_peak_brightness_temperatures()
     # table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
     #     for n in (1e4, 2e4):
     # lifetime_pressure_velocitydispersion_tradeoff(1e4, 'P1a-head')
     # lifetime_pressure_velocitydispersion_tradeoff(1.8e4, 'P1a-head')
-    remake_leflochlazareff_Bfield_graph()
 
     # calculate_co_column_density()
     # calculate_pillar_lifetimes_from_columndensity()

@@ -925,7 +925,7 @@ def background_samples_figure():
     bg_reg = regions.read_ds9(catalog.utils.search_for_file(bg_reg_filename_short))
 
     #### Average north or all?
-    average_north_or_all = 'all'
+    average_north_or_all = 'north'
     if average_north_or_all == 'north':
         avg_stub = average_north_or_all
         bg_reg_subset = bg_reg[:-1]
@@ -933,14 +933,31 @@ def background_samples_figure():
         avg_stub = average_north_or_all
         bg_reg_subset = bg_reg
 
+    default_label_text_size = 12
+
     cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg_subset).mean(axis=(1, 2))
     kwargs = {'fill': False}
-    fig = plt.figure(figsize=(14, 6))
-    ax_img = plt.subplot2grid((1, 3), (0, 0), projection=cii_cube[0, :, :].wcs)
-    ax_spec = plt.subplot2grid((1, 3), (0, 1), colspan=2)
-    vel_lims = (19*kms, 27*kms)
-    ax_img.imshow(cii_cube.spectral_slab(*vel_lims).moment0().to_value(), origin='lower')
-    ax_spec.plot(cii_cube.spectral_axis.to_value(), cii_bg_spectrum.to_value(), color='k', lw=4, label=f'Average ({avg_stub}) background', alpha=0.6)
+    fig = plt.figure(figsize=(17.5, 6))
+    gs = fig.add_gridspec(1, 3, left=0.03, right=0.99, top=0.97, bottom=0.1, wspace=0.3)
+
+    img, img_hdr = fits.getdata(catalog.utils.search_for_file("misc_regrids/cii_regrid_0.fits"), header=True)
+    img_wcs = WCS(img_hdr)
+    print(img_wcs)
+    ax_img = fig.add_subplot(gs[0, 0], projection=img_wcs)
+    im = ax_img.imshow(img, origin='lower', cmap='plasma', vmin=0, vmax=230)
+    # Format axis labels
+    ax_img.coords[0].set_ticklabel(rotation=0, rotation_mode='anchor', pad=None, fontsize=default_label_text_size, ha='right', va='top')
+    ax_img.coords[1].set_ticklabel(fontsize=default_label_text_size)
+    ax_img.set_xlabel('Right Ascension')
+    ax_img.set_ylabel('Declination', labelpad=0)
+    ax_img.tick_params(axis='both', direction='in')
+    # Format colorbar
+    ax_cbar = ax_img.inset_axes([1, 0, 0.05, 1])
+    cbar = fig.colorbar(im, cax=ax_cbar)
+    cbar.set_label(f"Integrated intensity ({(u.K * kms).to_string('latex_inline')})", size=default_label_text_size)
+
+    ax_spec = fig.add_subplot(gs[0, 1:])
+    ax_spec.plot(cii_cube.spectral_axis.to_value(), cii_bg_spectrum.to_value(), color='k', lw=4, label=f"Average {'northern' if avg_stub=='north' else 'all'} background", alpha=0.6)
     for idx, reg in enumerate(bg_reg):
         if idx == len(bg_reg)-1:
             color = 'k'
@@ -951,33 +968,42 @@ def background_samples_figure():
             line_kwargs = dict(ls=ls, lw=lw, label=label, color=color)
         else:
             short_label = str(idx+1)
-            color = marcs_colors[idx]
-            line_kwargs = dict(label=f'{idx+1}', color=color)
-        reg_pixel = reg.to_pixel(cii_cube[0, :, :].wcs)
+            # color = marcs_colors[idx]
+            color = None
+            line_kwargs = dict(label=f'{idx+1}')
+        # Get and plot spectrum
+        spectrum = cii_cube.subcube_from_regions([reg]).mean(axis=(1, 2)).to_value()
+        p = ax_spec.plot(cii_cube.spectral_axis.to_value(), spectrum, **line_kwargs)
+        # Plot region on reference image
+        reg_pixel = reg.to_pixel(img_wcs)
+        if color is None:
+            color = p[0].get_c()
         artist = reg_pixel.as_artist(**kwargs, color=color)
         ax_img.add_artist(artist)
         x, y = reg_pixel.center.xy
-        ax_img.text(x, y, short_label, color=color, ha='center', va='center', fontsize=12)
-        spectrum = cii_cube.subcube_from_regions([reg]).mean(axis=(1, 2)).to_value()
-        ax_spec.plot(cii_cube.spectral_axis.to_value(), spectrum, **line_kwargs)
-    beam_patch_coords = [0.06, 0.94] # Axes coords
-    beam_patch = cii_cube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform(beam_patch_coords), misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs))
-    beam_patch.set_alpha(0.9)
-    beam_patch.set_facecolor('w')
-    beam_patch.set_edgecolor('w')
+        ax_img.text(x, y, short_label, color=color, ha='center', va='center', fontsize=default_label_text_size)
+
+    beam_patch_coords = [0.9, 0.1] # used to be [0.06, 0.94] # Axes coords
+    beam_patch = cii_cube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform(beam_patch_coords), misc_utils.get_pixel_scale(img_wcs))
+    beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
+    beam_patch.set(**beam_patch_kwargs)
     ax_img.add_artist(beam_patch)
-    ax_img.text(beam_patch_coords[0]+0.06, beam_patch_coords[1], '[CII]\nbeam', fontsize=9, color='w', alpha=0.9, transform=ax_img.transAxes, va='center', ha='left')
-    ax_img.set_title(f"Integrated CII intensity, {make_vel_stub(vel_lims)}", fontsize=12)
-    for coord in ax_img.coords:
-        coord.set_ticks_visible(False)
-        coord.set_ticklabel_visible(False)
-        coord.set_axislabel('')
-    ax_spec.set_xlabel("Velocity (km/s)")
-    ax_spec.set_ylabel("CII line intensity (K)")
+    ax_img.text(beam_patch_coords[0]-0.06, beam_patch_coords[1], cube_utils.cubenames['cii']+'\nbeam', fontsize=default_label_text_size, color='Gainsboro', transform=ax_img.transAxes, va='center', ha='right')
+
+    # ax_img.set_title(f"Integrated CII intensity, {make_vel_stub(vel_lims)}", fontsize=12)
+    # for coord in ax_img.coords:
+    #     coord.set_ticks_visible(False)
+    #     coord.set_ticklabel_visible(False)
+    #     coord.set_axislabel('')
+    ax_spec.set_xlabel(f"Velocity ({kms.to_string('latex_inline')})")
+    ax_spec.set_ylabel(f"{cube_utils.cubenames['cii']} line intensity ({u.K.to_string('latex_inline')})", labelpad=0)
+    ax_spec.axhline(0, color='k', alpha=0.1)
+    for v in range(20, 29):
+        # Velocity gridlines around important velocities
+        ax_spec.axvline(v, color='k', alpha=0.07)
     ax_spec.legend()
-    plt.tight_layout()
-    # 2022-01-14, 2022-11-29, 2023-02-22
-    fig.savefig(f"/home/ramsey/Pictures/2023-02-22/cii_background_spectra_avg{avg_stub}.png",
+    # 2022-01-14, 2022-11-29, 2023-02-22, 03-31
+    fig.savefig(f"/home/ramsey/Pictures/2023-03-31/cii_background_spectra_avg{avg_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}, avg {avg_stub}',
             file=__file__, func='background_samples_figure'))
 
@@ -1683,23 +1709,26 @@ def multi_panel_moment_images():
     n2hp, c18o10, and any other limited-emission lines can go in a contour overlay somewhere (maybe on this plot?)
     """
     selected_data = [
-        'cii', 'oi', 'ci',  '8um',
+        'cii', 'oi', '8um', '70um',
         '12co10', '13co10', '12co32', 'co65',
-        'cs', 'hcop', 'hcn', '70um',
+        'hcop', 'hcn', 'cs', 'n2hp',
     ]
     overlays = { # overlay: image on which to overlay
-        'c18o10': '12co10', '13co32': '12co32', 'n2hp': 'hcn', '160um': '70um'
+        'c18o10': '12co10', '13co32': '12co32', '160um': '70um'
     }
     grid_shape = (3, 4) # production
-    figsize=(23, 15.5)
-    plots_adjust_kwargs = dict(left=0.05, right=0.96, top=0.95, bottom=0.05, wspace=0.16, hspace=0.08)
+    figsize=(19.5, 15.5)
+    plots_adjust_kwargs = dict(left=0.05, right=0.96, top=0.95, bottom=0.07, wspace=0.16, hspace=0.08)
 
-    contour_levels_base = np.arange(2, 111, 5)
+    contour_levels_base = np.arange(2, 111, 10)
     contour_levels_coeff = {
-        '13co10': 2., 'c18o10': 0.25, '160um': 15000, '13co32': 2., 'n2hp': 1,
+        '13co10': 2., 'c18o10': 0.25, '160um': 90000, # 15000 originally
+        '13co32': 2., 'n2hp': 1,
     }
+    special_contour_levels = {'160um': np.array([1, 2, 3, 5,])*contour_levels_coeff['160um']}
     img_limits = {
-        '12co10': (0, 300), '13co10': (0, 55), 'cii': (0, 230), '8um': (None, 1200), 'ci': (-3, 11), 'oi': (-5, 40),
+        '12co10': (0, 300), '13co10': (0, 55), 'cii': (0, 230), '8um': (None, 1200), 'oi': (0, 40),
+        'co65': (0, 60), '12co32': (0, 130),
     }
     img_stretches = {'8um': np.arcsinh, '70um': np.arcsinh, '160um': np.arcsinh} # if not here, linear
     stretch_inverses = {np.arcsinh: np.sinh}
@@ -1721,14 +1750,18 @@ def multi_panel_moment_images():
     # img_ticks = {'160um': ()}
 
     ################################ for the draft version
+    ################################ for the draft version
+    ################################ for the draft version
+    ################################ for the draft version
     # selected_data = ['12co10', 'cii', '70um']
     # overlays = {'c18o10': '12co10', '160um': '70um'}
     # grid_shape = (1, 3) # testing
+    ################################ for the draft version
+    ################################ for the draft version
+    ################################ for the draft version
 
-    # Set up reference grid and velocity limits
-    reference_grid_stub = '12co10'
+    # Velocity limits
     vel_lims = (18, 27)
-
     # Add units to velocity limits and make a string description
     vel_lims = tuple(x*kms for x in vel_lims)
     vel_lims_stub = make_vel_stub(vel_lims)
@@ -1825,7 +1858,9 @@ def multi_panel_moment_images():
         data, header = fits.getdata(fn, header=True)
         wcs_obj = WCS(header)
         beam = cube_utils.Beam.from_fits_header(header)
-        return data*u.Unit(header['BUNIT']), wcs_obj, beam
+        if header['BUNIT'] != "GAIN":
+            data = data*u.Unit(header['BUNIT'])
+        return data, wcs_obj, beam
 
     def save_helper_memoize(cube_or_image_stub, img_reproj, wcs_obj, beam, unit, order=None):
         """
@@ -1838,15 +1873,16 @@ def multi_panel_moment_images():
         header['AUTHOR'] = "Ramsey Karim"
         header['CREATOR'] = f"rkarim, via {__file__}.multi_panel_moment_images"
         header.update(beam.to_header_keywords())
-        header['COMMENT'] = f"reprojected to {reference_grid_stub} grid"
+        header['COMMENT'] = f"reprojected to {moment_helper_make_nice_wcs(get='filename')} grid"
         hdu = fits.PrimaryHDU(data=img_reproj, header=header)
         print(f"Memoizing data for {cube_or_image_stub} order={order}")
         hdu.writeto(fn)
 
     """ Plotting config and defaults """
     fig = plt.figure(figsize=figsize)
-    plot_kwargs = dict(origin='lower', cmap='magma')
+    plot_kwargs = dict(origin='lower', cmap='plasma')
     contour_kwargs = dict(colors='cyan', linewidths=1)
+    default_label_text_size = 16
     cbar_orientation = 'vertical'
     def config_cbar_labels(cbar_ax, cbar_obj, im_obj, cbar_label_unit, data_stub):
         if cbar_orientation == 'horizontal':
@@ -1855,7 +1891,7 @@ def multi_panel_moment_images():
         else:
             cbar_ax.yaxis.set_ticks_position('right')
             labelpad = None
-        cbar_obj.set_label(cbar_label_unit.to_string('latex_inline'), labelpad=labelpad)
+        cbar_obj.set_label(cbar_label_unit.to_string('latex_inline'), labelpad=labelpad, size=default_label_text_size)
         if True and data_stub in img_stretches: # only do this if there is a nonlinear stretch
             # flip True to False if it breaks
             """ This might break for other photometric images, but it works ok now! """
@@ -1870,26 +1906,20 @@ def multi_panel_moment_images():
             if lowest_tick_power > 2:
                 denom = 10**lowest_tick_power
                 cbar_obj.set_label(cbar_label_unit.to_string('latex_inline'))
-                cbar_obj.ax.text(1, 1, f"1e{lowest_tick_power:d}", transform=ax.transAxes, va='bottom', ha='center')
+                cbar_obj.ax.text(1, 1, f"1e{lowest_tick_power:d}", transform=ax.transAxes, va='bottom', ha='center', fontsize=default_label_text_size)
             else:
                 denom = 1
             cbar_obj.set_ticks(apply_stretch(best_tick_list_unstretched, data_stub), labels=[f"{int(x/denom)}" for x in best_tick_list_unstretched])
-    default_text_kwargs = dict(fontsize=15, color='LimeGreen', ha='left', va='center')
-    text_x = 0.1
+        cbar_ax.tick_params(labelsize=default_label_text_size)
+    default_text_kwargs = dict(fontsize=16, color=marcs_colors[1], ha='left', va='center', weight='bold')
+    text_x = 0.02
     beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
 
-    # First, grab the reference grid data and plot it while we have it loaded
-    # Save the wcs to an object which we will use for the rest of them
-    # Assumption is cube, change it if it's a 2d image
-
-    memoized_data = load_helper_memoize(reference_grid_stub)
-    if memoized_data:
-        ref_img, ref_wcs, ref_beam = memoized_data
-        del memoized_data # just to clean up references to arrays
-    else:
-        ref_img, ref_wcs, ref_beam = load_helper(reference_grid_stub)
-        save_helper_memoize(reference_grid_stub, ref_img.to_value(), ref_wcs, ref_beam, ref_img.unit)
-    ref_shape = ref_img.shape
+    # Grab the reference HEADER text file (no longer using an image)
+    # This header, catalogs/inclusive_wcs_and_footprint.txt, uses a footprint inclusive of both JWST and CO10 and the pixel size of 12CO10
+    reference_header = moment_helper_make_nice_wcs()
+    ref_shape = (reference_header['NAXIS2'], reference_header['NAXIS1']) # reverse XY order to ij
+    ref_wcs = WCS(reference_header)
 
     # Memoize axes, and use the ref_wcs to make the Axes objects
     gs = fig.add_gridspec(*grid_shape, **plots_adjust_kwargs)
@@ -1901,13 +1931,6 @@ def multi_panel_moment_images():
             ax = fig.add_subplot(gs[np.unravel_index(index, grid_shape)], projection=ref_wcs)
             axes[index] = ax
         return axes[index]
-
-    # Plot the reference image while we have it loaded
-    ax = get_axis(selected_data.index(reference_grid_stub))
-    # And remember to skip the reference when we come by it in the general loop
-    ref_plot_im = ax.imshow(apply_stretch(ref_img.to_value(), reference_grid_stub), **plot_kwargs, **get_vlims(reference_grid_stub))
-    ref_img_units = ref_img.unit
-    del ref_img
     """ end plot config and defaults """
 
     """ General loop over the (non-reference) images """
@@ -1915,7 +1938,7 @@ def multi_panel_moment_images():
         ax = get_axis(i)
         # Stuff to do to ALL images
         ax.tick_params(axis='both', direction='in')
-        ax.coords.grid(color='grey', alpha=0.5, linestyle='solid')
+        ax.coords.grid(color='Gainsboro', alpha=0.5, linestyle='solid', linewidth=1)
         # ax.coords[1].set_format_unit(u.deg)
         # ax.coords[0].set_format_unit(u.deg)
         # ax.coords[0].set_major_formatter('hh:mm:ss')
@@ -1932,34 +1955,54 @@ def multi_panel_moment_images():
         if not ss.is_last_row():
             # hide ticklabels all but bottom row
             ax.tick_params(axis='x', labelbottom=False)
+        else:
+            ax.coords[0].set_ticklabel(rotation=25, rotation_mode='anchor', pad=17, fontsize=default_label_text_size, ha='right', va='top')
         if not ss.is_first_col():
             # hide ticklabels all but left column
             ax.tick_params(axis='y', labelleft=False)
-
-        if data_stub == reference_grid_stub:
-            # Skip the reference, we already plotted it
-            # Could use this loop to dress it up, add titles and colorbars and stuff
-            im = ref_plot_im
-            unit = ref_img_units
-            beam = ref_beam
-            del ref_beam
         else:
-            # Stuff to do to ONLY the non-reference images
-            interp_order = 0
-            memoized_data = load_helper_memoize(data_stub, order=interp_order)
-            if memoized_data:
-                img_reproj, _, beam = memoized_data
-                del memoized_data
-                unit = img_reproj.unit
-                img_reproj = img_reproj.to_value()
-            else:
-                raw_img, raw_wcs, beam = load_helper(data_stub)
-                # Regrid to reference wcs. Use nearest-neighbor (order=0) to preserve pixellation
-                img_reproj = reproject_interp((raw_img.to_value(), raw_wcs), ref_wcs, shape_out=ref_shape, order=interp_order, return_footprint=False)
-                unit = raw_img.unit
-                save_helper_memoize(data_stub, img_reproj, ref_wcs, beam, raw_img.unit, order=interp_order)
+            ax.coords[1].set_ticklabel(fontsize=default_label_text_size)
 
-            im = ax.imshow(apply_stretch(img_reproj, data_stub), **plot_kwargs, **get_vlims(data_stub))
+        # Stuff to do to all images (I'm using a reference header only, so nothing has been plotted before this loop)
+        interp_order = 0
+        memoized_data = load_helper_memoize(data_stub, order=interp_order)
+        if memoized_data:
+            img_reproj, _, beam = memoized_data
+            del memoized_data
+            unit = img_reproj.unit
+            img_reproj = img_reproj.to_value()
+        else:
+            raw_img, raw_wcs, beam = load_helper(data_stub)
+            # Regrid to reference wcs. Use nearest-neighbor (order=0) to preserve pixellation
+            img_reproj = reproject_interp((raw_img.to_value(), raw_wcs), ref_wcs, shape_out=ref_shape, order=interp_order, return_footprint=False)
+            unit = raw_img.unit
+            save_helper_memoize(data_stub, img_reproj, ref_wcs, beam, raw_img.unit, order=interp_order)
+        im = ax.imshow(apply_stretch(img_reproj, data_stub), **plot_kwargs, **get_vlims(data_stub))
+
+
+        """ Gain Curve """
+        # Check for memoized gain curve; let gain always have bilinear interp since it's a contour
+        memoized_gain_data = load_helper_memoize(data_stub+'gain', order=1)
+        if memoized_gain_data:
+            # Get memoized gain map
+            gain_map, _, _ = memoized_gain_data
+            del memoized_gain_data
+        else:
+            gain_map, gain_wcs = cube_utils.get_gain_map(data_stub)
+            if gain_map is not None:
+                # Reproject gain map
+                gain_map_reproj = reproject_interp((gain_map, gain_wcs), ref_wcs, shape_out=ref_shape, order=1, return_footprint=False)
+                # Memoize gain map
+                save_helper_memoize(data_stub+'gain', gain_map_reproj, ref_wcs, beam, 'GAIN', order=1)
+                # Reassign gain_map to the reprojected version for simplicity
+                gain_map = gain_map_reproj
+            else:
+                # There is no gain map, no action necessary
+                pass
+        if gain_map is not None:
+            ax.contour(gain_map, levels=[0.5], linewidths=1, colors='SlateGray', alpha=0.8)
+
+
         cbar = fig.colorbar(im, cax=ax_cbar, orientation=cbar_orientation)
         config_cbar_labels(ax_cbar, cbar, im, unit, data_stub)
         # Beam
@@ -1967,6 +2010,18 @@ def multi_panel_moment_images():
         patch.set(**beam_patch_kwargs)
         ax.add_artist(patch)
         ax.text(text_x, 0.94, cube_utils.cubenames[data_stub], transform=ax.transAxes, **default_text_kwargs)
+
+        # Plot scale bar on top-left panel
+        if i == 0:
+            # Scale bar 1 pc should be 237 pixels at 0.5'' pixels
+            # Good location is XY: ([463, 700], 882) on the March 30, 2023 grid
+            ax.plot([463-15, 700-15], [882, 882], color=default_text_kwargs['color'], linewidth=2)
+            # Text location approximately XY: 661, 846 (DS9 estimate)
+            text_kwargs = dict(**default_text_kwargs)
+            # text_kwargs['color'] = 'LimeGreen'
+            text_kwargs['ha'] = 'right'
+            ax.text(661, 846, "1 pc", **text_kwargs)
+            del text_kwargs
 
 
     """ Loop over contour data """
@@ -1994,20 +2049,65 @@ def multi_panel_moment_images():
             unit = raw_img.unit
             save_helper_memoize(data_stub, img_reproj, ref_wcs, beam, raw_img.unit, order=interp_order)
 
-        ax.contour(img_reproj, **contour_kwargs, levels=contour_levels_base*contour_levels_coeff[data_stub])
+        if data_stub in special_contour_levels:
+            levels = special_contour_levels[data_stub]
+            print(data_stub, levels)
+        else:
+            # Normal case
+            levels = contour_levels_base*contour_levels_coeff[data_stub]
+        ax.contour(img_reproj, **contour_kwargs, levels=levels)
         # Beam
         patch = beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.8, 0.1]), misc_utils.get_pixel_scale(ref_wcs))
         patch.set(**beam_patch_kwargs)
         ax.add_artist(patch)
-        ax.text(text_x, 0.86, cube_utils.cubenames[data_stub] + " contours", transform=ax.transAxes, **default_text_kwargs)
+        ax.text(text_x, 0.86, cube_utils.cubenames[data_stub] + " (c)", transform=ax.transAxes, **default_text_kwargs)
 
-    fig.supxlabel("Right Ascension")
-    fig.supylabel("Declination")
+    fig.supxlabel("Right Ascension", fontsize=default_text_kwargs['fontsize']+1)
+    fig.supylabel("Declination", fontsize=default_text_kwargs['fontsize']+1)
 
-    # 2023-03-09,10,13,20,22
-    plt.savefig("/home/ramsey/Pictures/2023-03-22/moment_panel.png",
+    # 2023-03-09,10,13,20,22,30,31
+    plt.savefig("/home/ramsey/Pictures/2023-03-31/moment_panel.png",
         metadata=catalog.utils.create_png_metadata(title="moment panel img for paper",
             file=__file__, func='multi_panel_moment_images'))
+
+
+def moment_helper_make_nice_wcs(get='header'):
+    """
+    March 30, 2023
+    Load in 12co10, get flat wcs, copy out the header
+
+    the box I want is:
+    CENTER_VAL: 18:18:52.7904 -13:51:10.914 (but let WCS find this based on CRPIX)
+    CENTER_PIX (12co10): 262.29711 (X) 170.83123 (Y) (reverse for IJ)
+    reset CRPIX to be at the center of the image with corresponding CRVAL
+
+    WIDTH (arcsec): 359.427 (X) 458.330 (Y) (taller in Dec than in RA)
+    WIDTH (pix): 718.85425 (X) 916.66025 (Y)
+    no rotation, let it be exactly aligned with RA-Dec
+    """
+    short_filepath = "catalogs/inclusive_wcs_and_footprint.txt"
+    filepath = catalog.utils.m16_data_path + short_filepath
+    if get == 'header':
+        return fits.Header.fromtextfile(filepath)
+    elif get == 'filename':
+        return short_filepath
+    elif get == 'rewrite':
+        raise RuntimeError("Already ran this on March 30 2023!")
+        cube_obj = cube_utils.CubeData('12co10')
+        wcs_flat = cube_obj.wcs_flat
+        new_wcs_header = wcs_flat.to_header()
+        for k in ['RESTFRQ', 'SPECSYS']:
+            del new_wcs_header[k]
+        crpix = (718, 916)
+        center_xy_in_old_pixels = ([262], [171])
+        center_sky = tuple(x[0] for x in wcs_flat.pixel_to_world_values(*center_xy_in_old_pixels))
+        new_keys = {
+            'NAXIS': 2, 'NAXIS1': crpix[0], 'NAXIS2': crpix[1],
+            'CRVAL1': center_sky[0], 'CRVAL2': center_sky[1],
+            'CRPIX1': crpix[0]//2, 'CRPIX2': crpix[1]//2
+        }
+        new_wcs_header.update(new_keys)
+        new_wcs_header.totextfile(filepath, overwrite=False) # set overwrite=True if you really mean it, just a safeguard for me
 
 
 def pv_vertical_series_thru_pillars(pillar_name, line_stub):
@@ -2397,10 +2497,10 @@ def paper_spectra():
     reg_filename_short = "catalogs/pillar123_pointsofinterest_v2.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     multiplier = {'cii': 1,
-        '12co10CONV': 0.5, '13co10CONV': 4, 'c18o10CONV': 15,
+        '12co10CONV': 0.5, '13co10CONV': 1, 'c18o10CONV': 15,
         'co65CONV': 2, '12co32': 1, '13co32': 1,
-        'hcopCONV': 2, 'hcnCONV': 4, 'csCONV': 4, 'n2hpCONV': 8,
-        'oiCONV': 2, 'ciCONV': 2}
+        'hcopCONV': 2, 'hcnCONV': 1, 'csCONV': 4, 'n2hpCONV': 4,
+        'oiCONV': 1, 'ciCONV': 2}
 
     def get_multiplier(stub):
         if stub in multiplier:
@@ -2412,11 +2512,10 @@ def paper_spectra():
             return multiplier[stub]
 
 
-    short_names = ['cii', '12co10', '12co32', 'co65', 'hcop', 'cs']
-    # if any([x[-4:] == 'CONV' for x in short_names]): # check if I put any CONV in there; replacing with using_conv being a controlling variable
-    #     using_conv = True
-    # else:
-    #     using_conv = False
+    """ Make 2 sets of spectra """
+    # short_names = ['cii', '12co10', '12co32', 'co65', 'hcop', 'cs']; set_stub = ""; set_number = 1
+    short_names = ['oi', '13co10', '13co32', 'hcn', 'n2hp']; set_stub = "set2"; set_number = 2
+
     using_conv = True # set to True to use CONV versions if applicable
     if using_conv:
         short_names = [(x if x in ("cii", "12co32", "13co32") else x+"CONV") for x in short_names]
@@ -2460,10 +2559,15 @@ def paper_spectra():
             except IndexError:
                 spectrum = np.full(cube.data.shape[0], np.nan) * cube.data.unit
             if line_stub == 'cii':
+                # Subtract CII BG spectrum and save the unsubtracted spectrum
+                unsub_spectrum = spectrum
                 spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['label'])]
             multiplier_stub = '' if get_multiplier(line_stub) == 1 else f' $\\times${get_multiplier(line_stub)}'
             line_name = cube_utils.cubenames[line_stub.replace("CONV", "")]
             p = axes[reg_idx].plot(cube.data.spectral_axis.to_value(), spectrum.to_value()*get_multiplier(line_stub), label=f"{line_name}{multiplier_stub}")
+            if line_stub == 'cii':
+                # Plot unsubtracted CII spectrum in dotted line with same color as CII
+                axes[reg_idx].plot(cube.data.spectral_axis.to_value(), unsub_spectrum.to_value()*get_multiplier(line_stub), linestyle=':', color=p[0].get_c(), alpha=0.6)
         if line_stub == 'cii':
             del bgs
 
@@ -2486,7 +2590,11 @@ def paper_spectra():
         if reg_list[reg_idx].meta['label'].lower()[:2] == "p3":
             ax.legend(loc='upper right', fontsize=13)
         ax.set_xlim((15, 35))
-        ax.set_ylim((-5, 45))
+        if set_number == 1:
+            ax.set_ylim((-5, 45))
+        elif set_number == 2:
+            ax.set_ylim((-3, 23))
+
         ax.text(0.06, 0.94, reg_list[reg_idx].meta['label'], transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(20, 29):
             # Some light velocity gridlines around the important velocities
@@ -2500,8 +2608,8 @@ def paper_spectra():
 
     conv_text = "using " + ("conv" if using_conv else "native") + " resolutions"
     conv_stub = "" if using_conv else "_unconv"
-    # 2023-03-28
-    fig.savefig(f"/home/ramsey/Pictures/2023-03-28/sample_spectra{conv_stub}.png",
+    # 2023-03-28,31
+    fig.savefig(f"/home/ramsey/Pictures/2023-03-31/sample_spectra{conv_stub}{set_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f"{conv_text}, points: {reg_filename_short}",
         file=__file__, func="paper_spectra"))
 
@@ -2519,4 +2627,5 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
+    # multi_panel_moment_images()
     paper_spectra()

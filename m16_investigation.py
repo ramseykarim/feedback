@@ -2075,16 +2075,16 @@ if __name__ == "__main__":
 
     # convolve_carma_to_sofia()
     # save_smoothed_carma()
-    # get_noise_graph('ciCONV')
+    get_noise_graph('oi')
 
     # reg_fn_short = "catalogs/pillar1_pointsofinterest_v3.reg"
     # reg_fn_short = "catalogs/pillar_samples_v2.reg" # for pillar_samples.reg: 6, 7 are Pillar 2
     # reg_fn_short = "catalogs/pillar2_pointsofinterest_v2.reg"
-    reg_fn_short = "catalogs/pillar123_pointsofinterest_v1.reg"
+    # reg_fn_short = "catalogs/pillar123_pointsofinterest_v1.reg"
     # pillar_sample_spectra('head', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short)
     # pillar_sample_spectra('threads', short_names=['cii', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV', 'csCONV'], show_positions=0, reg_filename_short=reg_fn_short) # for pillar_samples.reg: 6, 7 are Pillar 2
-    for i in range(2, 6):
-        pillar_sample_spectra(i, short_names=['cii', 'ciCONV', 'oiCONV', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV',  'csCONV'], show_positions=0, reg_filename_short=reg_fn_short, show_with_bg=True)
+    # for i in range(2, 6):
+    #     pillar_sample_spectra(i, short_names=['cii', 'ciCONV', 'oiCONV', '12co10CONV', '12co32', 'co65CONV', 'hcopCONV',  'csCONV'], show_positions=0, reg_filename_short=reg_fn_short, show_with_bg=True)
 
     # for i in [1]:
     #     for j in range(2):

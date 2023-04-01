@@ -337,7 +337,8 @@ def get_g0_values_at_locations(reg_name):
         result[t['identifier'][reg_i]] = dict(t[reg_i])
 
     # Correct the Herschel_G0 for the background of ~620
-    result['Herschel_G0']['data'] = result['Herschel_G0']['data'] - 620
+    # I used to use 620, I am trying 800 now based on a second look (rkarim, 2023-03-29)
+    result['Herschel_G0']['data'] = result['Herschel_G0']['data'] - 800 #620
     return result
 
 
@@ -417,11 +418,12 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
     plot._plt.errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
 
     # set x and y limits because we know what they should probably be
-    plot._plt.xlim([10, 1e7])
-    plot._plt.ylim([0.3, 3e6])
+    plot._plt.xlim([100, 1e6])
+    plot._plt.ylim([30, 3e4])
 
     # 2022-09-28, (27 ?), 29, 10-05,6,7,11,12,13,14,17, 11-22
-    save_path = f"/home/ramsey/Pictures/2022-11-22" # removed modelset name because we won't do anymore kosma-tau models
+    # 2023-03-29
+    save_path = f"/home/ramsey/Pictures/2023-03-29/with_fewer_and_32/" # removed modelset name because we won't do anymore kosma-tau models
     if not os.path.exists(save_path):
         print("Creating directory ", save_path)
         os.makedirs(save_path)
@@ -449,12 +451,13 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
 # 'cii', 'co65CONV', 'FIR', '12co10CONV', '12co32', '13co32', '13co10CONV'
 
 if __name__ == "__main__":
-    set_supported_lines(['cii', 'oiCONV', 'ciCONV', 'co65CONV', 'FIR', '12co10CONV', '12co32'])
+    set_supported_lines(['cii', 'oiCONV', 'co65CONV', '12co10CONV', '12co32'])
     # for d in ['E', 'S', 'W']:
     #     for i in range(0, 4):
     #         make_spaghetti_plot(d+'-peak', plot_setting=i)
 
-    reg_name_list = ['Eastern-Horn', 'Western-Horn', 'Inter-horn', 'P2', 'Shared-Base-E']
+    reg_name_list = ['Western-Horn', 'P2', 'P3']
+    # reg_name_list = ['NE-thread']
     for reg_name in reg_name_list:
         for i in [1, 2]:
             make_spaghetti_plot(reg_name, plot_setting=i)
