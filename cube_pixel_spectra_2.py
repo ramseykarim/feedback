@@ -1944,18 +1944,50 @@ def regrid_spectral_cii():
     cii_cube.write(save_fn)
 
 
-def regrid_spectral_co():
+def regrid_spectral_molecule():
     """
     March 21, 2023
-    Same as above but different
+    Same as above but different; let it be general for any molecule
     """
-    co_cube_obj = cube_utils.CubeData('12co10')
-    # TODO: finish this
+    molecular_line_stub = 'cs'
+    mol_cube_obj = cube_utils.CubeData(molecular_line_stub)
+    mol_cube_obj.convert_to_K()
+    # Use dv to make a box filter appropriate for rebinning to 1 km/s (same as in hcop)
+    mol_dv = np.mean(np.diff(mol_cube_obj.data.spectral_axis))
+    target_dv = 1*u.km/u.s
+    mean_filter_width = np.abs((target_dv/mol_dv).decompose().to_value())
+    print("Filter width", mean_filter_width)
+    mean_filter_width = np.around(mean_filter_width, 0)
+    print("Filter width", mean_filter_width)
+    from astropy.convolution import Box1DKernel
+    mean_filter = Box1DKernel(mean_filter_width)
+    if molecular_line_stub[-4:] == 'co10':
+        out_spectral_axis = np.arange(15, 31) * u.km / u.s # should have said 32, i wanted channel 31 included. doesn't really matter
+    else:
+        out_spectral_axis = np.arange(18, 30) * u.km / u.s
+    mol_cube = mol_cube_obj.data.spectral_smooth(mean_filter)
+    mol_cube = mol_cube.spectral_interpolate(out_spectral_axis)
+    savename = mol_cube_obj.full_path.replace(".fits", "_1kms.fits")
+    mol_cube.write(savename, format='fits')
+
+
+            # hcop_dv = np.mean(np.diff(hcop_cube.spectral_axis))
+            # cii_dv = np.mean(np.diff(cii_cube.spectral_axis))
+            # mean_filter_width = (cii_dv/hcop_dv).decompose().to_value()
+            # print(mean_filter_width)
+            # mean_filter_width = np.round(mean_filter_width, 4)
+            # print(mean_filter_width)
+            # from astropy.convolution import Box1DKernel
+            # mean_filter = Box1DKernel(mean_filter_width)
+            # print(mean_filter.array)
+            # hcop_cube = hcop_cube.spectral_smooth(mean_filter)
+            # hcop_cube = hcop_cube.spectral_interpolate(cii_cube.spectral_axis.to(hcop_cube.spectral_axis.unit))
+            # hcop_cube.write(boxsmooth_filename, format='fits')
 
 
 
 if __name__ == "__main__":
-    regrid_spectral_cii()
+    regrid_spectral_molecule()
     # subcube = cutout_subcube(length_scale_mult=4, data_filename="apex/M16_12CO3-2_truncated_cutout.fits")
 
     # test_cii_background()

@@ -2409,23 +2409,63 @@ def paper_channel_maps():
     # cii_cube.plot_channel_maps(5, 3, list(range(3, 18)))
     # plt.show()
     """
+
+    line_stub = "hcop"
+    line_contour_stub = 'cs'
+    """
+    Major assumption: that the contour cube will have the SAME GRID as the image cube
+    This is only valid for CS and HCOP
+    """
+
+    line_fns = {
+        'cii': "sofia/M16_CII_U_1kms_jwstfootprint.fits",
+        '12co10': "bima/M16_12CO1-0_7x4_1kms.fits",
+        'hcop': "carma/M16.ALL.hcop.sdi.cm.subpv_1kms.fits",
+        'cs': "carma/M16.ALL.cs.sdi.cm.subpv_1kms.fits",
+    }
+
     # Load spectrally rebinned cube
-    cii_fn_stub = "sofia/M16_CII_U_1kms_jwstfootprint.fits"
-    cii_cube = cube_utils.SpectralCube.read(catalog.utils.search_for_file(cii_fn_stub))
-    wcs_flat = cii_cube[0,:,:].wcs
-    print("First and last available channels: ", cii_cube.spectral_axis[0], cii_cube.spectral_axis[-1])
+    line_fn_short = line_fns[line_stub]
+    line_cube = cube_utils.SpectralCube.read(catalog.utils.search_for_file(line_fn_short)).with_spectral_unit(kms)
+    wcs_flat = line_cube[0,:,:].wcs
+    if line_contour_stub is not None:
+        line_contour_fn_short = line_fns[line_contour_stub]
+        line_contour_cube = cube_utils.SpectralCube.read(catalog.utils.search_for_file(line_contour_fn_short)).with_spectral_unit(kms)
+    print("First and last available channels: ", line_cube.spectral_axis[0], line_cube.spectral_axis[-1])
     # Get channels by velociy (can expose these as arguments later)
-    first_channel, last_channel = 17*kms, 32*kms
-    first_channel_idx, last_channel_idx = (cii_cube.closest_spectral_channel(x) for x in (first_channel, last_channel))
+
+    channel_limits = {
+        'cii': (17, 32), '12co10': (17, 30), 'hcop': (18, 30), 'cs': (18, 30),
+    }
+    # Pick the CII channel limits and define the grid by them
+    grid_first_channel = channel_limits['cii'][0]*kms
+    first_channel, last_channel = (v*kms for v in channel_limits[line_stub])
+    first_channel_idx, last_channel_idx = (line_cube.closest_spectral_channel(x) for x in (first_channel, last_channel))
     # Make subcube (this is how spectral_slab works under the hood, but I want to be explicit about it)
     # Announce how many channels need to be plotted (then I can make the gridspec)
     print(f"Will plot {last_channel_idx+1-first_channel_idx} channels from {first_channel} to {last_channel}")
     print(f"That's indices from {first_channel_idx} to {last_channel_idx} (inclusive, so +1)")
+
+    # Get gain map and regrid
+    gain_map, gain_wcs = cube_utils.get_gain_map(line_stub)
+    if gain_map is not None:
+        gain_map = reproject_interp((gain_map, gain_wcs), wcs_flat, shape_out=line_cube.shape[1:], order=1, return_footprint=False)
+        del gain_wcs
+        gain_contour_map = reproject_interp(cube_utils.get_gain_map(line_contour_stub), wcs_flat, shape_out=line_cube.shape[1:], order=1, return_footprint=False)
+    else:
+        gain_map, gain_contour_map = None, None
+
     # Figure and Gridspec
-    grid_shape = (3, 6)
-    fig = plt.figure(figsize=(14, 8))
+    grid_shape = (3, 6) if line_stub == 'cii' else (2, 6)
+    figsize = {'cii': (13.75, 8), 'hcop': (16, 5)}
+    fig = plt.figure(figsize=figsize[line_stub])
     # Messed up gridspec setup so I can get a big colorbar on the side
-    mega_gridspec = fig.add_gridspec(right=0.85, left=0.1, top=0.98, bottom=0.1)
+    if line_stub == 'cii':
+        # very tall
+        mega_gridspec = fig.add_gridspec(right=0.85, left=0.1, top=0.98, bottom=0.1)
+    else:
+        # more square
+        mega_gridspec = fig.add_gridspec(right=0.9, left=0.07, top=0.98, bottom=0.09)
     mega_axis = mega_gridspec.subplots()
     mega_axis.set_axis_off() # Hide this axis but use it as a frame for the colorbar
     gs = mega_gridspec[0,0].subgridspec(*grid_shape, hspace=0, wspace=0)
@@ -2434,22 +2474,32 @@ def paper_channel_maps():
     def get_axis(index):
         # Index is 1D index of channel, first_channel_idx -> 0
         if index not in axes:
-            # I prefer this to GridSpec.subplots() because I may have blank axes so lazy creation is easier
+            # I prefer this to GridSpec.subplots() because I have blank axes so lazy creation is easier
             axes[index] = fig.add_subplot(gs[np.unravel_index(index-first_channel_idx, grid_shape)], projection=wcs_flat)
         return axes[index]
 
     # Text
-    text_x, text_y = 0.06, 0.94
-    default_text_kwargs = dict(fontsize=12, color='k', ha='left', va='center')
+    text_x = 0.06 if line_stub == 'cii' else 0.5
+    ha = 'left' if line_stub == 'cii' else 'center'
+    text_y = 0.94
+    default_text_kwargs = dict(fontsize=12, color=marcs_colors[1], ha=ha, va='center')
     tick_labelsize = 9
     tick_labelrotation = 45
     # Colors
-    cmap = 'Greys'
+    cmap = 'plasma'
+    # Vlims
+    vlims = {
+        'cii': dict(vmin=1, vmax=50), '12co10': dict(vmin=0, vmax=100), 'hcop': dict(vmin=np.arcsinh(0), vmax=np.arcsinh(20)), 'cs': dict(vmin=0, vmax=10),
+    }
+    stretch = {'hcop': np.arcsinh}
+    clevels = {
+        'cs': np.arange(0.7, 35, 4),
+    }
 
     for channel_idx in range(first_channel_idx, last_channel_idx+1):
         print(channel_idx - first_channel_idx)
-        velocity = cii_cube.spectral_axis[channel_idx]
-        channel_data = cii_cube[channel_idx].to_value()
+        velocity = line_cube.spectral_axis[channel_idx]
+        channel_data = line_cube[channel_idx].to_value()
         # Setup axis
         ax = get_axis(channel_idx)
         ss = ax.get_subplotspec()
@@ -2466,25 +2516,40 @@ def paper_channel_maps():
 
         # Check data limits
         print([f(channel_data) for f in (np.min, np.mean, np.median, np.max)])
-        im = ax.imshow(channel_data, origin='lower', cmap=cmap, vmin=1, vmax=50)
+        if line_stub in stretch:
+            channel_data = stretch[line_stub](channel_data)
+        im = ax.imshow(channel_data, origin='lower', cmap=cmap, **vlims[line_stub])
         ax.text(text_x, text_y, f"{velocity.to_value():.0f} {velocity.unit.to_string('latex_inline')}", transform=ax.transAxes, **default_text_kwargs)
         # Beam (on every panel)
-        patch = cii_cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
+        patch = line_cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
         patch.set(alpha=0.9, facecolor='white', edgecolor='grey')
         ax.add_artist(patch)
+
+        if gain_map is not None:
+            ax.contour(gain_map, levels=[0.5], linewidths=1, colors='Gainsboro', alpha=0.8, linestyles='--')
+
+        if line_contour_stub is not None:
+            contour_data = line_contour_cube[channel_idx].to_value()
+            ax.contour(contour_data, levels=clevels[line_contour_stub], colors='cyan', linewidths=0.7)
+            patch = line_contour_cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.8, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
+            patch.set(alpha=0.9, facecolor='white', edgecolor='grey')
+            ax.add_artist(patch)
+            ax.contour(gain_contour_map, levels=[0.5], linewidths=1, colors='cyan', alpha=0.8, linestyles='--')
 
 
     # Colorbar
     cbar_ax = mega_axis.inset_axes([1.03, 0, 0.03, 1])
     cbar = fig.colorbar(im, cax=cbar_ax, label='T$_{\\rm MB}$ (K)')
-    cbar.set_ticks([1, 10, 20, 30, 40, 50])
+    labels = {'hcop': [0, 1, 2, 5, 10, 20]}
+    ticks = {'cii': [1, 10, 20, 30, 40, 50], '12co10': [1, 100], 'cs': [0, 10, 20], 'hcop': [np.arcsinh(x) for x in labels['hcop']]}
+    cbar.set_ticks(ticks[line_stub], labels=([str(x) for x in ticks[line_stub]] if line_stub not in labels else labels[line_stub]))
     # Titles
     fig.supxlabel("Right Ascension")
     fig.supylabel("Declination")
 
-    # 2023-03-15,20
-    fig.savefig("/home/ramsey/Pictures/2023-03-20/cii_channel_maps.png",
-        metadata=catalog.utils.create_png_metadata(title=f'cii {cii_fn_stub}',
+    # 2023-03-15,20, 04-01
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-01/{line_stub}" + ('' if line_contour_stub is None else f"_{line_contour_stub}") + "_channel_maps.png",
+        metadata=catalog.utils.create_png_metadata(title=f'{line_fn_short}'+('' if line_contour_stub is None else f" c: {line_contour_fn_short}, {str(list(clevels[line_contour_stub])).replace(' ', '')}"),
         file=__file__, func="paper_channel_maps"))
 
 def paper_spectra():
@@ -2628,4 +2693,4 @@ if __name__ == "__main__":
     # column_density_figure()
 
     # multi_panel_moment_images()
-    paper_spectra()
+    paper_channel_maps()
