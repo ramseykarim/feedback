@@ -23,6 +23,8 @@ from astropy.nddata import StdDevUncertainty
 import astropy.units as u
 from astropy.table import Table, QTable
 
+from matplotlib.lines import Line2D
+
 from copy import deepcopy
 
 data_dir = "/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt"
@@ -47,6 +49,13 @@ cubeIDs_pdrt = {
     'cii': 'CII_158',
     '12co10': 'CO_10', '12co32': 'CO_32', 'co65': 'CO_65', '13co10': '13CO_10', '13co32': '13CO_32',
     'oi': 'OI_63', 'ci': 'CI_609',
+}
+
+filename_gen = [] # fill this each time
+available_filenames = {
+    'p1a': (lambda line_stub: f"{line_stub}__pillar1_pointsofinterest_v3.txt"),
+    'misc': (lambda line_stub: f"{line_stub}__pillar123_pointsofinterest_v1.txt"),
+    'all': (lambda line_stub: f"{line_stub}__pillar123_pointsofinterest_v2.txt"),
 }
 
 """
@@ -111,8 +120,10 @@ def get_measurement_filename(line_stub):
     If I switch to a different set of tables (e.g. from P1a to the other pillars),
     I can just change that here
     """
-    # default_fn = os.path.join(data_dir, f"{line_stub}__pillar1_pointsofinterest_v3.txt")
-    default_fn = os.path.join(data_dir, f"{line_stub}__pillar123_pointsofinterest_v1.txt")
+    try:
+        default_fn = os.path.join(data_dir, filename_gen[0](line_stub))
+    except IndexError as e:
+        raise RuntimeError("You probably forgot to fill in filename_gen with an available_filenames value") from e
     if use_my_unit_conversions:
         # Use the tables which I already converted to cgs
         # This should be the most common behavior, since the conversions are fine
@@ -281,10 +292,10 @@ def collect_measurement_from_tables(line_name, reg_name=None):
         return_val = return_val * APEX_to_SOFIA_beam_area_ratio
 
     # Correct FIR for background of 0.14 +/- 0.02 (added this in November 22, 2022)
-    if 'FIR' in line_name:
-        fir_background_meas = Measurement(data=0.14, uncertainty=StdDevUncertainty(0.02), unit=(u.erg/(u.s * u.sr * u.cm**2)))
-        return_val = return_val - fir_background_meas
-        return_val.identifier('FIR') # the subtraction changes the id, so we have to reset it
+    # if 'FIR' in line_name:
+    #     fir_background_meas = Measurement(data=0.14, uncertainty=StdDevUncertainty(0.02), unit=(u.erg/(u.s * u.sr * u.cm**2)))
+    #     return_val = return_val - fir_background_meas
+    #     return_val.identifier('FIR') # the subtraction changes the id, so we have to reset it
 
     return return_val
 
@@ -368,7 +379,6 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
     # print(ms._supported_lines)
     # print(ms._supported_ratios)
     # return
-    load_all_user_models(ms)
     p = LineRatioFit(ms, measurements=meas_list)
     p.run()
 
@@ -387,16 +397,19 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
     Handle the plot setting; this is which type of plot we want
     chi squared, or overlay of either ratios, intensities, or both
     """
-    kwargs = {'figsize': (15, 10), 'loc': 'upper left', 'yaxis_unit': "Habing"}
+    textsize = 18
+    kwargs = {'figsize': (18, 10), 'loc': 'upper left', 'yaxis_unit': "Habing"}
     # chi squared only
     if plot_setting == 1:
         plot.reduced_chisq(cmap='gray_r',norm='log',label=True,colors='white',
-            legend=True,vmax=8E4,figsize=(15,10),yaxis_unit='Habing')
+            legend=False,vmax=8E4,figsize=kwargs['figsize'],yaxis_unit='Habing', aspect='auto')
     # includes ratios
     elif plot_setting%2 == 0:
         if plot_setting == 0:
             # yes intensities
             kwargs['measurements'] = plottable_intensities
+        # kwargs['assigned_colors'] = {k: 'Magenta' for k in ('OI_63/CII_158', 'CO_65/CO_10', 'CO_32/CO_10', 'CII_158/CO_65', 'CII_158/CO_32', 'CII_158/CO_10')}
+        kwargs['assigned_colors'] = {k: plot._CB_color_cycle[i] for i, k in enumerate(('OI_63/CII_158', 'CO_65/CO_10', 'CO_32/CO_10', 'CII_158/CO_65', 'CII_158/CO_32', 'CII_158/CO_10'))}
         plot.overlay_all_ratios(**kwargs)
     # intensities only
     elif plot_setting == 3:
@@ -408,22 +421,39 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
     g0_plot_params = {'Stars_G0': ('#1f77b4', 'bottom'), 'Herschel_G0': ('#ff7f0e', 'top')}
     for g0_name in g0_dict:
         color, va = g0_plot_params[g0_name]
-        plot._plt.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
-        plot._plt.text(15, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize='large', va=va)
+        plot.axis[0].axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
+        plot.axis[0].text(120, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$'), color=color, fontsize=textsize, va=va, ha='left')
 
 
     dens, dens_unc = p.density.value, p.density.uncertainty.array
     radfield_meas = utils.to(utils.habing_unit, p.radiation_field)
     radfield, radfield_unc = radfield_meas.value, radfield_meas.uncertainty.array
-    plot._plt.errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
+    plot.axis[0].errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
 
     # set x and y limits because we know what they should probably be
-    plot._plt.xlim([100, 1e6])
-    plot._plt.ylim([30, 3e4])
+    plot.axis[0].set_xlim([100, 1e6])
+    plot.axis[0].set_ylim([30, 3e4])
+
+    plot.axis[0].tick_params(labelsize=textsize)
+    plot.axis[0].xaxis.label.set(fontsize=textsize)
+    plot.axis[0].yaxis.label.set(fontsize=textsize)
+    """
+    alt:
+    hploto._plt.rcParams["xtick.major.size"] = 7
+    hploto._plt.rcParams["xtick.minor.size"] = 4
+    hploto._plt.rcParams["ytick.major.size"] = 7
+    hploto._plt.rcParams["ytick.minor.size"] = 4
+    hploto._plt.rcParams['font.size'] = 14
+    hploto._plt.rcParams['axes.linewidth'] =1.5
+    plot.overlay_all_ratios(yaxis_unit="Habing",figsize=(15,5),ncols=2,reset=True,index=1)
+    plot.overlay_all_ratios(yaxis_unit="Habing",figsize=(15,5),ncols=2,reset=False,index=2)
+    plot._plt.subplots_adjust(wspace=0)
+    legend=False and make my own
+    """
 
     # 2022-09-28, (27 ?), 29, 10-05,6,7,11,12,13,14,17, 11-22
-    # 2023-03-29
-    save_path = f"/home/ramsey/Pictures/2023-03-29/with_fewer_and_32/" # removed modelset name because we won't do anymore kosma-tau models
+    # 2023-03-29, 04-04,05,06
+    save_path = f"/home/ramsey/Pictures/2023-04-07" # removed modelset name because we won't do anymore kosma-tau models
     if not os.path.exists(save_path):
         print("Creating directory ", save_path)
         os.makedirs(save_path)
@@ -446,6 +476,129 @@ def make_spaghetti_plot(reg_name, plot_setting=0):
                 'Title': f'{reg_name} spaghetti plot'})
 
 
+def make_paper_spaghetti_plot():
+    """
+    April 7, 2023
+    Make a single figure, 8 panel spaghetti plot.
+    Use the original regions since the paper regions are sampled towards high H2 column regions, not PDRs
+    """
+    # list of region names
+    region_list = ['NE-thread', 'Western-Horn', 'P2', 'P3']
+    # ignore this list, it's just for file handling
+    filename_keys = ['p1a'] + ['misc']*3 # because of where the data are stored
+
+    # We know in advance that these ratios are possible
+    ratio_ids = ('OI_63/CII_158', 'CO_65/CO_10', 'CO_32/CO_10', 'CII_158/CO_65', 'CII_158/CO_32', 'CII_158/CO_10')
+    g0_plot_params = {'Stars_G0': ('#1f77b4', 'bottom'), 'Herschel_G0': ('#ff7f0e', 'top')}
+
+    # Set up persistent ModelSet
+    ms = ModelSet('wk2020', z=1)
+    # Save ratio table for legend labels later
+    ratio_table = ms.supported_ratios.copy()
+    # Set up variable for persistent ModelPlot
+    mp = None
+
+    textsize = 18
+    plot_kwargs = {'figsize': (20, 10), 'legend': False, 'yaxis_unit': 'Habing'}
+    grid_shape = (2, 4)
+
+    for i, reg_name in enumerate(region_list):
+        ########## This stuff looks confusing but it's to select the correct table filenames
+        # Specific to my scripts here, not general to pdrtpy
+        filename_gen.clear()
+        filename_gen.append(available_filenames[filename_keys[i]])
+        # meas_list is a list of single-value Measurements
+        meas_list = collect_all_measurements_for_region(reg_name)
+        # g0_dict is keyed with "Stars_G0" and "Herschel_G0" and stores G0 values wrapped in a second dictionary (for some good reason)
+        g0_dict = get_g0_values_at_locations(reg_name)
+        ########## Back to normal-looking stuff
+
+        # Remake the LineRatioFit and LineRatioPlot for each unique measurement set
+        p = LineRatioFit(ms, measurements=meas_list)
+        p.run()
+        plot = LineRatioPlot(p)
+
+        # Store the fit result for plotting a cross
+        dens, dens_unc = p.density.value, p.density.uncertainty.array
+        radfield_meas = utils.to(utils.habing_unit, p.radiation_field)
+        radfield, radfield_unc = radfield_meas.value, radfield_meas.uncertainty.array
+        print(f"Reduced chisq {reg_name}: {p.reduced_chisq(min=True):.4f}")
+
+        if 'assigned_colors' not in plot_kwargs:
+            plot_kwargs['assigned_colors'] = {k: plot._CB_color_cycle[i] for i, k in enumerate(('OI_63/CII_158', 'CO_65/CO_10', 'CO_32/CO_10', 'CII_158/CO_65', 'CII_158/CO_32', 'CII_158/CO_10'))}
+
+        # Here's the trick; the LineRatioPlot __init__ is pretty light, so we just swap back in the old ModelPlot instance if it exists
+        if mp is None:
+            # Save it for later; we're only using one
+            mp = plot._modelplot
+        else:
+            # Swap in the old one!
+            plot._modelplot = mp
+
+        # Add 1 to indices because they're 1 indexed in pdrtpy
+        plot.overlay_all_ratios(index=i+1, reset=(i==0), nrows=grid_shape[0], ncols=grid_shape[1], **plot_kwargs)
+        plot.reduced_chisq(index=i+1+grid_shape[1], reset=False, nrows=grid_shape[0], ncols=grid_shape[1], cmap='gray_r', norm='log', label=True, colors='white', legend=False, vmax=8e4, plot_cross=False, yaxis_unit=plot_kwargs['yaxis_unit'], aspect='auto')
+
+
+
+        # indices are 0 indexed in the plot.axis (1d) array
+        for plot_idx, ax in enumerate([plot.axis[x] for x in (i, i+grid_shape[1])]):
+            ax.set_xlim([200, 2e6])
+            ax.set_ylim([30, 3e4])
+            ax.xaxis.label.set(fontsize=textsize)
+            ax.yaxis.label.set(fontsize=textsize)
+
+            # Hide both x and y labels and use sup(x/y)label
+            ax.set_xlabel("")
+            ax.set_ylabel("")
+
+            if i > 0:
+                # Hide ticklabels on y axes that aren't first column
+                ax.tick_params(axis='y', labelleft=False)
+
+            # Increase textsize on x and y ticks
+            ax.tick_params(axis='y', labelsize=textsize)
+            ax.tick_params(axis='x', labelsize=textsize)
+
+            if plot_idx == 0:
+                # Hide x ticklabels on top row (overlay plots)
+                ax.tick_params(axis='x', labelbottom=False)
+                # Plot region names
+                ax.text(240, 2e4, reg_name.replace('-', ' ').replace("thread", "Thread"), color='k', fontsize=textsize-2, va='center', ha='left')
+                # Fold x ticks inwards on top row
+                ax.tick_params(axis='x', direction='in', which='both') # which=both means both major and minor ticks
+
+            # Plot G0 estimates on both overlay and chisq as horizontal lines
+            for g0_name in g0_dict:
+                color, va = g0_plot_params[g0_name]
+                ax.axhline(g0_dict[g0_name]['data'], linestyle='--', color=color)
+                if plot_idx == 0:
+                    # Only label the G0 horizontal on top row (overlay)
+                    ax.text(240, g0_dict[g0_name]['data'], g0_name.replace('_G0', ' $G_0$').replace('Herschel', 'FIR'), color=color, fontsize=textsize-2, va=va, ha='left')
+
+            # Plot the fit result as a cross on both plots
+            ax.errorbar(dens, radfield, xerr=dens_unc, yerr=radfield_unc, color='k')
+
+
+    plot.figure.supxlabel("n (cm$^{-3}$)", size=textsize)
+    plot.figure.supylabel("$G_0$ (Habing)", size=textsize)
+
+    legend_handles = [Line2D([0], [0], color=c, linewidth=3, linestyle='-') for c in plot._CB_color_cycle[:len(ratio_ids)]]
+    legend_labels = [str(ratio_table.loc['ratio label', x]['title']) for x in ratio_ids]
+    plot.figure.legend(legend_handles, legend_labels, loc='upper center', ncols=len(ratio_ids), fontsize=12)
+    plot._plt.subplots_adjust(top=0.95, wspace=0.05, hspace=0, bottom=0.08, left=0.06)
+
+    # 2023-04-07,10,11
+    save_path = f"/home/ramsey/Pictures/2023-04-11" # removed modelset name because we won't do anymore kosma-tau models
+    if not os.path.exists(save_path):
+        print("Creating directory ", save_path)
+        os.makedirs(save_path)
+    plot.savefig(os.path.join(save_path, "multipanel_overlay.png"),
+        metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_paper_spaghetti_plot',
+            'Title': 'multipanel spaghetti plot'})
+
+
+
 
 # line names
 # 'cii', 'co65CONV', 'FIR', '12co10CONV', '12co32', '13co32', '13co10CONV'
@@ -456,11 +609,22 @@ if __name__ == "__main__":
     #     for i in range(0, 4):
     #         make_spaghetti_plot(d+'-peak', plot_setting=i)
 
-    reg_name_list = ['Western-Horn', 'P2', 'P3']
-    # reg_name_list = ['NE-thread']
-    for reg_name in reg_name_list:
-        for i in [1, 2]:
-            make_spaghetti_plot(reg_name, plot_setting=i)
+    """
+    The pillar123_pointsofinterest_v2 regions look worse than v1.
+    I think the reason is that the v1 were sampled towards edges (PDRs) and v2 from the dense molecular peaks where CII and OI are weaker
+    I'm sticking with the v1s
+    """
+    make_paper_spaghetti_plot()
+
+    # reg_name_list = ['Western-Horn', 'P2', 'P3']; filename_gen.append(available_filenames['misc'])
+    # for reg_name in reg_name_list:
+    #     for i in [1, 2]: #[1, 2]:
+    #         make_spaghetti_plot(reg_name, plot_setting=i)
+    # filename_gen.pop()
+    # reg_name_list = ['NE-thread']; filename_gen.append(available_filenames['p1a'])
+    # for reg_name in reg_name_list:
+    #     for i in [1, 2]: #[1, 2]:
+    #         make_spaghetti_plot(reg_name, plot_setting=i)
 
     # r = 'broad-line'
     # for i in range(0, 4):

@@ -406,8 +406,7 @@ def simple_mom0(selected_region=0, selected_line=0):
     plt.savefig(f"/home/ramsey/Pictures/2021-08-16-work/{line_stub}_{region_name}.png", metadata={"Comment": f"{levels_stub} spaced contours; m16_deepdive.simple_mom0"})
 
 
-def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None,
-    convert_units=False):
+def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None, convert_units=False):
     """
     Created: Aug 16, 2021
     Creating the ASCII tables for PDRT
@@ -455,7 +454,6 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
     old diagnostic images) so I can let pdrtpy do the conversion (it knows how!)
     I will have to store the line frequency in the table in this case.
     """
-
     region_filenames = ["catalogs/pillar1_pointsofinterest_v3.reg", # The 8 classic P1a regions
         "catalogs/pillar123_pointsofinterest_v1.reg", # Several more around P1b, 2, 3, and Shelf
         ]
@@ -513,19 +511,45 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
         '13co10CONV-SW-thread': (24.5, 27), '12co32-E-peak': (None, 27.5), '12co32-W-peak': (None, 27.5), '12co32-SW-thread': (None, 27.5), '12co32-S-peak': (None, 27.5), '12co32-E-peak': (None, 27.5), '12co32-SE-thread': (None, 27.5), '12co32-NW-thread': (None, 27.5), '12co32-E-peak': (None, 27.5),
         '12co10CONV-Western-Horn': (27, None), '12co10CONV-Eastern-Horn': (27, None), '12co10CONV-Inter-horn': (27, None), '12co10CONV-Shared-Base-Mid': (None, 20), '12co10CONV-Shared-Base-W': (26, 18),
         '12co32-Eastern-Horn': (23, 27),
+
+        # positions for paper
+        # Horns
+        '12co10CONV-E-Horn': (27, None), '12co10CONV-W-Horn': (27, None),
+        '12co32-E-Horn': (23, 27), # 12co32 W-Horn is ok on its own
+        # P1a head
+        '12co10CONV-P1a-center': (27, None), '12co10CONV-P1a-edge': (27.5, 20),
+        '12co32-P1a-center': (None, 27.5), '12co32-P1a-edge': (None, 27.5),
+        # Threads
+        '12co32-P1a-E-thread': (None, 27.5), '12co32-P1a-W-thread': (None, 27.5),
+        '12co10CONV-P1a-E-thread': (27.5, 22.5), '12co10CONV-P1a-W-thread': (27, None)
+
     }
+
+    def check_if_region_is_southern(reg_name):
+        """
+        (coped from m16_pictures.paper_spectra, 2023-04-07)
+        Based on what I said in the table in my paper, check if I should use northern or southern background.
+        'south' if southern, 'north' if northern. Also 'north' for other strings, so be careful.
+        """
+        # Southern regions are Horns, Shared Base, and Shelf. All others are northern
+        if reg_name[-4:] == "Horn":
+            return 'south'
+        elif reg_name[:2] == 'Sh':
+            # Shared base and Shelf
+            return 'south'
+        else:
+            return 'north'
 
     result_list = []
     for line_stub in line_stub_list:
-        cube_fn = cube_utils.cubefilenames[line_stub]
-        cube = cps2.cutout_subcube(data_filename=cube_fn, length_scale_mult=None)
+        cube_obj = cube_utils.CubeData(line_stub).convert_to_K()
+        cube = cube_obj.data
         if line_stub in preset_search_bounds:
             cube = cube.spectral_slab(preset_search_bounds[line_stub][0]*kms, preset_search_bounds[line_stub][1]*kms)
         # # TODO: subtract CII background
         if 'cii' in line_stub:
             print(f"subtracting CII background ({line_stub})")
-            cii_bg_spectrum = cps2.get_cii_background()
-            cube = cube - cii_bg_spectrum[:, np.newaxis, np.newaxis]
+            bgs = {ns: cps2.get_cii_background(cii_cube=cube, select=ns) for ns in ('north', 'south')}
         channel_noise = cube_utils.onesigmas[line_stub]
         reg_coord_list = [tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1]) for reg in reg_list]
         for pix_coords, reg in zip(reg_coord_list, reg_list):
@@ -538,7 +562,9 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
                 spectrum = cube[(slice(None), *pix_coords)]
             except IndexError:
                 print("Shape", cube.shape[1:], "Pixel coord", pix_coords, "; pixel out of bounds")
-                spectrum = np.full(cube.shape[0], np.nan) * (u.K * kms)
+                spectrum = np.full(cube.shape[0], np.nan) * u.K
+            if line_stub == 'cii':
+                spectrum = spectrum - bgs[check_if_region_is_southern(reg_name)]
             rest_freq = cube.header['RESTFRQ'] * u.Hz
 
             # Check if pixel is valid (whether it's in the observed area or not)
@@ -637,7 +663,7 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
         names.append('rest_freq')
     tab = QTable(list(zip(*result_list)), names=names)
     tab.write(f"/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/pdrt/{unique_run_identifier}.txt", format='ipac',
-        overwrite=False)
+        overwrite=True)
 
 
 def prepare_pdrt_tables_fir(reg_filename=None):
@@ -657,7 +683,8 @@ def prepare_pdrt_tables_fir(reg_filename=None):
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename))
 
     # FIR filename, old one is "herschel/m16-I_FIR.fits" from 2021, new one was made Oct 2022
-    fir_fn_short = "herschel/M16_I_FIR_from70-160.fits" # better resolution, like 13'' instead of 18''
+    # fir_fn_short = "herschel/M16_I_FIR_from70-160.fits" # better resolution, like 13'' instead of 18''
+    fir_fn_short = "herschel/M16_I_FIR_from70-160_fluxbgsub.fits" # same as above but background already removed
     fir_img, fir_hdr = fits.getdata(catalog.utils.search_for_file(fir_fn_short), header=True)
     fir_wcs = WCS(fir_hdr)
     reg_coord_list = [tuple(round(x) for x in reg.to_pixel(fir_wcs).center.xy[::-1]) for reg in reg_list]
@@ -4782,7 +4809,12 @@ if __name__ == "__main__":
     ...
     # calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)
 
-    table_sample_peak_brightness_temperatures()
+    # for line_stub in ['12co32', '12co10CONV']:
+    #     prepare_pdrt_tables(line_stub, reg_filename="catalogs/pillar123_pointsofinterest_v2.reg", convert_units=True)
+    prepare_pdrt_tables_fir(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
+    # prepare_pdrt_tables_g0(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
+
+    # table_sample_peak_brightness_temperatures()
     # table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
