@@ -2654,13 +2654,13 @@ def paper_spectra():
             ax.tick_params(axis='y', labelleft=False)
         if reg_list[reg_idx].meta['label'].lower()[:2] == "p3":
             ax.legend(loc='upper right', fontsize=13)
-        ax.set_xlim((15, 35))
+        ax.set_xlim((15, 34))
         if set_number == 1:
             ax.set_ylim((-5, 45))
         elif set_number == 2:
             ax.set_ylim((-3, 23))
 
-        ax.text(0.06, 0.94, reg_list[reg_idx].meta['label'], transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
+        ax.text(0.06, 0.94, reg_list[reg_idx].meta['label'].replace("Shelf", "Ridge"), transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(20, 29):
             # Some light velocity gridlines around the important velocities
             ax.axvline(v, color='k', alpha=0.07)
@@ -2673,10 +2673,216 @@ def paper_spectra():
 
     conv_text = "using " + ("conv" if using_conv else "native") + " resolutions"
     conv_stub = "" if using_conv else "_unconv"
-    # 2023-03-28,31
-    fig.savefig(f"/home/ramsey/Pictures/2023-03-31/sample_spectra{conv_stub}{set_stub}.png",
+    # 2023-03-28,31, 04-17
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-17/sample_spectra{conv_stub}{set_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f"{conv_text}, points: {reg_filename_short}",
         file=__file__, func="paper_spectra"))
+
+def paper_oi_cii_spectra():
+    """
+    April 18, 2023
+    Highlighting OI and CII spectra (and a molecule, maybe a 13CO or CS)
+
+    The backbone of this code is copied from m16_pictures.paper_spectra (above)
+    """
+    reg_filename_short = "catalogs/pillar123_oi_spectrum_samples_v2.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+
+    short_names = ['cii', 'oi', 'co65', 'cs']
+    using_conv = True
+    if using_conv:
+        short_names = [(x if x in ('cii', '12co32', '13co32') else x+"CONV") for x in short_names]
+
+    def check_if_region_is_southern(reg_name):
+        """
+        Options are P1a, P1b, and P2. Only "southern" source is P1b
+        """
+        if reg_name == 'P1b':
+            return 'south'
+        else:
+            return 'north'
+
+    fig = plt.figure(figsize=(11, 10))
+    grid_shape = (2, 2)
+    gs = fig.add_gridspec(*grid_shape, left=0.1, right=0.98, top=0.9, bottom=0.06, wspace=0.1, hspace=0.12)
+    # Axes list holds the 3 spectrum axes, not the image axis
+    axes = []
+    # Iterate thru reg list and make Axes
+    for reg_idx in range(len(reg_list)):
+        ax = fig.add_subplot(gs[np.unravel_index(reg_idx+1, grid_shape)])
+        axes.append(ax)
+
+    img_ax = None # placeholder for later
+    img_wcs = None # placeholder
+    cii_cube, oi_cube = None, None
+    vel_lims = (20*kms, 27*kms)
+    textsize=15
+
+
+    # Iterate thru cubes, and then regs within each iteration
+    for line_idx, line_stub in enumerate(short_names):
+        cube = cube_utils.CubeData(line_stub)
+        cube.convert_to_K()
+        cube.data = cube.data.with_spectral_unit(kms)
+        if line_stub == 'cii':
+            bgs = {ns: cps2.get_cii_background(cii_cube=cube.data, select=ns) for ns in ('north', 'south')}
+        for reg_idx, reg in enumerate(reg_list):
+            pixreg = reg.to_pixel(cube.wcs_flat)
+            j, i = [int(round(c)) for c in pixreg.center.xy]
+            spectrum = cube.data[:, i, j]
+            if line_stub == 'cii':
+                # Background
+                unsub_spectrum = spectrum
+                spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['label'])]
+            line_name = cube_utils.cubenames[line_stub.replace("CONV", "")]
+            p = axes[reg_idx].plot(cube.data.spectral_axis.to_value(), spectrum.to_value(), label=f"{line_name}")
+            if line_stub == 'cii':
+                # plot unsubtracted
+                axes[reg_idx].plot(cube.data.spectral_axis.to_value(), unsub_spectrum.to_value(), linestyle=':', color=p[0].get_c(), alpha=0.6)
+                # Also plot the name of the region (only needs to be done once per region)
+                axes[reg_idx].text(0.1, 0.9, reg.meta['label'], transform=axes[reg_idx].transAxes, fontsize=textsize, color='k', ha='left', va='center')
+        # Done with reg loop
+        if line_stub == 'cii':
+            # clear the bgs dict, don't need it hanging around
+            del bgs
+            # save this cube
+            cii_cube = cube.data
+        if line_stub[:2] == 'oi':
+            # save this wcs and cube
+            img_wcs = cube.wcs_flat
+            oi_cube = cube.data
+
+
+    # Use OI coords to make axis
+    img_gs = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs[np.unravel_index(0, grid_shape)], width_ratios=[10, 1])
+    img_ax = fig.add_subplot(img_gs[0, 0], projection=img_wcs)
+    # reproject and plot moment image of CII
+    mom0 = cii_cube.spectral_slab(*vel_lims).moment0()
+    img_reproj = reproject_interp((mom0.to_value(), mom0.wcs), img_wcs, shape_out=oi_cube.shape[1:], return_footprint=False)
+    im = img_ax.imshow(img_reproj, origin='lower', vmin=0, cmap='magma')
+    # now make OI moment image and contour it
+    mom0 = oi_cube.spectral_slab(*vel_lims).moment0()
+    contour = img_ax.contour(mom0.to_value())
+    cbar_ax_1 = img_ax.inset_axes([1, 0, 0.05, 1])
+    cbar_ax_2 = img_ax.inset_axes([0, 1, 1, 0.05])
+    cbar_1 = fig.colorbar(im, cax=cbar_ax_1)
+    cbar_1.set_label(f"{cube_utils.cubenames['cii']}  ({(u.K * kms).to_string('latex_inline')})", size=textsize-6)
+    cbar_2 = fig.colorbar(contour, cax=cbar_ax_2, orientation='horizontal')
+    cbar_ax_2.xaxis.set_ticks_position('top')
+    cbar_2.set_label(f"{cube_utils.cubenames['oi']}  ({(u.K * kms).to_string('latex_inline')})", size=textsize-6, labelpad=-50)
+    print(contour.levels)
+    img_ax.text(0.04, 0.92, make_vel_stub(vel_lims), transform=img_ax.transAxes, fontsize=textsize-4, color="white", ha='left', va='center')
+
+
+    beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
+    beam_patch = cii_cube.beam.ellipse_to_plot(*(img_ax.transAxes + img_ax.transData.inverted()).transform([0.91, 0.075]), misc_utils.get_pixel_scale(img_wcs))
+    beam_patch.set(**beam_patch_kwargs)
+    img_ax.add_artist(beam_patch)
+
+    # OI footprint
+    oi_fp = np.isfinite(mom0.to_value()).astype(int)
+    img_ax.contour(oi_fp, levels=[0.5], colors='SlateGray', alpha=0.8, linewidths=1)
+
+    # img coords
+    img_ax.coords[1].set_ticklabel(rotation=0, rotation_mode='default', ha='center', va='center', fontsize=textsize-6, pad=0)
+    img_ax.coords[0].set_ticklabel(fontsize=textsize-6)
+    img_ax.set_xlabel("Right Ascension")
+    img_ax.set_ylabel("Declination", labelpad=0)
+
+    # Plot one legend
+    axes[0].legend()
+    # connection points on spectrum axes
+    connection_points = [(0, 0.8), (0.23, 1), (0, 1)]
+    connection_color = 'SlateGray'
+
+    # Plot formatting for spectrum axes
+    for ax_idx, ax in enumerate(axes):
+        ss = ax.get_subplotspec()
+        ax.xaxis.set_ticks_position('both')
+        ax.yaxis.set_ticks_position('both')
+        ax.xaxis.set_tick_params(direction='in', which='both')
+        ax.yaxis.set_tick_params(direction='in', which='both')
+        if ss.is_last_row():
+            ax.set_xlabel(f"Velocity ({kms.to_string('latex_inline')})")
+        else:
+            ax.set_xlabel(" ")
+        if ss.is_first_col():
+            ax.set_ylabel(f"Intensity ({u.K.to_string('latex_inline')})")
+        else:
+            ax.set_ylabel(" ")
+        ax.set_xlim((15, 34))
+        ax.set_ylim((-5, 45))
+        for v in range(20, 28):
+            ax.axvline(v, color='k', alpha=0.07)
+        ax.axhline(0, color='k', alpha=0.1)
+        # plot regions
+        pixreg = reg_list[ax_idx].to_pixel(img_wcs)
+        x, y = pixreg.center.xy
+        fig.add_artist(mpatches.ConnectionPatch(xyA=(x, y), coordsA=img_ax.transData, xyB=connection_points[ax_idx], coordsB=ax.transAxes, color=connection_color, linewidth=2))
+        img_ax.plot([x], [y], linestyle='None', marker='o', markersize=6, mfc=connection_color, mec='k')
+
+
+    conv_stub = '' if using_conv else '_unconv'
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-18/cii_oi_spectra{conv_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f'{reg_filename_short}',
+        file=__file__, func="paper_oi_cii_spectra"))
+
+def paper_cii_mol_overlay():
+    """
+    April 18, 2023
+    Overlay a molecule over CII to show the spatial shift
+    """
+
+
+    # Reference image
+    ref_img, ref_hdr = fits.getdata(catalog.utils.search_for_file("jwst/MAST_2022-10-26T1800/JWST/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits"), header=True)
+    ref_wcs = WCS(ref_hdr)
+    stretch = np.arcsinh
+    vlims = (1, 100)
+    img_ticks = [1, 2, 5, 10, 25, 50, 100]
+
+    # Cube config
+    vel_lims = (20*kms, 27*kms)
+
+    # CII
+    cii_cube = cube_utils.CubeData('cii').data
+    cii_mom0 = cii_cube.with_spectral_unit(kms).spectral_slab(*vel_lims).moment0()
+    cii_img = reproject_interp((cii_mom0.to_value(), cii_mom0.wcs), ref_hdr, return_footprint=False)
+    cii_levels = np.arange(30, 250, 30)
+
+    # Molecule
+    # mol_stub = 'cs'; mol_levels = np.arange(1, 15, 2)
+    # mol_stub = 'co65'; mol_levels = np.arange(10, 71, 10) ## 13co65 also works with these levels
+    mol_stub = 'hcop'; mol_levels = np.arange(2, 25, 3)
+    mol_cube = cube_utils.CubeData(mol_stub).data
+    mol_mom0 = mol_cube.with_spectral_unit(kms).spectral_slab(*vel_lims).moment0()
+    ########### Messing around with CO(6-5) header to investigate the offset. It's still there... but doesn't seem to respond to a simple transform
+    # mol_wcs = mol_mom0.wcs
+    # mol_hdr = mol_wcs.to_header()
+    # # mol_hdr['CDELT1'] = mol_hdr['CDELT1'] * .95
+    # # mol_hdr['CDELT2'] = mol_hdr['CDELT2'] * .95
+    # # mol_hdr['CRPIX1'] = mol_hdr['CRPIX1'] - 1
+    # # mol_hdr['CRPIX2'] = mol_hdr['CRPIX2'] + 1
+    # mol_wcs = WCS(mol_hdr)
+    mol_img = reproject_interp((mol_mom0.to_value(), mol_mom0.wcs), ref_hdr, return_footprint=False)
+    del cii_cube, cii_mom0, mol_cube, mol_mom0 # clean up
+
+    # Figure
+    fig = plt.figure(figsize=(15, 18))
+    ax = plt.subplot(111, projection=ref_wcs)
+
+    # Plot
+    im = ax.imshow(stretch(ref_img), origin='lower', vmin=stretch(vlims[0]), vmax=stretch(vlims[1]), cmap='cividis')
+    cs1 = ax.contour(mol_img, colors='Cyan', levels=mol_levels, linewidths=1.2)
+    print(cs1.levels)
+    cs2 = ax.contour(cii_img, colors='k', levels=cii_levels, linewidths=3)
+    print(cs2.levels)
+
+    # Save
+    # 2023-04-18
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-18/cii_{mol_stub}_overlay.png",
+        metadata=catalog.utils.create_png_metadata(title=f'cii and {mol_stub}',
+        file=__file__, func="paper_cii_mol_overlay"))
 
 
 if __name__ == "__main__":
@@ -2693,4 +2899,4 @@ if __name__ == "__main__":
     # column_density_figure()
 
     # multi_panel_moment_images()
-    paper_channel_maps()
+    paper_cii_mol_overlay()

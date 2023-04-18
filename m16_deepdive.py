@@ -4665,7 +4665,7 @@ def get_samples_at_locations(img, wcs_obj):
     if img == 'coords':
         for reg in reg_list:
             print(reg.center.frame)
-            return_dict[reg.meta['label']] = reg.center.to_string(style='hmsdms')
+            return_dict[reg.meta['label']] = reg.center.transform_to('icrs').to_string(style='hmsdms')
     else:
         for reg in reg_list:
             coords = tuple(round(x) for x in reg.to_pixel(wcs_obj).center.xy[::-1]) # xy[::-1] = ij
@@ -4716,8 +4716,8 @@ def table_sample_peak_brightness_temperatures():
     df = df[['Coordinates'] + [x for x in df.columns if x!='Coordinates']]
     df.loc['T_RMS'] = [''] + uncertainty_list
 
-    # 2023-02-09, 03-28,29
-    save_path = "/home/ramsey/Pictures/2023-03-31/max_brightness_temperatures"
+    # 2023-02-09, 03-28,29,31, 04-12
+    save_path = "/home/ramsey/Pictures/2023-04-12/max_brightness_temperatures"
     df.to_csv(save_path+".csv")
     table_as_latex = df.to_latex().replace('nan K', '')
     with open(save_path+".txt", 'w') as f:
@@ -4811,10 +4811,10 @@ if __name__ == "__main__":
 
     # for line_stub in ['12co32', '12co10CONV']:
     #     prepare_pdrt_tables(line_stub, reg_filename="catalogs/pillar123_pointsofinterest_v2.reg", convert_units=True)
-    prepare_pdrt_tables_fir(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
+    # prepare_pdrt_tables_fir(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
     # prepare_pdrt_tables_g0(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
 
-    # table_sample_peak_brightness_temperatures()
+    table_sample_peak_brightness_temperatures()
     # table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
