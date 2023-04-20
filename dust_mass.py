@@ -786,7 +786,7 @@ def get_tau_and_NH_at_locations(use_background=False, plot_anything=False):
         # Convert to pixel region from sky region
         pixreg = reg.to_pixel(tau160_w)
         # Get region name
-        reg_name = reg.meta['label']
+        reg_name = reg.meta['text']
         point_labels.append(reg_name)
         # xy is ji
         j, i = tuple(int(round(x)) for x in pixreg.center.xy)

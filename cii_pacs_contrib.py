@@ -69,7 +69,7 @@ plt.xlabel(f"Velocity ({str(u.km/u.s)})")
 plt.ylabel(f"[CII] brightness ({u.MJy/u.sr})")
 
 reg_path = f"{catalog.utils.ancillary_data_path}catalogs/Ramsey/cii_spectrum_regions.reg"
-cii_regs = {x.meta['label']: x for x in regions.read_ds9(reg_path)}
+cii_regs = {x.meta['text']: x for x in regions.read_ds9(reg_path)}
 ax1_artists, ax1_labels = [], []
 ax3_artists, ax3_labels = [], []
 

@@ -61,7 +61,7 @@ def plot_pv(reg_index):
     path_list = pvextractor.paths_from_regfile(region_info_dict['filename'])
     reg_list = regions.read_ds9(region_info_dict['filename'])
     # print(len(reg_list))
-    # print([x.meta['label'] for x in reg_list])
+    # print([x.meta['text'] for x in reg_list])
     # return
     subcube = cps2.cutout_subcube(data_filename=data_filename, reg_filename=region_info_dict['filename']).spectral_slab(*(x*u.km/u.s for x in region_info_dict['vlims']))
 
@@ -108,7 +108,7 @@ def plot_pv(reg_index):
         im = ax_pv.imshow(sl.data, origin='lower', aspect=(sl.data.shape[1]/sl.data.shape[0]), vmin=sl_lo, vmax=sl_hi)
         # fig_pv.colorbar(im, ax=ax_pv)
         ax_pv.coords[1].set_format_unit(u.km/u.s)
-        ax_pv.set_title(reg.meta['label'])
+        ax_pv.set_title(reg.meta['text'])
 
         reg_pix = reg.to_pixel(reference_image.wcs)
         reg_pix.visual.update(reg.visual)

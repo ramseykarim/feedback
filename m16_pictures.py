@@ -1579,7 +1579,7 @@ def column_density_figure():
     I will try interpolating-nearest to keep the pixelization of the lower-resolution maps
     """
     filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm8_ff1.0_with_uncertainty_v2.fits",
-        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty_v3.fits",
         'dust': "herschel/coldens_70-160_sampled_1000.fits",
     }
     column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens_all', 'dust': 'Hcoldens_best'}
@@ -1654,10 +1654,11 @@ def column_density_figure():
     for i, box_reg_filenames in enumerate(["catalogs/mass_boxes_v2.reg", "catalogs/p123_boxes_head_body_withlabels_v3.reg"]):
         reg_list = regions.Regions.read(catalog.utils.search_for_file(box_reg_filenames))
         for j, reg in enumerate(reg_list):
-            if 'noise' in reg.meta['label']:
+            ############# reg.meta['text'] has been retired between regions0.5 and regions0.7!! wow! it's regions.meta['text'] now
+            if 'noise' in reg.meta['text']:
                 continue
-            box_artist = reg.to_pixel(ref_wcs).as_artist(ec=chosen_colors[i], fill=False)
-            ax.add_artist(box_artist)
+            box_patch = reg.to_pixel(ref_wcs).as_artist(ec=chosen_colors[i])
+            ax.add_patch(box_patch)
 
     """ Ticks, labels, etc """
     for ax in axes:
@@ -1676,10 +1677,11 @@ def column_density_figure():
     # Titles
     fig.supxlabel("Right Ascension")
     fig.supylabel("Declination")
-    # 2023-03-21,22
-    fig.savefig("/home/ramsey/Pictures/2023-03-22/column_density_figure.png",
-        metadata=catalog.utils.create_png_metadata(title='column figure',
-                file=__file__, func='column_density_figure'))
+    # 2023-03-21,22, 04-19
+    plt.show()
+    # fig.savefig("/home/ramsey/Pictures/2023-04-19/column_density_figure.png",
+    #     metadata=catalog.utils.create_png_metadata(title='column figure',
+    #             file=__file__, func='column_density_figure'))
 
 
 def multi_panel_moment_images():
@@ -2456,8 +2458,8 @@ def paper_channel_maps():
         gain_map, gain_contour_map = None, None
 
     # Figure and Gridspec
-    grid_shape = (3, 6) if line_stub == 'cii' else (2, 6)
-    figsize = {'cii': (13.75, 8), 'hcop': (16, 5)}
+    grid_shape = (3, 6) if line_stub == 'cii' else (3, 4)
+    figsize = {'cii': (13.75, 8), 'hcop': (16, 11)}
     fig = plt.figure(figsize=figsize[line_stub])
     # Messed up gridspec setup so I can get a big colorbar on the side
     if line_stub == 'cii':
@@ -2465,7 +2467,7 @@ def paper_channel_maps():
         mega_gridspec = fig.add_gridspec(right=0.85, left=0.1, top=0.98, bottom=0.1)
     else:
         # more square
-        mega_gridspec = fig.add_gridspec(right=0.9, left=0.07, top=0.98, bottom=0.09)
+        mega_gridspec = fig.add_gridspec(right=0.9, left=0.06, top=0.98, bottom=0.06)
     mega_axis = mega_gridspec.subplots()
     mega_axis.set_axis_off() # Hide this axis but use it as a frame for the colorbar
     gs = mega_gridspec[0,0].subgridspec(*grid_shape, hspace=0, wspace=0)
@@ -2482,9 +2484,9 @@ def paper_channel_maps():
     text_x = 0.06 if line_stub == 'cii' else 0.5
     ha = 'left' if line_stub == 'cii' else 'center'
     text_y = 0.94
-    default_text_kwargs = dict(fontsize=12, color=marcs_colors[1], ha=ha, va='center')
-    tick_labelsize = 9
-    tick_labelrotation = 45
+    default_text_kwargs = dict(fontsize=14, color=marcs_colors[1], ha=ha, va='center')
+    tick_labelsize = 14
+    tick_labelrotation = 15
     # Colors
     cmap = 'plasma'
     # Vlims
@@ -2493,7 +2495,7 @@ def paper_channel_maps():
     }
     stretch = {'hcop': np.arcsinh}
     clevels = {
-        'cs': np.arange(0.7, 35, 4),
+        'cs': np.arange(0.7, 14, 4),
     }
 
     for channel_idx in range(first_channel_idx, last_channel_idx+1):
@@ -2504,11 +2506,14 @@ def paper_channel_maps():
         ax = get_axis(channel_idx)
         ss = ax.get_subplotspec()
         # Formatting
-        ax.tick_params(axis='both', direction='in')
+        # if not ss.is_first_col():
+        #     ax.tick_params(axis='y', direction='in')
+        # if not ss.is_last_row():
+        #     ax.tick_params(axis='x', direction='in')
         ax.set_xlabel(" ")
         ax.set_ylabel(" ")
         if ss.is_last_row() and ss.is_first_col():
-            ax.coords[0].set_ticklabel(rotation=30, rotation_mode='anchor', pad=13, fontsize=tick_labelsize, ha='right', va='top')
+            ax.coords[0].set_ticklabel(rotation=tick_labelrotation, rotation_mode='anchor', pad=13, fontsize=tick_labelsize, ha='right', va='top')
             ax.coords[1].set_ticklabel(fontsize=tick_labelsize)
         else:
             ax.tick_params(axis='x', labelbottom=False)
@@ -2530,11 +2535,16 @@ def paper_channel_maps():
 
         if line_contour_stub is not None:
             contour_data = line_contour_cube[channel_idx].to_value()
-            ax.contour(contour_data, levels=clevels[line_contour_stub], colors='cyan', linewidths=0.7)
+            print("CONTOUR DATA", [f(contour_data) for f in (np.min, np.mean, np.median, np.max)])
+            contour_color = 'k'
+            gain_contour_color = 'white'
+            contour_color_stub = f"{contour_color}-gain{gain_contour_color}"
+            contours = ax.contour(contour_data, levels=clevels[line_contour_stub], colors=[gain_contour_color] + [contour_color]*(len(clevels[line_contour_stub])-1), linewidths=1)
             patch = line_contour_cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.8, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
             patch.set(alpha=0.9, facecolor='white', edgecolor='grey')
             ax.add_artist(patch)
-            ax.contour(gain_contour_map, levels=[0.5], linewidths=1, colors='cyan', alpha=0.8, linestyles='--')
+            # (contours.cmap(contours.norm(clevels[line_contour_stub][0])),) ## useful line for grabbing a color from a cmap
+            ax.contour(gain_contour_map, levels=[0.5], linewidths=1, colors=gain_contour_color, alpha=0.8, linestyles=':')
 
 
     # Colorbar
@@ -2547,8 +2557,8 @@ def paper_channel_maps():
     fig.supxlabel("Right Ascension")
     fig.supylabel("Declination")
 
-    # 2023-03-15,20, 04-01
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-01/{line_stub}" + ('' if line_contour_stub is None else f"_{line_contour_stub}") + "_channel_maps.png",
+    # 2023-03-15,20, 04-01,19
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/{line_stub}" + ('' if line_contour_stub is None else f"_{line_contour_stub}") + f"_channel_maps_{contour_color_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f'{line_fn_short}'+('' if line_contour_stub is None else f" c: {line_contour_fn_short}, {str(list(clevels[line_contour_stub])).replace(' ', '')}"),
         file=__file__, func="paper_channel_maps"))
 
@@ -2626,7 +2636,7 @@ def paper_spectra():
             if line_stub == 'cii':
                 # Subtract CII BG spectrum and save the unsubtracted spectrum
                 unsub_spectrum = spectrum
-                spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['label'])]
+                spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['text'])]
             multiplier_stub = '' if get_multiplier(line_stub) == 1 else f' $\\times${get_multiplier(line_stub)}'
             line_name = cube_utils.cubenames[line_stub.replace("CONV", "")]
             p = axes[reg_idx].plot(cube.data.spectral_axis.to_value(), spectrum.to_value()*get_multiplier(line_stub), label=f"{line_name}{multiplier_stub}")
@@ -2652,7 +2662,7 @@ def paper_spectra():
         if not ss.is_first_col():
             # hide ticklabels except left column
             ax.tick_params(axis='y', labelleft=False)
-        if reg_list[reg_idx].meta['label'].lower()[:2] == "p3":
+        if reg_list[reg_idx].meta['text'].lower()[:2] == "p3":
             ax.legend(loc='upper right', fontsize=13)
         ax.set_xlim((15, 34))
         if set_number == 1:
@@ -2660,13 +2670,13 @@ def paper_spectra():
         elif set_number == 2:
             ax.set_ylim((-3, 23))
 
-        ax.text(0.06, 0.94, reg_list[reg_idx].meta['label'].replace("Shelf", "Ridge"), transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
+        ax.text(0.06, 0.94, reg_list[reg_idx].meta['text'].replace("Shelf", "Ridge"), transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(20, 29):
             # Some light velocity gridlines around the important velocities
             ax.axvline(v, color='k', alpha=0.07)
         ax.axhline(0, color='k', alpha=0.1)
         # Use this line to verify background subtractions done correctly
-        # print(f"{reg_list[reg_idx].meta['label']} {check_if_region_is_southern(reg_list[reg_idx].meta['label'])}")
+        # print(f"{reg_list[reg_idx].meta['text']} {check_if_region_is_southern(reg_list[reg_idx].meta['text'])}")
 
     fig.supxlabel(f"Velocity ({kms.to_string('latex_inline')})")
     fig.supylabel(f"Line intensity ({u.K.to_string('latex_inline')})")
@@ -2733,14 +2743,14 @@ def paper_oi_cii_spectra():
             if line_stub == 'cii':
                 # Background
                 unsub_spectrum = spectrum
-                spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['label'])]
+                spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['text'])]
             line_name = cube_utils.cubenames[line_stub.replace("CONV", "")]
             p = axes[reg_idx].plot(cube.data.spectral_axis.to_value(), spectrum.to_value(), label=f"{line_name}")
             if line_stub == 'cii':
                 # plot unsubtracted
                 axes[reg_idx].plot(cube.data.spectral_axis.to_value(), unsub_spectrum.to_value(), linestyle=':', color=p[0].get_c(), alpha=0.6)
                 # Also plot the name of the region (only needs to be done once per region)
-                axes[reg_idx].text(0.1, 0.9, reg.meta['label'], transform=axes[reg_idx].transAxes, fontsize=textsize, color='k', ha='left', va='center')
+                axes[reg_idx].text(0.1, 0.9, reg.meta['text'], transform=axes[reg_idx].transAxes, fontsize=textsize, color='k', ha='left', va='center')
         # Done with reg loop
         if line_stub == 'cii':
             # clear the bgs dict, don't need it hanging around
@@ -2759,17 +2769,20 @@ def paper_oi_cii_spectra():
     # reproject and plot moment image of CII
     mom0 = cii_cube.spectral_slab(*vel_lims).moment0()
     img_reproj = reproject_interp((mom0.to_value(), mom0.wcs), img_wcs, shape_out=oi_cube.shape[1:], return_footprint=False)
-    im = img_ax.imshow(img_reproj, origin='lower', vmin=0, cmap='magma')
+    img_cmap = 'magma'
+    im = img_ax.imshow(img_reproj, origin='lower', vmin=0, cmap=img_cmap)
     # now make OI moment image and contour it
     mom0 = oi_cube.spectral_slab(*vel_lims).moment0()
-    contour = img_ax.contour(mom0.to_value())
+    contour_color = 'SkyBlue'
+    contour = img_ax.contour(mom0.to_value(), colors=contour_color, levels=np.arange(0, 37, 6))
+    img_ax.clabel(contour, inline=True, fontsize=7)
     cbar_ax_1 = img_ax.inset_axes([1, 0, 0.05, 1])
-    cbar_ax_2 = img_ax.inset_axes([0, 1, 1, 0.05])
     cbar_1 = fig.colorbar(im, cax=cbar_ax_1)
     cbar_1.set_label(f"{cube_utils.cubenames['cii']}  ({(u.K * kms).to_string('latex_inline')})", size=textsize-6)
-    cbar_2 = fig.colorbar(contour, cax=cbar_ax_2, orientation='horizontal')
-    cbar_ax_2.xaxis.set_ticks_position('top')
-    cbar_2.set_label(f"{cube_utils.cubenames['oi']}  ({(u.K * kms).to_string('latex_inline')})", size=textsize-6, labelpad=-50)
+    # cbar_ax_2 = img_ax.inset_axes([0, 1, 1, 0.05])
+    # cbar_2 = fig.colorbar(contour, cax=cbar_ax_2, orientation='horizontal')
+    # cbar_ax_2.xaxis.set_ticks_position('top')
+    # cbar_2.set_label(f"{cube_utils.cubenames['oi']}  ({(u.K * kms).to_string('latex_inline')})", size=textsize-6, labelpad=-50)
     print(contour.levels)
     img_ax.text(0.04, 0.92, make_vel_stub(vel_lims), transform=img_ax.transAxes, fontsize=textsize-4, color="white", ha='left', va='center')
 
@@ -2781,7 +2794,7 @@ def paper_oi_cii_spectra():
 
     # OI footprint
     oi_fp = np.isfinite(mom0.to_value()).astype(int)
-    img_ax.contour(oi_fp, levels=[0.5], colors='SlateGray', alpha=0.8, linewidths=1)
+    img_ax.contour(oi_fp, levels=[0.5], colors='SlateGray', alpha=0.8, linewidths=1, linestyles='--')
 
     # img coords
     img_ax.coords[1].set_ticklabel(rotation=0, rotation_mode='default', ha='center', va='center', fontsize=textsize-6, pad=0)
@@ -2823,7 +2836,8 @@ def paper_oi_cii_spectra():
 
 
     conv_stub = '' if using_conv else '_unconv'
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-18/cii_oi_spectra{conv_stub}.png",
+    # 2023-04-18,19
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/cii_oi_spectra{conv_stub}_{contour_color}_{img_cmap}_contourlabels.png",
         metadata=catalog.utils.create_png_metadata(title=f'{reg_filename_short}',
         file=__file__, func="paper_oi_cii_spectra"))
 
@@ -2851,9 +2865,9 @@ def paper_cii_mol_overlay():
     cii_levels = np.arange(30, 250, 30)
 
     # Molecule
-    # mol_stub = 'cs'; mol_levels = np.arange(1, 15, 2)
+    mol_stub = 'cs'; mol_levels = np.arange(0.5, 15, 2)
     # mol_stub = 'co65'; mol_levels = np.arange(10, 71, 10) ## 13co65 also works with these levels
-    mol_stub = 'hcop'; mol_levels = np.arange(2, 25, 3)
+    # mol_stub = 'hcop'; mol_levels = np.arange(2, 25, 3)
     mol_cube = cube_utils.CubeData(mol_stub).data
     mol_mom0 = mol_cube.with_spectral_unit(kms).spectral_slab(*vel_lims).moment0()
     ########### Messing around with CO(6-5) header to investigate the offset. It's still there... but doesn't seem to respond to a simple transform
@@ -2872,15 +2886,18 @@ def paper_cii_mol_overlay():
     ax = plt.subplot(111, projection=ref_wcs)
 
     # Plot
+    mol_color = 'white'
+    linewidths = (2, 3); linewidth_stub = ''
+    # linewidths = (3, 4); linewidth_stub = '_thicklines'
     im = ax.imshow(stretch(ref_img), origin='lower', vmin=stretch(vlims[0]), vmax=stretch(vlims[1]), cmap='cividis')
-    cs1 = ax.contour(mol_img, colors='Cyan', levels=mol_levels, linewidths=1.2)
+    cs1 = ax.contour(mol_img, colors=mol_color, levels=mol_levels, linewidths=linewidths[0])
     print(cs1.levels)
-    cs2 = ax.contour(cii_img, colors='k', levels=cii_levels, linewidths=3)
+    cs2 = ax.contour(cii_img, colors='k', levels=cii_levels, linewidths=linewidths[1]) # linewidth pairs of 2,3 or 3,4 look good
     print(cs2.levels)
 
     # Save
-    # 2023-04-18
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-18/cii_{mol_stub}_overlay.png",
+    # 2023-04-18,19
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/cii_{mol_stub}_overlay{linewidth_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f'cii and {mol_stub}',
         file=__file__, func="paper_cii_mol_overlay"))
 
@@ -2899,4 +2916,8 @@ if __name__ == "__main__":
     # column_density_figure()
 
     # multi_panel_moment_images()
-    paper_cii_mol_overlay()
+
+    column_density_figure()
+    # paper_channel_maps()
+    # paper_oi_cii_spectra()
+    # paper_cii_mol_overlay()

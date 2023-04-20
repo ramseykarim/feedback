@@ -478,7 +478,7 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
     thin_slice_from = lambda s: slice(s, s+1)
 
     # reg = reg_list[0]
-    # x = reg.meta['label']
+    # x = reg.meta['text']
     # print(x)
     # return
 
@@ -554,7 +554,7 @@ def prepare_pdrt_tables(line1, line2=None, reg_filename=None, regions_to_do=None
         reg_coord_list = [tuple(round(x) for x in reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1]) for reg in reg_list]
         for pix_coords, reg in zip(reg_coord_list, reg_list):
             # Get some basic information
-            reg_name = reg.meta['label'].replace(" ", "-")
+            reg_name = reg.meta['text'].replace(" ", "-")
             if (regions_to_do is not None) and (reg_name not in regions_to_do):
                 # If we are specifying only SOME regions, and this is NOT one of them, skip!
                 continue
@@ -692,7 +692,7 @@ def prepare_pdrt_tables_fir(reg_filename=None):
     value_list = [fir_img[i, j] for (i, j) in reg_coord_list]
     uncertainty_list = [10]*len(value_list)
     id_list = ['FIR']*len(value_list)
-    reg_name_list = [reg.meta['label'].replace(' ', '-') for reg in reg_list]
+    reg_name_list = [reg.meta['text'].replace(' ', '-') for reg in reg_list]
 
 
     fig = plt.figure(figsize=(15, 15))
@@ -730,7 +730,7 @@ def prepare_pdrt_tables_g0(reg_filename=None):
     if isinstance(reg_filename, int):
         reg_filename = region_filenames[reg_filename]
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename))
-    reg_name_list = [reg.meta['label'].replace(' ', '-') for reg in reg_list]
+    reg_name_list = [reg.meta['text'].replace(' ', '-') for reg in reg_list]
 
     data_dir = "/home/ramsey/Documents/Research/Feedback/m16_data"
     herschel_uv_fn = "herschel/uv_m16_repro_CII.fits"
@@ -1392,9 +1392,9 @@ def fit_molecular_and_cii_with_gaussians(n_components=1, lines=None, pillar=1, s
         elif select == 2: # Shelf
             selected_region_list = [sky_regions[8]]
     if len(selected_region_list) > 1:
-        pixel_name = "-and-".join([reg.meta['label'].replace(" ", '-') for reg in selected_region_list])
+        pixel_name = "-and-".join([reg.meta['text'].replace(" ", '-') for reg in selected_region_list])
     else:
-        pixel_name = selected_region_list[0].meta['label'].replace(" ", '-')
+        pixel_name = selected_region_list[0].meta['text'].replace(" ", '-')
 
     spectrum_ylims = utils_dict['spectrum_ylims']
     vel_lims = utils_dict['vel_lims']
@@ -1643,7 +1643,7 @@ def fit_spectrum_detailed(line_stub, n_components=1, pillar=1, reg_number=0):
     reg_filename_short = utils_dict['reg_filename_short']
     # I have been 1-indexing the regions so I'll keep doing that
     reg = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))[reg_number - 1]
-    pixel_name = reg.meta['label'].replace(' ', '-')
+    pixel_name = reg.meta['text'].replace(' ', '-')
 
     spectrum_ylims = utils_dict['spectrum_ylims']
     vel_lims = utils_dict['vel_lims']
@@ -2918,7 +2918,7 @@ def save_n2hp_full_spectra(reg_filename_short=None, index=None):
         index_list = [index]
     for i in index_list:
         sky_reg = sky_regions[i]
-        reg_name = sky_reg.meta['label'].replace(' ', '-')
+        reg_name = sky_reg.meta['text'].replace(' ', '-')
         pix_coords = tuple(round(x) for x in sky_reg.to_pixel(cube[0, :, :].wcs).center.xy[::-1])
         spectrum = cube[(slice(None), *pix_coords)]
         spectral_axis = cube.spectral_axis
@@ -3096,7 +3096,55 @@ def integrate_13_and_18_co_for_column_density():
         header['COMMENT'] = f'{start_flag}{noise:.3f} K km s-1{end_flag}'
         header['HISTORY'] = 'Ramsey wrote this on May 25, 2022 using code in'
         header['HISTORY'] = 'm16_deepdive.integrate_13_and_18_co_for_column_density'
+        header['HISTORY'] = 'and updated it April 19, 2023 to use Marcs uncertainties'
         hdu = fits.PrimaryHDU(data=mom0.array, header=header)
+        hdu.writeto(savename)
+
+
+def convert_13co10_integrated_map_to_Kkms():
+    """
+    April 19, 2023
+    please release me
+    re-doing the column densities with up-to-date error estimates
+    using marc's mom0 map now
+    need to convert the map from Jy/beam km/s to K km/s. I have made this conversion before.
+        - get frequency and beam
+        - use u.brightness_temperature equivalency
+        - need to remove velocity unit before and reattach after; the brightness_temperature
+        conversion does not like it.
+    """
+    line_fns = {
+        '13co10': "bima/M16.BIMA.13co.mom0.fits",
+        'c18o10': "bima/M16.BIMA.c18o.masked_mom0.fits"
+    }
+    nchannels_dict = {'13co10': 30}
+    for line in ['13co10']:
+        full_fn = catalog.utils.search_for_file(line_fns[line])
+        img, hdr = fits.getdata(full_fn, header=True)
+        # noise
+        channel_noise = cube_utils.onesigmas[line]
+        cube_dv = (2.65635948582E+02 * u.m / u.s).to(kms).to_value()
+        nchannels = nchannels_dict[line]
+        noise = channel_noise * cube_dv * np.sqrt(nchannels)
+        # convert units
+        # first wrangle units and remove km/s unit
+        data_units = tuple(u.Unit(y.lower().replace('jy', 'Jy')) for y in hdr['BUNIT'].split('.'))
+        restfrq = hdr['RESTFREQ'] * u.Hz
+        beam = cube_utils.Beam.from_fits_header(hdr)
+        img = (img*data_units[0]).to(u.K, equivalencies=u.brightness_temperature(restfrq, beam.sr)) * data_units[1]
+        print("Converted", hdr['BUNIT'], "to", img.unit)
+        # save
+        savename = os.path.join(os.path.dirname(full_fn), f"{line}_19-27.integrated.marcs_version.fits")
+        header = WCS(hdr).to_header()
+        header.update(beam.to_header_keywords())
+        header['BUNIT'] = str(img.unit)
+        start_flag = "<error>"
+        end_flag = "</error>"
+        header['COMMENT'] = f'{start_flag}{noise:.3f} K km s-1{end_flag}'
+        header['HISTORY'] = 'Ramsey wrote this on April 19, 2023 using code in'
+        header['HISTORY'] = 'm16_deepdive.convert_13co10_integrated_map_to_Kkms'
+        header['HISTORY'] = 'it uses Marcs uncertainties'
+        hdu = fits.PrimaryHDU(data=img.to_value(), header=header)
         hdu.writeto(savename)
 
 
@@ -3136,6 +3184,7 @@ def get_excitation_temperature_12co():
     header['COMMENT'] = f"{start_flag}{channel_noise} K{end_flag}"
     header['HISTORY'] = "Ramsey wrote this on May 30 using code in"
     header['HISTORY'] = "m16_deepdive.get_excitation_temperature_12co"
+    header['HISTORY'] = 'and updated it April 19, 2023 to use Marcs uncertainties'
     hdu = fits.PrimaryHDU(data=peak_temperature.array, header=header)
     hdu.writeto(savename)
 
@@ -3189,7 +3238,7 @@ def calculate_co_column_density():
     # Tex more often used as kTex (and put units)
     Tex = Tex_unitless*u.K
 
-    fn_13co = catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits")
+    fn_13co = catalog.utils.search_for_file("bima/13co10_19-27.integrated.marcs_version.fits")
 
 
     integrated_intensity_unitless, intT_hdr = fits.getdata(fn_13co, header=True)
@@ -3258,7 +3307,7 @@ def calculate_co_column_density():
         elif selected_box_type == 'threads':
             boxes_reg_list = regions.Regions.read(catalog.utils.search_for_file("catalogs/thread_boxes.reg"))
             selected_box = 'western'
-        boxes_reg_dict = {reg.meta['label']: reg for reg in boxes_reg_list}
+        boxes_reg_dict = {reg.meta['text']: reg for reg in boxes_reg_list}
         box_mask = boxes_reg_dict[selected_box].to_pixel(WCS(intT_hdr)).to_mask().to_image(NH2.shape)
         NH2_cropped = NH2.copy()
         NH2_cropped[(box_mask < 1)] = np.nan
@@ -3304,12 +3353,14 @@ def calculate_co_column_density():
         hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
         hdr['HISTORY'] = f"sqrt(pixels/beam) oversample = {np.sqrt(pixels_per_beam):.2f}"
         hdr['HISTORY'] = f"LOS distance = {los_distance_M16.to(u.pc):.2f}"
+        hdr['HISTORY'] = "Using Marcs 13co10 moment, which is less noisy"
+        hdr['HISTORY'] = "Also using Marcs channel RMS values for 12 and 13CO"
         if masking_by_error:
             hdr['HISTORY'] = f"Masking by {masking_by_error_coeff:.1f} X integrated intensity error"
         return hdr
 
     savedir = os.path.dirname(catalog.utils.search_for_file("bima/13co10_19-27.3_integrated.fits"))
-    savename = os.path.join(savedir, "13co10_column_density_and_more_with_uncertainty_v2.fits")
+    savename = os.path.join(savedir, "13co10_column_density_and_more_with_uncertainty_v3.fits")
 
     phdu = fits.PrimaryHDU()
 
@@ -4089,7 +4140,7 @@ def calculate_dust_column_densities_and_masses_with_error(nsamples=10, debug=Fal
         reg_filename_short = "catalogs/p123_boxes_head_body_withlabels_v3.reg"
         suffix += "_head-neck-boxes"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
-    reg_dict = {reg.meta['label']: reg for reg in reg_list if 'noise' not in reg.meta['label']}
+    reg_dict = {reg.meta['text']: reg for reg in reg_list if 'noise' not in reg.meta['text']}
 
     plot_hists = True
     if debug and plot_hists:
@@ -4231,7 +4282,7 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     """
     print("MASS AND COLUMN DENSITIES BASED ON", tracer)
     filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty_v2.fits",
-        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty_v3.fits",
         # 'dust': "herschel/coldens_70-160.fits", # not using these
         # 'dust250': "herschel/coldens_70-160-250.fits",
     }
@@ -4248,7 +4299,7 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
     else:
         reg_filename_short = "catalogs/p123_boxes_head_body_withlabels_v3.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
-    reg_dict = {reg.meta['label']: reg for reg in reg_list if 'noise' not in reg.meta['label']}
+    reg_dict = {reg.meta['text']: reg for reg in reg_list if 'noise' not in reg.meta['text']}
 
     fn = filenames_dict[tracer]
 
@@ -4362,7 +4413,7 @@ def estimate_uncertainty_mass_and_coldens(tracer='cii', setting=2):
 
         axes_hist[0].legend()
         # 2022-11-21, 2022-12-06, 2022-12-13, 2023-01-16,23;02-09
-        plt.savefig(f"/home/ramsey/Pictures/2023-02-09/coldens_and_mass_noise_{tracer}{suffix}.png",
+        plt.savefig(f"/home/ramsey/Pictures/2023-04-19/coldens_and_mass_noise_{tracer}{suffix}.png",
             metadata=catalog.utils.create_png_metadata(title=f'reg from {reg_filename_short}',
                 file=__file__, func='estimate_uncertainty_mass_and_coldens'))
 
@@ -4662,17 +4713,17 @@ def get_samples_at_locations(img, wcs_obj):
     else:
         reg_list = persisent_regions_list
     return_dict = {}
-    if img == 'coords':
+    if isinstance(img, str) and img == 'coords':
         for reg in reg_list:
             print(reg.center.frame)
-            return_dict[reg.meta['label']] = reg.center.transform_to('icrs').to_string(style='hmsdms')
+            return_dict[reg.meta['text']] = reg.center.transform_to('icrs').to_string(style='hmsdms')
     else:
         for reg in reg_list:
             coords = tuple(round(x) for x in reg.to_pixel(wcs_obj).center.xy[::-1]) # xy[::-1] = ij
             try:
-                return_dict[reg.meta['label']] = img[coords]
+                return_dict[reg.meta['text']] = img[coords]
             except IndexError:
-                return_dict[reg.meta['label']] = np.nan * img.unit
+                return_dict[reg.meta['text']] = np.nan * img.unit
     return return_dict
 
 
@@ -4734,8 +4785,8 @@ def table_sample_column_densities():
     but I will do that in a spreadsheet! This will just be direct samples.
     Values are N(H) for C+ and N(H2) for CO. I will make the conversion to N(H)/2 later
     """
-    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm8_ff1.0_with_uncertainty_v2.fits",
-        'co': "bima/13co10_column_density_and_more_with_uncertainty_v2.fits",
+    filenames_dict = {'cii': "sofia/Cp_coldens_and_mass_lsm6_ff1.0_with_uncertainty.fits",
+        'co': "bima/13co10_column_density_and_more_with_uncertainty_v3.fits",
         'dust': "herschel/coldens_70-160_sampled_1000.fits"}
     column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens_all', 'dust': 'Hcoldens_best'}
     column_err_extnames = {'cii': 'err_Hcoldens', 'co': 'err_H2coldens_all', 'dust': 'Hcoldens_avgerr'}
@@ -4752,8 +4803,8 @@ def table_sample_column_densities():
     # then copy the csv table into excel and add in background correction, do errors, etc
     df = pd.DataFrame.from_dict(super_dict).applymap(lambda x: f"{x:.2E}")
     # print(df)
-    # 2023-02-11
-    df.to_csv("/home/ramsey/Pictures/2023-02-11/column_densities.csv")
+    # 2023-02-11, 04-19,
+    df.to_csv("/home/ramsey/Pictures/2023-04-19/column_densities_lsm6_old.csv")
 
 
 def remake_leflochlazareff_Bfield_graph():
@@ -4814,8 +4865,8 @@ if __name__ == "__main__":
     # prepare_pdrt_tables_fir(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
     # prepare_pdrt_tables_g0(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
 
-    table_sample_peak_brightness_temperatures()
-    # table_sample_column_densities()
+    # table_sample_peak_brightness_temperatures()
+    table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
     #     for n in (1e4, 2e4):
