@@ -1589,7 +1589,7 @@ def column_density_figure():
     h_label, h2_label = "{\\rm H}", "{\\rm H}_2"
     column_labels = {'cii': h_label, 'co': h2_label, 'dust': h2_label}
     panel_labels = {'cii': cube_utils.cubenames['cii'], 'co': 'CO (1$-$0)', 'dust': 'FIR dust'}
-    vmaxes = {'cii': 3e22, 'co': 1.5e23, 'dust': 7e22}
+    vmaxes = {'cii': 3e22, 'co': 1.4e23, 'dust': 7e22}
 
     # JWST footprint for plotting
     # jwst_footprint_fn = catalog.utils.search_for_file("catalogs/jwst_reproj_footprint.reg")
@@ -1678,10 +1678,9 @@ def column_density_figure():
     fig.supxlabel("Right Ascension")
     fig.supylabel("Declination")
     # 2023-03-21,22, 04-19
-    plt.show()
-    # fig.savefig("/home/ramsey/Pictures/2023-04-19/column_density_figure.png",
-    #     metadata=catalog.utils.create_png_metadata(title='column figure',
-    #             file=__file__, func='column_density_figure'))
+    fig.savefig("/home/ramsey/Pictures/2023-04-19/column_density_figure.png",
+        metadata=catalog.utils.create_png_metadata(title='column figure',
+                file=__file__, func='column_density_figure'))
 
 
 def multi_panel_moment_images():
@@ -2588,8 +2587,8 @@ def paper_spectra():
 
 
     """ Make 2 sets of spectra """
-    # short_names = ['cii', '12co10', '12co32', 'co65', 'hcop', 'cs']; set_stub = ""; set_number = 1
-    short_names = ['oi', '13co10', '13co32', 'hcn', 'n2hp']; set_stub = "set2"; set_number = 2
+    short_names = ['cii', '12co10', '12co32', 'co65', 'hcop', 'cs']; set_stub = ""; set_number = 1
+    # short_names = ['oi', '13co10', '13co32', 'hcn', 'n2hp']; set_stub = "set2"; set_number = 2
 
     using_conv = True # set to True to use CONV versions if applicable
     if using_conv:
@@ -2678,13 +2677,13 @@ def paper_spectra():
         # Use this line to verify background subtractions done correctly
         # print(f"{reg_list[reg_idx].meta['text']} {check_if_region_is_southern(reg_list[reg_idx].meta['text'])}")
 
-    fig.supxlabel(f"Velocity ({kms.to_string('latex_inline')})")
+    fig.supxlabel(f"LSR Velocity ({kms.to_string('latex_inline')})")
     fig.supylabel(f"Line intensity ({u.K.to_string('latex_inline')})")
 
     conv_text = "using " + ("conv" if using_conv else "native") + " resolutions"
     conv_stub = "" if using_conv else "_unconv"
-    # 2023-03-28,31, 04-17
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-17/sample_spectra{conv_stub}{set_stub}.png",
+    # 2023-03-28,31, 04-17,19
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/sample_spectra{conv_stub}{set_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f"{conv_text}, points: {reg_filename_short}",
         file=__file__, func="paper_spectra"))
 
@@ -2775,7 +2774,7 @@ def paper_oi_cii_spectra():
     mom0 = oi_cube.spectral_slab(*vel_lims).moment0()
     contour_color = 'SkyBlue'
     contour = img_ax.contour(mom0.to_value(), colors=contour_color, levels=np.arange(0, 37, 6))
-    img_ax.clabel(contour, inline=True, fontsize=7)
+    # img_ax.clabel(contour, inline=True, fontsize=7)
     cbar_ax_1 = img_ax.inset_axes([1, 0, 0.05, 1])
     cbar_1 = fig.colorbar(im, cax=cbar_ax_1)
     cbar_1.set_label(f"{cube_utils.cubenames['cii']}  ({(u.K * kms).to_string('latex_inline')})", size=textsize-6)
@@ -2797,8 +2796,8 @@ def paper_oi_cii_spectra():
     img_ax.contour(oi_fp, levels=[0.5], colors='SlateGray', alpha=0.8, linewidths=1, linestyles='--')
 
     # img coords
-    img_ax.coords[1].set_ticklabel(rotation=0, rotation_mode='default', ha='center', va='center', fontsize=textsize-6, pad=0)
-    img_ax.coords[0].set_ticklabel(fontsize=textsize-6)
+    img_ax.coords[1].set_ticklabel(rotation=0, rotation_mode='default', ha='center', va='center', fontsize=textsize-5, pad=0)
+    img_ax.coords[0].set_ticklabel(fontsize=textsize-5)
     img_ax.set_xlabel("Right Ascension")
     img_ax.set_ylabel("Declination", labelpad=0)
 
@@ -2815,12 +2814,12 @@ def paper_oi_cii_spectra():
         ax.yaxis.set_ticks_position('both')
         ax.xaxis.set_tick_params(direction='in', which='both')
         ax.yaxis.set_tick_params(direction='in', which='both')
-        if ss.is_last_row():
-            ax.set_xlabel(f"Velocity ({kms.to_string('latex_inline')})")
-        else:
-            ax.set_xlabel(" ")
+        # if ss.is_last_row() and ss.is_first_col():
+        #     ax.set_xlabel(f"LSR Velocity ({kms.to_string('latex_inline')})")
+        # else: # ax.set_xlabel(" ")
+        ax.set_xlabel(" ")
         if ss.is_first_col():
-            ax.set_ylabel(f"Intensity ({u.K.to_string('latex_inline')})")
+            ax.set_ylabel(f"Intensity ({u.K.to_string('latex_inline')})", fontsize=textsize)
         else:
             ax.set_ylabel(" ")
         ax.set_xlim((15, 34))
@@ -2834,10 +2833,12 @@ def paper_oi_cii_spectra():
         fig.add_artist(mpatches.ConnectionPatch(xyA=(x, y), coordsA=img_ax.transData, xyB=connection_points[ax_idx], coordsB=ax.transAxes, color=connection_color, linewidth=2))
         img_ax.plot([x], [y], linestyle='None', marker='o', markersize=6, mfc=connection_color, mec='k')
 
+    fig.supxlabel(f"LSR Velocity ({kms.to_string('latex_inline')})", size=textsize)
+
 
     conv_stub = '' if using_conv else '_unconv'
     # 2023-04-18,19
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/cii_oi_spectra{conv_stub}_{contour_color}_{img_cmap}_contourlabels.png",
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/cii_oi_spectra{conv_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f'{reg_filename_short}',
         file=__file__, func="paper_oi_cii_spectra"))
 
@@ -2917,7 +2918,4 @@ if __name__ == "__main__":
 
     # multi_panel_moment_images()
 
-    column_density_figure()
-    # paper_channel_maps()
-    # paper_oi_cii_spectra()
-    # paper_cii_mol_overlay()
+    paper_cii_mol_overlay()
