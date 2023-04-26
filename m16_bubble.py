@@ -68,23 +68,94 @@ make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
+large_map_filenames = {
+        'cii': "sofia/m16_CII_final_15_5_0p5_clean.fits",
+        '12co10': "purplemountain/G17co12.fits", '13co10': "purplemountain/G17co13.fits",
+        'c18o10': "purplemountain/G17c18o.fits",
+}
 
-def try_manual_pv_slice():
+
+def manual_pv_slice_series():
     """
-    August 25, 2023
+    April 25, 2023
     I wanna see if I can just plot array slices for PV diagrams since pvextractor takes a while on large/many slices
     Ok yes this works, WCS likes to throw lots of warnings about it but it is ultimately fine
 
     I can expand this out to PV movies along RA and Dec (non-aligned paths will need to be done with pvextractor still)
     but this will take more time than I have tonight before the meeting tomorrow
+
+    April 26, 2023: trying to expand this into movies
     """
-    cube_obj = cube_utils.CubeData('cii').convert_to_K().convert_to_kms()
-    pv_slice = cube_obj.data[:, 200, :]
-    print(pv_slice)
-    print(pv_slice.shape)
-    ax = plt.subplot(111, projection=pv_slice.wcs)
-    plt.imshow(pv_slice.to_value(), origin='lower')
-    plt.show()
+
+    """
+    PV cut orientation, vertical or horizontal
+    Vertical means slice at a single RA and plot velocity vs Dec
+    Horizontal means slice at a single Dec and plot velocity vs RA
+    """
+    orientation = 'horizontal'
+    start_idx, step_idx = 25, 50
+
+    # Load cube
+    line_stub = 'cii'
+    if line_stub in large_map_filenames:
+        # Use the custom filename rather than the default
+        filename = large_map_filenames[line_stub]
+    else:
+        # Use default filename from cube_utils (many of these are centered around Pillars)
+        filename = line_stub
+    cube_obj = cube_utils.CubeData(filename).convert_to_K().convert_to_kms()
+    dimension_size = (cube_obj.data.shape[2] if orientation=='vertical' else cube_obj.data.shape[1])
+
+    # Make image
+    ref_vel_lims = (10*kms, 35*kms)
+    ref_mom0 = cube_obj.data.spectral_slab(*ref_vel_lims).moment0()
+    ref_img = ref_mom0.to_value()
+
+    # Loop thru slice index
+    for slice_idx in range(start_idx, dimension_size, step_idx):
+        # Set colors
+        pv_cmap = 'plasma'
+        img_cmap = 'Greys_r'
+        line_color = marcs_colors[1]
+
+
+
+        if orientation == 'vertical':
+            # Cube index order is V,Y,X = Velocity,Dec,RA = V,I,J
+            cube_slices = (slice(None), slice(None), slice_idx)
+        else:
+            cube_slices = (slice(None), slice_idx, slice(None))
+
+        pv_slice = cube_obj.data[cube_slices]
+
+        # First try to remake fig/axes each time. Try persistent if slow
+        fig = plt.figure(figsize=(8, 10))
+        gs = fig.add_gridspec(2, 1)
+        ax_img = fig.add_subplot(gs[0,0], projection=cube_obj.wcs_flat)
+        ax_pv = fig.add_subplot(gs[1,0], projection=pv_slice.wcs)
+
+        im = ax_img.imshow(ref_img, origin='lower', vmin=0, cmap=img_cmap)
+        fig.colorbar(im, ax=ax_img, label=ref_mom0.unit.to_string('latex_inline'))
+
+        im = ax_pv.imshow(pv_slice.to_value(), origin='lower', vmin=0, cmap=pv_cmap)
+        fig.colorbar(im, ax=ax_pv, label=pv_slice.unit.to_string('latex_inline'), orientation='horizontal')
+
+        # Plot line
+        if orientation == 'vertical':
+            plot_line = ax_img.axvline
+        else:
+            plot_line = ax_img.axhline
+        plot_line(slice_idx, color=line_color, linewidth=2)
+        # Reference image velocity interval stamp
+        ax_img.text(0.1, 0.9, make_vel_stub(ref_vel_lims), color=line_color, ha='left', va='bottom')
+
+        # Clean up axes labels
+        # ax_img.set_xlabel("RA")
+        # ax_img.set_ylabel("Dec")
+        ax_pv.coords[1].set_format_unit(kms)
+
+        savename = f"/home/ramsey/Pictures/2023-04-26/m16_pv_{orientation}_{slice_idx:03d}.png"
+        fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title=f'{line_stub}, using stub/file {filename}'))
 
 
 def m16_large_moment0():
@@ -99,14 +170,9 @@ def m16_large_moment0():
     # line_stub = '12co32'
     line_stub = 'c18o10'
 
-    filenames = {
-        'cii': "sofia/m16_CII_final_15_5_0p5_clean.fits",
-        '12co10': "purplemountain/G17co12.fits", '13co10': "purplemountain/G17co13.fits",
-        'c18o10': "purplemountain/G17c18o.fits",
-    }
-    if line_stub in filenames:
+    if line_stub in large_map_filenames:
         # Use the custom filename rather than the default
-        filename = filenames[line_stub]
+        filename = large_map_filenames[line_stub]
     else:
         # Use default filename from cube_utils (many of these are centered around Pillars)
         filename = line_stub
@@ -136,4 +202,4 @@ def m16_large_moment0():
             file=__file__, func='m16_large_moment0'))
 
 if __name__ == "__main__":
-    m16_large_moment0()
+    manual_pv_slice_series()
