@@ -4739,7 +4739,7 @@ def column_of_table_sample_peak_brightness_temperatures(line_stub):
     except ValueError:
         cube_obj.data.allow_huge_operations=True
         print("DOING HUGE OPERATION ON ", line_stub)
-        max_cube = cube_obj.data.max(axis=0)
+        max_cube = cube_obj.data[5:-5].max(axis=0)
     # Convert the 2D max array, which should be much faster than converting the 3D cube
     max_cube_values = cube_obj.convert_to_K(value=max_cube)
     return get_samples_at_locations(max_cube_values, max_cube.wcs)
@@ -4751,7 +4751,9 @@ def table_sample_peak_brightness_temperatures():
     Get brightness temperatures for every line towards regions, save table (csv)
     Looks like this works easily! Need to fill out the line list and rerun for the final table, but the written table is very clean and will be easy to open in Calc
     """
-    line_list = ['cii', 'oi', '12co10', '13co10', '12co32', '13co32', 'co65', 'hcn', 'hcop', 'cs', 'n2hp']
+    line_list = ['cii', 'oi', '12co10', '13co10', 'c18o10', '12co32', '13co32', 'co65', 'hcn', 'hcop', 'cs', 'n2hp']
+    # line_list = ['13co10', 'c18o10', '12co32']
+    # line_list = ['cs', 'n2hp']
     uncertainty_list = []
     super_dict = {}
 
@@ -4767,8 +4769,8 @@ def table_sample_peak_brightness_temperatures():
     df = df[['Coordinates'] + [x for x in df.columns if x!='Coordinates']]
     df.loc['T_RMS'] = [''] + uncertainty_list
 
-    # 2023-02-09, 03-28,29,31, 04-12
-    save_path = "/home/ramsey/Pictures/2023-04-12/max_brightness_temperatures"
+    # 2023-02-09, 03-28,29,31, 04-12,20,23
+    save_path = "/home/ramsey/Pictures/2023-04-23/max_brightness_temperatures"
     df.to_csv(save_path+".csv")
     table_as_latex = df.to_latex().replace('nan K', '')
     with open(save_path+".txt", 'w') as f:
@@ -4865,8 +4867,8 @@ if __name__ == "__main__":
     # prepare_pdrt_tables_fir(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
     # prepare_pdrt_tables_g0(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
 
-    # table_sample_peak_brightness_temperatures()
-    table_sample_column_densities()
+    table_sample_peak_brightness_temperatures()
+    # table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
     #     for n in (1e4, 2e4):

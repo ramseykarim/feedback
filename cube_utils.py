@@ -45,7 +45,8 @@ onesigmas = { # all values in K. These are the 1sigma noise levels, which contou
     'c18o10': 0.60, # mine was 0.66, using Marc's 0.60
     'c18o10CONV': 0.40, # c18o10/conv
     'co65': 1.65, 'co65CONV': 0.57, # checked August 11 and 18, 2022
-    '12co32': 0.69, '13co32': 0.62, # checked August 18, 2022; I wonder if these should be the same
+    '12co32': 0.55, # re-checked 2023-04-20 using full spectra channels 0-2055 (empty) # used to be 0.69 but i think this includes too much signal
+    '13co32': 0.68, # re-checked 2023-04-20 using channels 2317-end, see above # used to be 0.62: checked August 18, 2022; I wonder if these should be the same
     'n2hp': 0.64, # mine was 0.56, using Marc's 0.64
     'n2hpCONV': 0.24, # Finally checked these on April 25 and 26, 2022
     'cs': 0.73, # mine was 0.60, using Marc's 0.73
@@ -166,6 +167,7 @@ class CubeData:
             self.wcs = WCS(self.header, naxis=3)
         self.data = SpectralCube.read(self.full_path)
         if self.data.unit == u.one:
+            assert self.data.header['BUNIT'][0] == 'K' # this should be true; if it errors out i'll investigate
             self.data._unit = u.K
         self.wcs_flat = self.data[0, :, :].wcs
         self.equivalencies = None
@@ -253,6 +255,13 @@ class CubeData:
                 return value
             else:
                 return self
+
+    def convert_to_kms(self):
+        """
+        Self-returning shortcut to make the spectral unit km/s
+        """
+        self.data = self.data.with_spectral_unit(u.km/u.s)
+        return self
 
     def refresh_wcs(self):
         """

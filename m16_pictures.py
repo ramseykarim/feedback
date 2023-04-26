@@ -1730,6 +1730,7 @@ def multi_panel_moment_images():
     img_limits = {
         '12co10': (0, 300), '13co10': (0, 55), 'cii': (0, 230), '8um': (None, 1200), 'oi': (0, 40),
         'co65': (0, 60), '12co32': (0, 130),
+        'cs': (0, None), 'hcn': (0, None), 'hcop': (0, None), 'n2hp': (0, None),
     }
     img_stretches = {'8um': np.arcsinh, '70um': np.arcsinh, '160um': np.arcsinh} # if not here, linear
     stretch_inverses = {np.arcsinh: np.sinh}
@@ -1774,7 +1775,7 @@ def multi_panel_moment_images():
         # (filename, needs_unit_conversion,)
         '8um': ("spitzer/SPITZER_I4_mosaic.fits", (1.98, 1.98, 0)), '12co10': ("bima/M16_12CO1-0_7x4_mom0.fits", None), '13co10': ("bima/M16.BIMA.13co.mom0.fits", None), 'c18o10': ("bima/M16.BIMA.c18o.masked_mom0.fits", None),
         '70um': (herschel_dir_stub+"HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz", (9.0, 5.75, 62)), '160um': (herschel_dir_stub+"HPPJSMAPR/hpacs_25HPPJSMAPR_1822_m1337_00_v1.0_1471714553094.fits.gz", (13.32, 11.31, 40.9)),
-        'hcop': ("carma/M16.ALL.hcop.sdi.mom0pv.fits", None), 'cs': ("carma/M16.ALL.cs.sdi.mom0pv.fits", None), 'hcn': ("carma/M16.ALL.hcn.sdi.mom0pv.fits", None), 'n2hp': ("carma/M16.ALL.n2hp.sdi.mom0pv.fits", None),
+        'hcop': ("carma/M16.ALL.hcop.sdi.mom0.fits", None), 'cs': ("carma/M16.ALL.cs.sdi.mom0.fits", None), 'hcn': ("carma/M16.ALL.hcn.sdi.mom0.fits", None), 'n2hp': ("carma/M16.ALL.n2hp.sdi.mom0.fits", None),
     }
 
     def print_stats(stub, img):
@@ -1882,7 +1883,7 @@ def multi_panel_moment_images():
     """ Plotting config and defaults """
     fig = plt.figure(figsize=figsize)
     plot_kwargs = dict(origin='lower', cmap='plasma')
-    contour_kwargs = dict(colors='cyan', linewidths=1)
+    contour_kwargs = dict(linewidths=1)
     default_label_text_size = 16
     cbar_orientation = 'vertical'
     def config_cbar_labels(cbar_ax, cbar_obj, im_obj, cbar_label_unit, data_stub):
@@ -2001,7 +2002,7 @@ def multi_panel_moment_images():
                 # There is no gain map, no action necessary
                 pass
         if gain_map is not None:
-            ax.contour(gain_map, levels=[0.5], linewidths=1, colors='SlateGray', alpha=0.8)
+            ax.contour(gain_map, levels=[0.5], linewidths=1, linestyles='--', colors='white', alpha=0.8)
 
 
         cbar = fig.colorbar(im, cax=ax_cbar, orientation=cbar_orientation)
@@ -2056,7 +2057,7 @@ def multi_panel_moment_images():
         else:
             # Normal case
             levels = contour_levels_base*contour_levels_coeff[data_stub]
-        ax.contour(img_reproj, **contour_kwargs, levels=levels)
+        ax.contour(img_reproj, **contour_kwargs, levels=levels, colors=(['white'] + ['k']*(len(levels) - 1)))
         # Beam
         patch = beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.8, 0.1]), misc_utils.get_pixel_scale(ref_wcs))
         patch.set(**beam_patch_kwargs)
@@ -2066,8 +2067,8 @@ def multi_panel_moment_images():
     fig.supxlabel("Right Ascension", fontsize=default_text_kwargs['fontsize']+1)
     fig.supylabel("Declination", fontsize=default_text_kwargs['fontsize']+1)
 
-    # 2023-03-09,10,13,20,22,30,31
-    plt.savefig("/home/ramsey/Pictures/2023-03-31/moment_panel.png",
+    # 2023-03-09,10,13,20,22,30,31, 04-20
+    plt.savefig("/home/ramsey/Pictures/2023-04-20/moment_panel.png",
         metadata=catalog.utils.create_png_metadata(title="moment panel img for paper",
             file=__file__, func='multi_panel_moment_images'))
 
@@ -2857,30 +2858,48 @@ def paper_cii_mol_overlay():
     img_ticks = [1, 2, 5, 10, 25, 50, 100]
 
     # Cube config
-    vel_lims = (20*kms, 27*kms)
+    vel_lims = (19*kms, 27*kms)
 
     # CII
     cii_cube = cube_utils.CubeData('cii').data
     cii_mom0 = cii_cube.with_spectral_unit(kms).spectral_slab(*vel_lims).moment0()
     cii_img = reproject_interp((cii_mom0.to_value(), cii_mom0.wcs), ref_hdr, return_footprint=False)
-    cii_levels = np.arange(30, 250, 30)
+    cii_levels = np.arange(25, 280, 25)
+    cii_beam = cii_cube.beam
+    del cii_cube, cii_mom0 # clean up
 
     # Molecule
-    mol_stub = 'cs'; mol_levels = np.arange(0.5, 15, 2)
-    # mol_stub = 'co65'; mol_levels = np.arange(10, 71, 10) ## 13co65 also works with these levels
-    # mol_stub = 'hcop'; mol_levels = np.arange(2, 25, 3)
-    mol_cube = cube_utils.CubeData(mol_stub).data
-    mol_mom0 = mol_cube.with_spectral_unit(kms).spectral_slab(*vel_lims).moment0()
-    ########### Messing around with CO(6-5) header to investigate the offset. It's still there... but doesn't seem to respond to a simple transform
-    # mol_wcs = mol_mom0.wcs
-    # mol_hdr = mol_wcs.to_header()
-    # # mol_hdr['CDELT1'] = mol_hdr['CDELT1'] * .95
-    # # mol_hdr['CDELT2'] = mol_hdr['CDELT2'] * .95
-    # # mol_hdr['CRPIX1'] = mol_hdr['CRPIX1'] - 1
-    # # mol_hdr['CRPIX2'] = mol_hdr['CRPIX2'] + 1
-    # mol_wcs = WCS(mol_hdr)
-    mol_img = reproject_interp((mol_mom0.to_value(), mol_mom0.wcs), ref_hdr, return_footprint=False)
-    del cii_cube, cii_mom0, mol_cube, mol_mom0 # clean up
+    if False:
+        # Integrate the cube myself
+        mol_stub = 'cs'; mol_levels = np.arange(0.5, 15, 2)
+        # mol_stub = 'co65'; mol_levels = np.arange(10, 71, 10) ## 13co65 also works with these levels
+        # mol_stub = 'hcop'; mol_levels = np.arange(2, 25, 3)
+        mol_cube = cube_utils.CubeData(mol_stub).data
+        mol_mom0 = mol_cube.with_spectral_unit(kms).spectral_slab(*vel_lims).moment0()
+        ########### Messing around with CO(6-5) header to investigate the offset. It's still there... but doesn't seem to respond to a simple transform
+        # mol_wcs = mol_mom0.wcs
+        # mol_hdr = mol_wcs.to_header()
+        # # mol_hdr['CDELT1'] = mol_hdr['CDELT1'] * .95
+        # # mol_hdr['CDELT2'] = mol_hdr['CDELT2'] * .95
+        # # mol_hdr['CRPIX1'] = mol_hdr['CRPIX1'] - 1
+        # # mol_hdr['CRPIX2'] = mol_hdr['CRPIX2'] + 1
+        # mol_wcs = WCS(mol_hdr)
+        mol_img = reproject_interp((mol_mom0.to_value(), mol_mom0.wcs), ref_hdr, return_footprint=False)
+        mol_beam = mol_cube.beam
+        del mol_cube, mol_mom0 # clean up
+    else:
+        # Use Marc's cubes
+        mol_stub = 'cs'; mol_levels = np.arange(0.8, 35, 2.4)
+        img_fns = {'cs': "carma/M16.ALL.cs.sdi.mom0.fits"}
+        mol_img, mol_hdr = fits.getdata(catalog.utils.search_for_file(img_fns[mol_stub]), header=True)
+        # Convert Jy/beam km/s to K km/s (I have this conversion in several places now, copying from m16_deepdive.convert_13co10_integrated_map_to_Kkms)
+        data_units = tuple(u.Unit(y.lower().replace('jy', 'Jy')) for y in mol_hdr['BUNIT'].split('.'))
+        mol_restfrq = mol_hdr['RESTFREQ'] * u.Hz
+        mol_beam = cube_utils.Beam.from_fits_header(mol_hdr)
+        mol_img = (mol_img*data_units[0]).to(u.K, equivalencies=u.brightness_temperature(mol_restfrq, mol_beam.sr)) * data_units[1]
+        print("Converted", mol_hdr['BUNIT'], "to", mol_img.unit)
+        mol_img = reproject_interp((mol_img.to_value(), WCS(mol_hdr)), ref_hdr, return_footprint=False)
+
 
     # Figure
     fig = plt.figure(figsize=(15, 18))
@@ -2892,13 +2911,45 @@ def paper_cii_mol_overlay():
     # linewidths = (3, 4); linewidth_stub = '_thicklines'
     im = ax.imshow(stretch(ref_img), origin='lower', vmin=stretch(vlims[0]), vmax=stretch(vlims[1]), cmap='cividis')
     cs1 = ax.contour(mol_img, colors=mol_color, levels=mol_levels, linewidths=linewidths[0])
-    print(cs1.levels)
+    # print(cs1.levels)
     cs2 = ax.contour(cii_img, colors='k', levels=cii_levels, linewidths=linewidths[1]) # linewidth pairs of 2,3 or 3,4 look good
-    print(cs2.levels)
+    # print(cs2.levels)
 
+    # Gain curve
+    gain_map = reproject_interp(cube_utils.get_gain_map(mol_stub), ref_hdr, return_footprint=False)
+    ax.contour(gain_map, levels=[0.5], linewidths=2, colors='white', linestyles=':', alpha=0.9)
+
+    # Coordinates
+    textsize = 20
+    for i in range(2):
+        ax.coords[i].set_ticklabel(fontsize=textsize)
+    ax.set_xlabel("Right Ascension", fontsize=textsize)
+    ax.set_ylabel("Declination", fontsize=textsize, labelpad=-1)
+
+    # Colorbar
+    ax_cbar = ax.inset_axes([1, 0, 0.05, 1])
+    cbar = fig.colorbar(im, cax=ax_cbar, ticks=stretch(img_ticks))
+    cbar.ax.set_ylabel("3.3$\mu$m flux density (MJy sr$^{-1}$)", fontsize=textsize)
+    cbar.ax.set_yticklabels([(f"{x:d}" if isinstance(x, int) else f"{x:.1f}") for x in img_ticks], fontsize=textsize)
+
+    beam_patch_kwargs = dict(alpha=0.9, edgecolor='k')
+    hatches = ['///', '\\\\']
+    fcs = ['Grey', 'white']
+    beam_x, beam_y, dx = 0.9, 0.1, -0.1
+    for i, beam in enumerate([cii_beam, mol_beam]):
+        beam_patch = beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_x, beam_y]), misc_utils.get_pixel_scale(ref_wcs))
+        beam_patch.set(**beam_patch_kwargs, hatch=hatches[i], facecolor=fcs[i], lw=linewidths[1-i]+1, zorder=100+i)
+        ax.add_patch(beam_patch)
+        # beam_x += dx # comment back in to separate them, otherwise they're stacked (Marc likes this)
+
+    scale_bar_color = 'white'
+    ax.plot([64, 216], [838, 838], color=scale_bar_color, linewidth=5)
+    ax.text(65, 830, "0.5 pc", ha='left', va='top', fontsize=textsize+2, color=scale_bar_color)
+
+    plt.subplots_adjust(top=0.97, bottom=0.05, left=0.07, right=0.9)
     # Save
-    # 2023-04-18,19
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/cii_{mol_stub}_overlay{linewidth_stub}.png",
+    # 2023-04-18,19,20
+    fig.savefig(f"/home/ramsey/Pictures/2023-04-20/cii_{mol_stub}_overlay{linewidth_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=f'cii and {mol_stub}',
         file=__file__, func="paper_cii_mol_overlay"))
 
@@ -2916,6 +2967,4 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
-    # multi_panel_moment_images()
-
-    paper_cii_mol_overlay()
+    multi_panel_moment_images()
