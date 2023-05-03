@@ -2345,6 +2345,7 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
             handles.append(mpatches.Patch(color=colors[1], label=cube_utils.cubenames[molecular_line_stub]))
 
         sl_cii = make_pv_slice(subcube_cii, just_cube=True)
+        sl_cii.header['RESTFRQ'] = sl_mol_ciires.header['RESTFRQ']
         contour_args = (reproject_interp((sl_cii.data, sl_cii.header), sl_wcs, shape_out=sl_mol_ciires.data.shape, return_footprint=False),)
         contour_kwargs['colors'] = colors[0]
         contour_kwargs['alpha'] = 1
@@ -2385,8 +2386,8 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         cbar.ax.set_ylabel("Integrated intensity (K km s$^{-1}$)")
     if not reference_img_instead_of_cube:
         plot_ellipse_patch(ax_img, ref_wcs, subcube_cii)
-    # 2023-03-08,09,20
-    plt.savefig(f"/home/ramsey/Pictures/2023-03-20/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
+    # 2023-03-08,09,20, 05-02(for debug)
+    plt.savefig(f"/home/ramsey/Pictures/2023-05-02/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
         metadata=catalog.utils.create_png_metadata(title=f'pv_along {reg_filename_short}',
             file=__file__, func="paper_pv_diagrams"))
 
@@ -2967,4 +2968,4 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
-    multi_panel_moment_images()
+    paper_pv_diagrams()
