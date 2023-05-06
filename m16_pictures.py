@@ -1075,7 +1075,7 @@ def background_samples_figure_molecular():
             file=__file__, func='background_samples_figure'))
 
 
-def irac8um_to_cii_figure():
+def irac8um_to_cii_figure(band=4):
     """
     January 17, 2021 (MLK birthday)
     Xander asked for an image of 8micron converted to CII using Cornelia's
@@ -1101,13 +1101,18 @@ def irac8um_to_cii_figure():
     https://irsa.ipac.caltech.edu/data/SPITZER/docs/irac/iracinstrumenthandbook/15/
 
     It would also be nice to get the figure rotated to align with WCS.
+
+    May 4-5, 2023
+    Reusing this to rotate the rest of the IRAC bands. I tried doing it in DS9
+    like I did with JWST but I lose too much resolution.
+    I will only enable the reprojecting part of the code to handle irac 1-3.
+    I don't have any use for the converted-unit maps at this point.
     """
-    already_aligned = True
-    intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
+    already_aligned = False
     if not already_aligned:
-        irac4_fn = catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic.fits")
-        irac4_out_fn = irac4_fn.replace('.fits', '_ALIGNED.fits')
-        hdul = fits.open(irac4_fn)
+        irac_fn = catalog.utils.search_for_file(f"spitzer/SPITZER_I{band}_mosaic.fits")
+        irac_out_fn = irac_fn.replace('.fits', '_ALIGNED.fits')
+        hdul = fits.open(irac_fn)
         hdr = hdul[0].header
         keys_to_save = ['ORIGIN', 'INSTRUME', 'CHNLNUM',
             'AOT_TYPE', 'AORLABEL', 'OBJECT', 'BUNIT']
@@ -1129,9 +1134,11 @@ def irac8um_to_cii_figure():
         ax2 = plt.subplot(122, projection=w_aligned)
         ax1.imshow(hdul[0].data, origin='lower')
         ax2.imshow(data_aligned, origin='lower')
-        fig.savefig('/home/ramsey/Pictures/2021-01-17-work/irac4_regrid.png',
-            metadata=catalog.utils.create_png_metadata(title='IRAC 4 aligned with RA-DEC',
+        # 2021-01-17, 2023-05-05
+        fig.savefig(f'/home/ramsey/Pictures/2023-05-05/irac{band}_regrid.png',
+            metadata=catalog.utils.create_png_metadata(title=f'IRAC {band} aligned with RA-DEC',
                 file=__file__, func='irac8um_to_cii_figure'))
+
         hdu_aligned = fits.PrimaryHDU(data=data_aligned, header=w_aligned.to_header())
         hdu_aligned.header['AUTHOR'] = "Ramsey Karim"
         hdu_aligned.header['CREATOR'] = new_src_file
@@ -1145,10 +1152,12 @@ def irac8um_to_cii_figure():
         hdu_aligned.header['HISTORY'] = 'Functions used:'
         hdu_aligned.header['HISTORY'] = original_src_file
         hdu_aligned.header['HISTORY'] = new_src_file
-        hdu_aligned.writeto(irac4_out_fn)
+        hdu_aligned.writeto(irac_out_fn)
         print("DONE")
         return
+    raise RuntimeError("SHOULD NOT REACH HERE, IM ONLY TRYING TO ALIGN THE FILES (2023-05-05)")
     already_converted = True
+    intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
     if not already_converted:
         # Already aligned with RA-DEC, so I can just load that file now
         irac4_fn = catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic_ALIGNED.fits")
@@ -2968,4 +2977,5 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
-    paper_pv_diagrams()
+    for i in [2, 3]:
+        irac8um_to_cii_figure(band=i)

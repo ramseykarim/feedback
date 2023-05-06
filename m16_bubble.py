@@ -26,6 +26,7 @@ import os
 import glob
 import datetime
 import time
+import warnings
 
 # from math import ceil
 # from scipy import signal
@@ -64,7 +65,10 @@ mpatches = pvdiagrams.mpatches
 from .mantipython.physics import greybody, dust, instrument
 
 
+# vel_stub is for plotting (contains spaces and special characters)
 make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
+# simple_vel_stub is for filenames (no spaces or special characters)
+make_simple_vel_stub = lambda x : ".".join(f"{y.to_value():.1f}" for y in x)
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
@@ -73,21 +77,201 @@ large_map_filenames = {
         '12co10': "purplemountain/G17co12.fits", '13co10': "purplemountain/G17co13.fits",
         'c18o10': "purplemountain/G17c18o.fits",
 }
+herschel_path = "herschel/anonymous1603389167/1342218995/level2_5"
+photometry_filenames = {
+    '8um': "spitzer/SPITZER_I4_mosaic_ALIGNED.fits", '250um': "extdPSW/hspirepsw696_25pxmp_1823_m1335_1342218995_1342218996_1462565962570.fits.gz",
+    '350um': "extdPMW/hspirepmw696_25pxmp_1823_m1335_1342218995_1342218996_1462565960474.fits.gz",
+    '500um': "extdPLW/hspireplw696_25pxmp_1823_m1335_1342218995_1342218996_1462565958982.fits.gz",
+    '70um': "HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz",
+    '160um': "HPPJSMAPR/hpacs_25HPPJSMAPR_1822_m1337_00_v1.0_1471714553094.fits.gz",
+}
 
-def get_map_filename(line_stub, beam=None):
+vlim_memo = { # hash things somehow and put them here
+    '8um': (40, 320),
+    'cii.levels': np.arange(5, 121, 10), 'cii.generic': (0, 60),
+    '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 40),
+    '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 18),
+    '250um': (140, 4500), 'irac1': (1, 30), '70um': (-0.06, 3.5), # 70um can also do vmax=1.5 for greater sensitivity to low emission
+    '160um': (-0.1, 2.5), '500um': (50, 500), '500um.levels': np.arange(200, 2001, 100), '500um.generic': (150, 500),
+    'irac2': (1.5, 15), 'irac3': (10, 130),
+}
+def vlim_hash(data_stub, velocity_limits=None, generic=False):
+    """
+    May 3, 2023
+    Make keys for vlim_memo. This is to make image creation very easy
+    Ignore 'APEX' or 'CONV' suffix; this rarely makes a difference.
+    """
+    data_stub = data_stub.replace('CONV', '').replace('APEX', '')
+    if velocity_limits is None:
+        return data_stub
+    elif generic:
+        # Special case for requesting the "generic" hash (separate from no velocity hash)
+        return data_stub + ".generic"
+    else:
+        unit_clean = lambda i : f"{velocity_limits[i].to(kms).to_value():0.2f}"
+        return f"{data_stub}.{unit_clean(0)}.{unit_clean(1)}"
+
+def get_vlim(key):
+    """
+    May 3, 2023
+    Retrieve vlims based on a hashed key
+    Only returns the vmin/vmax if it's not None in the memo dict
+    Returns a dict(vmin=x, vmax=y) (with no, either, or both keys)
+    Empty dict if we haven't memoized
+    Ignore 'APEX' or 'CONV' suffix; this rarely makes a difference.
+    """
+    key = key.replace('CONV', '').replace('APEX', '')
+    vlims = {}
+    vlims_keys = ['vmin', 'vmax']
+    if key in vlim_memo:
+        val = vlim_memo[key]
+        for k, v in zip(vlims_keys, val):
+            if v:
+                vlims[k] = v
+    # special rule (can remove later): if no vmin but velocity specified (e.g. moment map), vmin=0
+    if 'vmin' not in vlims and '.' in key.replace('.generic', ''):
+        # since the '.generic' tag has a '.' in it, filter that out
+        vlims['vmin'] = 0
+    return vlims
+
+def get_levels(data_stub):
+    """
+    May 4, 2023
+    Try to find memoized contour levels
+    """
+    data_stub = data_stub.replace('CONV', '').replace('APEX', '')
+    key = data_stub + ".levels"
+    return vlim_memo.get(key, None)
+
+def get_generic_vlim(data_stub):
+    """
+    May 4, 2023
+    Check for general use catch-all vlims in the memoization list
+    Uses get_vlim but only uses data_stub without the velocity hashed in
+    Returns dictionary with possible keys (vmin, vmax), same as get_vlim
+    """
+    key = data_stub + ".generic"
+    return get_vlim(key)
+
+def get_map_filename(data_stub, beam=None):
     """
     May 2, 2023
-    Shortcut function to get filenames and stuff
+    Shortcut function to get cube filenames and stuff
+
+    Adding onto this to handle photometry since some of it is easier to do programmatically rather than with a dictionary.
+    Photometry will be returned as a single-element tuple (str(full path),) to signal that it is photometry and not a cube
     """
-    if line_stub in large_map_filenames:
-        fn = large_map_filenames[line_stub]
+    if data_stub in photometry_filenames:
+        if 'um' in data_stub and (70 <= int(data_stub.replace('um', '')) <= 500):
+            return (os.path.join(herschel_path, photometry_filenames[data_stub]),)
+        else:
+            return (photometry_filenames[data_stub],)
+    elif data_stub[:4] == 'irac':
+        # irac1, irac2, irac3. Stick to '8um' instead of irac4, though it will work either way
+        return (f"spitzer/SPITZER_I{data_stub[-1]}_mosaic_ALIGNED.fits",)
+    # At this point, must be a cube
+    elif data_stub in large_map_filenames:
+        fn = large_map_filenames[data_stub]
         if beam == 'APEX':
             return fn.replace('.fits', '.APEXbeam.fits')
         else:
             return fn
+    elif 'APEX' in data_stub and data_stub.replace('APEX', '') in large_map_filenames:
+        # Special case to avoid 'beam' keyword and select via data_stub
+        return large_map_filenames[data_stub.replace('APEX', '')].replace('.fits', '.APEXbeam.fits')
     else:
         # Use the cube_utils default
-        return line_stub
+        return data_stub
+
+def get_data_name(data_stub):
+    if data_stub in cube_utils.cubenames:
+        return cube_utils.cubenames[data_stub]
+    elif data_stub[:4] == 'irac':
+        return str([3.6, 4.5, 5.8, 8][int(data_stub[-1]) - 1]) + " $\mu$m"
+    else:
+        warnings.warn(f"unrecognized data_stub <{data_stub}>, submitting empty string \"\" as name")
+        return ""
+
+def get_2d_map(data_stub, velocity_limits=None, average_Tmb=False, data_memo=None):
+    """
+    May 3, 2023
+    Helper function for overlay_moment: create maps.
+    data_stub can refer to either an image or a cube. If it's a cube, velocity_limits
+    should be supplied and will be used to make a moment. If they aren't,
+    entire range is used.
+    Returns a tuple (data_array, info_dict)
+    data_array will be a 2d numpy array (not quantity)
+    info_dict will contain all the necessary metadata, like WCS, header (if applicable), Unit, etc.
+    (this way I can add functionality as I go and not have to rewrite things constantly)
+    :param average_Tmb: if False, moment 0s are returned in K km/s. If True,
+        the width of the velocity interval is divided out to get an average.
+        This is useful for stabilizing color limits across moments from different velocity ranges.
+    :param data_memo: memoization dictionary to cut down on reloads of the same data.
+        keys are the vlim_hash keys.
+    """
+    info_dict = {}
+    data_filename = get_map_filename(data_stub)
+    if isinstance(data_filename, tuple):
+        # Image
+        # First check for memoization
+        info_dict['vlim_hash'] = vlim_hash(data_stub)
+        if data_memo and info_dict['vlim_hash'] in data_memo:
+            img, info_dict = data_memo[info_dict['vlim_hash']]
+            return img, info_dict
+        # Not memoized, continue loading
+        data_filename, = data_filename
+        img, hdr = fits.getdata(catalog.utils.search_for_file(data_filename), header=True)
+        info_dict['wcs'] = WCS(hdr)
+        info_dict['hdr'] = hdr
+        if 'BUNIT' in hdr:
+            # If this throws an error I'll cross that bridge when I get to it
+            info_dict['unit'] = u.Unit(hdr['BUNIT'])
+
+        info_dict['obs_type'] = 'image'
+        return img, info_dict
+    else:
+        # Cube
+        # First check for memoization
+        info_dict['vlim_hash'] = vlim_hash(data_stub, velocity_limits=velocity_limits)
+        if data_memo and info_dict['vlim_hash'] in data_memo:
+            img, info_dict = data_memo[info_dict['vlim_hash']]
+            return img, info_dict
+        # Not memoized, continue loading, need to make moment
+        cube_obj = cube_utils.CubeData(data_filename).convert_to_K().convert_to_kms()
+        if velocity_limits is not None:
+            cube = cube_obj.data.spectral_slab(*velocity_limits)
+        else:
+            cube = cube_obj.data
+        mom0 = cube.moment0()
+        if average_Tmb:
+            # Divide out the velocity interval to get average temperature
+            if velocity_limits is not None:
+                dv = velocity_limits[1] - velocity_limits[0]
+            else:
+                dv = np.abs(cube_obj.data.spectral_axis[-1] - cube_obj.data.spectral_axis[0])
+            mom0 = (mom0 / dv).decompose()
+        info_dict['wcs'] = cube_obj.wcs_flat
+        info_dict['unit'] = mom0.unit
+        info_dict['obs_type'] = 'cube'
+        return mom0.to_value(), info_dict
+
+def trim_values_to_vlims(data, vmin=None, vmax=None):
+    """
+    May 4, 2023
+    Trim data values to vmin, vmax. Skips them if they aren't present.
+    Makes a copy of data (unless vmin, vmax are both None)
+    """
+    if vmin is None and vmax is None:
+        # Short circuit to avoid copying
+        return data
+    # Do not modify the original (just in case)
+    data = data.copy()
+    if vmin is not None:
+        data[data < vmin] = vmin
+    if vmax is not None:
+        data[data > vmax] = vmax
+    return data
+
 
 def manual_pv_slice_series():
     """
@@ -170,7 +354,6 @@ def manual_pv_slice_series():
         savename = f"/home/ramsey/Pictures/2023-04-26/m16_pv_{orientation}_{slice_idx:03d}.png"
         fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title=f'{line_stub}, using stub/file {filename}', file=__file__, func='manual_pv_slice_series'))
 
-
 def m16_large_moment0():
     """
     August 25, 2023
@@ -206,14 +389,13 @@ def m16_large_moment0():
         ax = plt.subplot(111, projection=cube_obj.wcs_flat)
         im = ax.imshow(mom0.to_value(), origin='lower', vmin=0, cmap='plasma')
         fig.colorbar(im, ax=ax, label=f"{cube_utils.cubenames[line_stub]} {mom0.unit.to_string('latex_inline')}")
-        vel_stub_simple = ".".join(f"{x.to_value():.1f}" for x in vel_lims)
+        vel_stub_simple = make_simple_vel_stub(vel_lims)
         savename = f"/home/ramsey/Pictures/2023-04-25/mom0_{line_stub}_{vel_stub_simple}.png"
         if not os.path.exists(os.path.dirname(savename)):
             os.makedirs(os.path.dirname(savename))
             print("Created", os.path.dirname(savename))
         fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title=make_vel_stub(vel_lims),
             file=__file__, func='m16_large_moment0'))
-
 
 def real_easy_pv(reg_idx=0):
     """
@@ -345,7 +527,6 @@ def convolve_cii_to_co32():
     convolved_cube = target_cube.convolve_to(reference_cube.beam)
     convolved_cube.write(savename, format='fits')
     print("done")
-
 
 def real_medium_spectra(velocity_index=0):
     """
@@ -548,7 +729,6 @@ def real_medium_spectra(velocity_index=0):
     print(savename)
     fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title=f'{line_stub}, using stub/file {cube_filename_short}', file=__file__, func="real_medium_spectra"))
 
-
 def pv_regrid_debug():
     """
     May 2, 2023
@@ -601,7 +781,195 @@ def pv_regrid_debug():
     plt.show()
     # fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='debug', file=__file__, func="pv_regrid_debug"))
 
+def overlay_moment(background='8um', overlay='cii', velocity_limits=None, cutout_reg=None, cutout_reg_index=0, data_memo=None, data_memo_rules='background'):
+    """
+    May 3, 2023
+    Ambitious code project: make flexible image-contour overlays.
+    Anticipate backgrounds of 8um and 250um but can keep flexible to use optical maps or something later.
+    Apply cutout, if requested, and regrid the overlay data to that WCS.
+    Make moment using velocity_limits is overlay data is a cube.
+
+    :param data_memo_rules: either 'background', 'overlay', or 'both'.
+        Only used if data_memo is not None. If data_memo is None, data_memo_rules is effectively "neither".
+        Chooses which data to memoized; only the user knows which data is staying constant and which is cycling in the loop.
+        Default: 'background', that is normal behavior.
+    """
+    # Redefine the conveniently-named input keywords
+    background_stub = background
+    overlay_stub = overlay
+    del background, overlay # they will be reused, but I want to be clear here
+    """
+    Set up data_memo_rules
+    Check for background memo with dmr%2==0
+    Check for overlay memo with drm>0
+    """
+    if data_memo is None:
+        dmr = -1
+    else:
+        dmr = ['background', 'overlay', 'both'].index(data_memo_rules)
+
+    # Load in background
+    img, img_info = get_2d_map(background_stub, velocity_limits=velocity_limits, average_Tmb=True, data_memo=data_memo)
+    # Cutout background (and update WCS)
+    img_info['cutout'] = misc_utils.cutout2d_from_region(img, img_info['wcs'], catalog.utils.search_for_file("catalogs/N19_cutout_box.reg"))
+    img = img_info['cutout'].data
+    img_info['wcs'] = img_info['cutout'].wcs
+    # Memoize it if it's not already there
+    if dmr%2 == 0 and img_info['vlim_hash'] not in data_memo:
+        data_memo[img_info['vlim_hash']] = (img, img_info)
+
+    # Load in overlay
+    overlay, overlay_info = get_2d_map(overlay_stub, velocity_limits=velocity_limits, average_Tmb=True, data_memo=data_memo)
+    # Regrid overlay to background
+    overlay_regrid = reproject_interp((overlay, overlay_info['wcs']), img_info['wcs'], shape_out=img.shape, return_footprint=False)
+    # From here on out, don't use the overlay wcs, use the img wcs
+    # Memoize it if it's not already there
+    if dmr > 0 and overlay_info['vlim_hash'] not in data_memo:
+        data_memo[overlay_info['vlim_hash']] = (overlay_regrid, overlay_info)
+
+    # print("img hash", img_info['vlim_hash'])
+    # print("overlay hash", overlay_info['vlim_hash'])
+
+    # Figure
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection=img_info['wcs'])
+    # Plot image
+    # Use generic vlims as a backup for specific vlims
+    img_vlim = get_generic_vlim(background_stub)
+    img_vlim.update(get_vlim(img_info['vlim_hash']))
+    im = ax.imshow(img, origin='lower', **img_vlim, cmap='Greys_r')
+    # Plot contours
+    # Check for levels or use vlims
+    memo_levels = get_levels(overlay_stub)
+    if memo_levels is None:
+        contour_args = (trim_values_to_vlims(overlay_regrid, **get_vlim(overlay_info['vlim_hash'])),)
+        contour_kwargs = {}
+    else:
+        contour_args = (overlay_regrid,)
+        contour_kwargs = dict(levels=memo_levels, **get_generic_vlim(overlay_stub))
+    cs = ax.contour(*contour_args, **contour_kwargs, cmap='magma_r')
+
+    # Image colorbar (right)
+    cbar_ax = ax.inset_axes([1, 0, 0.05, 1])
+    velocity_stub = " "+make_vel_stub(velocity_limits) if (img_info['obs_type'] == 'cube' and velocity_limits) else ""
+    cbar = fig.colorbar(im, cax=cbar_ax, label=f"{get_data_name(background_stub)}{velocity_stub} ({img_info['unit'].to_string('latex_inline')})")
+    # Contour colorbar (top)
+    cbar_ax2 = ax.inset_axes([0, 1, 1, 0.05])
+    velocity_stub = " "+make_vel_stub(velocity_limits) if (overlay_info['obs_type'] == 'cube' and velocity_limits) else ""
+    cbar2 = fig.colorbar(cs, cax=cbar_ax2, location='top', label=f"{get_data_name(overlay_stub)}{velocity_stub} ({overlay_info['unit'].to_string('latex_inline')})")
+
+    velocity_stub = "" if not velocity_limits else "_"+make_simple_vel_stub(velocity_limits)
+    if overlay_info['obs_type'] != 'cube' and img_info['obs_type'] != 'cube':
+        # Override velocity stub with empty string if neither image is a cube
+        velocity_stub = ""
+    cutout_stub = "" if not cutout_reg else f"cutout from {cutout_reg} index {cutout_reg_index}"
+    # 2023-05-03,04,05
+    fig.savefig(f"/home/ramsey/Pictures/2023-05-05/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_moment"))
+    # Some cleanup since things seem to pile up
+    plt.close(fig)
+
+def real_medium_pv(reg_filename_idx=0):
+    """
+    May 5, 2023
+    Re-create the PV diagrams from real_medium_spectra but without the other
+    stuff on the plots.
+    """
+    # Use CII and either 12 or 13CO 3-2
+    line_stub_list = ['12co32', 'ciiAPEX']
+
+    # Reference image
+    reference_filename_short = "spitzer/SPITZER_I4_mosaic_ALIGNED.fits"
+    ref_img, ref_hdr = fits.getdata(catalog.utils.search_for_file(reference_filename_short), header=True)
+    ref_wcs = WCS(ref_hdr)
+    # Hillenbrand stars
+    star_df = pd.read_csv(catalog.utils.search_for_file("catalogs/hillenbrand_stars_1.csv"), index_col='ID')
+    star_ra = star_df['RA'].values
+    star_dec = star_df['DE'].values
+    del star_df
+
+
+    pv_vmaxes = {'ciiAPEX': 20, '12co32': 30, '13co32': 15}
+    pv_levels = {'ciiAPEX': (3, 37, 4), '12co32': (5, 41, 5), '13co32': (1, 27, 2.5)}
+    velocity_limits = (8*kms, 35*kms)
+    velocity_intervals = np.arange(20, 35, 2)
+
+    reg_filename_list = ["catalogs/N19_points_along_path_1.reg", "catalogs/m16_up_points_along_path.reg",
+        "catalogs/m16_across_pillars_points_along_path.reg", "catalogs/spire_up_points_along_path.reg",
+        "catalogs/m16_across_points_along_path.reg",]
+
+    reg_filename_short = reg_filename_list[reg_filename_idx]
+    reg_filename = catalog.utils.search_for_file(reg_filename_short)
+    # Most of these files have 3 points and a vector
+    # If it doesn't have 3 points, ignore the points and use the vector.
+    point_reg_list = regions.Regions.read(reg_filename)
+    pv_path = pvdiagrams.path_from_ds9(reg_filename, index=0)
+
+    fig = plt.figure(figsize=(18, 6))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1, 5])
+    ax_ref_img = fig.add_subplot(gs[0,0], projection=ref_wcs)
+
+    # Plot reference image
+    ax_ref_img.imshow(ref_img, origin='lower', vmin=45, vmax=290, cmap='Greys_r')
+
+    pv_slices = []
+    for line_stub in line_stub_list:
+        cube_filename_short = get_map_filename(line_stub)
+        cube = cube_utils.CubeData(cube_filename_short).convert_to_K()
+        pv_slices.append(pvextractor.extract_pv_slice(cube.data.spectral_slab(*velocity_limits), pv_path))
+
+    # Regrid [1] to [0]; clean up the headers to allow reprojection
+    sl0, sl1_raw = pv_slices
+    sl0.header['CTYPE2'] = sl1_raw.header['CTYPE2'] = "VRAD"
+    sl1_raw.header['RESTFRQ'] = sl0.header['RESTFRQ']
+    sl1_reproj = reproject_interp((sl1_raw.data, sl1_raw.header), sl0.header, return_footprint=False)
+
+    # Plot
+    ax_pv = fig.add_subplot(gs[0, 1], projection=WCS(sl0.header))
+    ls0, ls1 = line_stub_list
+    # Background [0]
+    im = ax_pv.imshow(sl0.data, origin='lower', cmap='plasma', vmin=0, vmax=pv_vmaxes[ls0], aspect=(sl0.data.shape[1]/(2.5*sl0.data.shape[0])))
+    cs = ax_pv.contour(sl0.data, colors='k', linewidths=1, linestyles=':', levels=np.arange(*pv_levels[ls0]))
+    pv_cbar = fig.colorbar(im, ax=ax_pv, location='right', label=cube.data.unit.to_string('latex_inline'))
+    for l in cs.levels:
+        pv_cbar.ax.axhline(l, color='k')
+    ax_pv.text(0.05, 0.95, cube_utils.cubenames[ls0], fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
+    # Overlay [1]
+    cs = ax_pv.contour(sl1_reproj, cmap='cool', linewidths=1.5, levels=np.arange(*pv_levels[ls1]), vmax=pv_vmaxes[ls1])
+    for l in cs.levels:
+        pv_cbar.ax.axhline(l, color='w', linewidth=2)
+    ax_pv.text(0.05, 0.90, cube_utils.cubenames[ls1], fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
+
+    # Plot velocity intervals
+    x_length = pv_path._coords[0].separation(pv_path._coords[1]).deg
+    for v in velocity_intervals:
+        ax_pv.plot([0, x_length], [v*1e3]*2, color='grey', alpha=0.7, linestyle='--', transform=ax_pv.get_transform('world'))
+    # Plot region positions, if there are point regions
+    for reg in point_reg_list:
+        # Plot vertical bars on the PV diagram
+        offset = float(reg.meta['text'].split('/')[1]) * u.arcsec
+        ax_pv.plot([offset.to(u.deg).to_value()]*2, [v.to_value()*1e3 for v in velocity_limits], color='k', alpha=1, linestyle=':', linewidth=4, transform=ax_pv.get_transform('world'))
+        # Plot the points on the Spitzer image
+        pixreg = reg.to_pixel(ref_wcs)
+        x, y = pixreg.center.xy
+        ax_ref_img.plot([x], [y], 'o', mfc=marcs_colors[1], mec='k')
+
+    ax_pv.coords[1].set_format_unit(u.km/u.s)
+    ax_pv.coords[1].set_major_formatter('x.xx')
+    ax_pv.coords[0].set_format_unit(u.arcsec)
+    ax_pv.coords[0].set_major_formatter('x.xx')
+    ax_ref_img.set_xlabel("RA")
+    ax_ref_img.set_ylabel("Dec")
+    ax_ref_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color=marcs_colors[1], linestyle='-', lw=1, transform=ax_ref_img.get_transform('world'))
+    ax_ref_img.text(pv_path._coords[0].ra.deg, pv_path._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color=marcs_colors[1], fontsize=10, va='center', ha='right', transform=ax_ref_img.get_transform('world'))
+
+    plt.tight_layout()
+    # 2023-05-06
+    savename = f"/home/ramsey/Pictures/2023-05-06/pv_{ls1}_on_{ls0}_along_{os.path.basename(reg_filename_short).replace('.reg', '')}.png"
+    fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='pv',
+        file=__file__, func="real_medium_pv"))
+
 
 if __name__ == "__main__":
-    real_medium_spectra(6)
-    # for i in range(1,7):
+    for i in range(5):
+        real_medium_pv(i)

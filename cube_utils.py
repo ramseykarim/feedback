@@ -72,6 +72,7 @@ cubenames = {
 
     # For convenience, some frequently used non-cube names
     '8um': "8 $\mu$m", '70um': "70 $\mu$m", '160um': "160 $\mu$m",
+    '250um': "250 $\mu$m", '350um': "350 $\mu$m", '500um': "500 $\mu$m",
 }
 
 

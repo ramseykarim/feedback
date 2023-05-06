@@ -3,6 +3,8 @@ from numbers import Number
 import numpy as np
 
 from astropy import units as u
+from astropy.nddata.utils import Cutout2D
+import regions
 
 """
 General use utilitues for working with images or spectra
@@ -234,3 +236,28 @@ def identify_longest_run(bool_array, xaxis=None, return_mask=False):
         return return_mask
     else:
         return start, end
+
+
+def cutout2d_from_region(data, wcs_obj, reg_filename, reg_index=0):
+    """
+    May 4, 2023
+    Apply Cutout2D based on a DS9 box region in a .reg file.
+    Returns the entire Cutout2D object.
+    :param data: np.array input array. Should be 2 dimensional.
+        This is passed directly to Cutout2D as its "data" argument, so more
+        detail can be found in Cutout2D's documentation.
+    :param wcs_obj: WCS describing data.
+    :param reg_filename: str or path-like pointing to a DS9 '.reg' file.
+        The file must contain a rectangle region at the specified reg_index.
+    :param reg_index: int index into region file (optional, default 0)
+        Index of the box in the .reg file. Default is 0, which is acceptable
+        for single-region files as well as multi-region. Index must point to
+        a box region (e.g. Rectangle region in astropy regions).
+    :returns: Cutout2D created from data using the WCS and size info from the
+        supplied box region.
+    """
+    box_skyreg = regions.Regions.read(reg_filename)[reg_index]
+    # Using sky coordinates to specify Cutout2D
+    # center specified as SkyCoord. size given as (ny, nx) = (height, width)
+    cutout = Cutout2D(data, box_skyreg.center, (box_skyreg.height, box_skyreg.width), wcs=wcs_obj, mode='partial')
+    return cutout
