@@ -85,12 +85,23 @@ photometry_filenames = {
     '70um': "HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz",
     '160um': "HPPJSMAPR/hpacs_25HPPJSMAPR_1822_m1337_00_v1.0_1471714553094.fits.gz",
 }
+photometry_beams = {
+    '8um': (1.98, 1.98, 0), '70um': (9.0, 5.75, 62),
+    '160um': (13.32, 11.31, 40.9), '250um': (18.4, None, 0),
+    '350um': (25.2, None, 0), '500um': (36.7, None, 0),
+}
+cutout_box_filenames = {
+    'N19': "N19_cutout_box.reg", # Small, only N19
+    'med-large': "m16_cutout_box_medium-large.reg", # sort of like the Hill 2012 footprint, includes some of the filament. Goes well outside CII
+    'med': "m16_cutout_box_medium.reg", # CII and CO (3-2) footprint, aligned in equatorial (so there will be NaN gaps)
+}
 
 vlim_memo = { # hash things somehow and put them here
     '8um': (40, 320),
     'cii.levels': np.arange(5, 121, 10), 'cii.generic': (0, 60),
     '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 40),
     '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 18),
+    '13co10.levels': np.arange(0.25, 5, 0.5), '13co10.generic': (0, 4),
     '250um': (140, 4500), 'irac1': (1, 30), '70um': (-0.06, 3.5), # 70um can also do vmax=1.5 for greater sensitivity to low emission
     '160um': (-0.1, 2.5), '500um': (50, 500), '500um.levels': np.arange(200, 2001, 100), '500um.generic': (150, 500),
     'irac2': (1.5, 15), 'irac3': (10, 130),
@@ -227,6 +238,21 @@ def get_2d_map(data_stub, velocity_limits=None, average_Tmb=False, data_memo=Non
             # If this throws an error I'll cross that bridge when I get to it
             info_dict['unit'] = u.Unit(hdr['BUNIT'])
 
+        # Beam lookup (the images never have beams in headers...)
+        if data_stub[:4] == 'irac':
+            beam_key = '8um' # they're all the same
+        else:
+            beam_key = data_stub
+        if beam_key in photometry_beams:
+            major, minor, pa = photometry_beams[beam_key]
+            beam_params = dict(major=major*u.arcsec, pa=pa*u.deg)
+            if minor is not None:
+                beam_params['minor'] = minor*u.arcsec
+            info_dict['beam'] = cube_utils.Beam(**beam_params)
+        else:
+            # No beam!
+            pass
+
         info_dict['obs_type'] = 'image'
         return img, info_dict
     else:
@@ -252,6 +278,7 @@ def get_2d_map(data_stub, velocity_limits=None, average_Tmb=False, data_memo=Non
             mom0 = (mom0 / dv).decompose()
         info_dict['wcs'] = cube_obj.wcs_flat
         info_dict['unit'] = mom0.unit
+        info_dict['beam'] = cube_obj.data.beam
         info_dict['obs_type'] = 'cube'
         return mom0.to_value(), info_dict
 
@@ -271,6 +298,14 @@ def trim_values_to_vlims(data, vmin=None, vmax=None):
     if vmax is not None:
         data[data > vmax] = vmax
     return data
+
+def get_cutout_box_filename(cutout_box_stub):
+    """
+    May 9, 2023
+    Getter function for the cutout box region filenames.
+    Returns the absolute file path.
+    """
+    return catalog.utils.search_for_file("catalogs/" + cutout_box_filenames[cutout_box_stub])
 
 
 def manual_pv_slice_series():
@@ -781,7 +816,7 @@ def pv_regrid_debug():
     plt.show()
     # fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='debug', file=__file__, func="pv_regrid_debug"))
 
-def overlay_moment(background='8um', overlay='cii', velocity_limits=None, cutout_reg=None, cutout_reg_index=0, data_memo=None, data_memo_rules='background'):
+def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_memo=None, data_memo_rules='background', cutout_reg_stub='N19'):
     """
     May 3, 2023
     Ambitious code project: make flexible image-contour overlays.
@@ -811,9 +846,10 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, cutout
     # Load in background
     img, img_info = get_2d_map(background_stub, velocity_limits=velocity_limits, average_Tmb=True, data_memo=data_memo)
     # Cutout background (and update WCS)
-    img_info['cutout'] = misc_utils.cutout2d_from_region(img, img_info['wcs'], catalog.utils.search_for_file("catalogs/N19_cutout_box.reg"))
-    img = img_info['cutout'].data
-    img_info['wcs'] = img_info['cutout'].wcs
+    if cutout_reg_stub is not None:
+        img_info['cutout'] = misc_utils.cutout2d_from_region(img, img_info['wcs'], get_cutout_box_filename(cutout_reg_stub))
+        img = img_info['cutout'].data
+        img_info['wcs'] = img_info['cutout'].wcs
     # Memoize it if it's not already there
     if dmr%2 == 0 and img_info['vlim_hash'] not in data_memo:
         data_memo[img_info['vlim_hash']] = (img, img_info)
@@ -831,7 +867,8 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, cutout
     # print("overlay hash", overlay_info['vlim_hash'])
 
     # Figure
-    fig = plt.figure(figsize=(10, 10))
+    figsizes = {'n19': (10, 10), 'med-large': (13, 9)}
+    fig = plt.figure(figsize=figsizes.get(cutout_reg_stub, (10, 10)))
     ax = fig.add_subplot(111, projection=img_info['wcs'])
     # Plot image
     # Use generic vlims as a backup for specific vlims
@@ -849,6 +886,12 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, cutout
         contour_kwargs = dict(levels=memo_levels, **get_generic_vlim(overlay_stub))
     cs = ax.contour(*contour_args, **contour_kwargs, cmap='magma_r')
 
+    # Plot the footprint of the overlay if it would be visible at all
+    overlay_nan_map = np.isnan(overlay_regrid)
+    if np.any(overlay_nan_map):
+        ax.contour(overlay_nan_map.astype(float), levels=[0.5], colors='SlateGray', linestyles=':', linewidths=1)
+    del overlay_nan_map
+
     # Image colorbar (right)
     cbar_ax = ax.inset_axes([1, 0, 0.05, 1])
     velocity_stub = " "+make_vel_stub(velocity_limits) if (img_info['obs_type'] == 'cube' and velocity_limits) else ""
@@ -858,13 +901,26 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, cutout
     velocity_stub = " "+make_vel_stub(velocity_limits) if (overlay_info['obs_type'] == 'cube' and velocity_limits) else ""
     cbar2 = fig.colorbar(cs, cax=cbar_ax2, location='top', label=f"{get_data_name(overlay_stub)}{velocity_stub} ({overlay_info['unit'].to_string('latex_inline')})")
 
+    # Beams
+    beam_patch_kwargs = dict(alpha=0.9, hatch='////')
+    beam_x, beam_y = 0.93, 0.1
+    beam_ecs = [['white', 'grey'], [cs.cmap(cs.norm(cs.levels[j])) for j in [0, 2]]]
+    for i, data_info_dict in enumerate((img_info, overlay_info)):
+        if 'beam' not in data_info_dict:
+            continue
+        # Beam is known, plot it
+        patch = data_info_dict['beam'].ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_x, beam_y]), misc_utils.get_pixel_scale(img_info['wcs']))
+        patch.set(**beam_patch_kwargs, facecolor=beam_ecs[i][0], edgecolor=beam_ecs[i][1])
+        ax.add_artist(patch)
+        beam_x -= 0.03
+
     velocity_stub = "" if not velocity_limits else "_"+make_simple_vel_stub(velocity_limits)
     if overlay_info['obs_type'] != 'cube' and img_info['obs_type'] != 'cube':
         # Override velocity stub with empty string if neither image is a cube
         velocity_stub = ""
-    cutout_stub = "" if not cutout_reg else f"cutout from {cutout_reg} index {cutout_reg_index}"
-    # 2023-05-03,04,05
-    fig.savefig(f"/home/ramsey/Pictures/2023-05-05/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}.png",
+    cutout_stub = "" if cutout_reg_stub is None else f"cutout {cutout_reg_stub} from {os.path.basename(get_cutout_box_filename(cutout_reg_stub))}"
+    # 2023-05-03,04,05,09
+    fig.savefig(f"/home/ramsey/Pictures/2023-05-09/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_moment"))
     # Some cleanup since things seem to pile up
     plt.close(fig)
@@ -971,5 +1027,4 @@ def real_medium_pv(reg_filename_idx=0):
 
 
 if __name__ == "__main__":
-    for i in range(5):
-        real_medium_pv(i)
+    overlay_moment(background='500um', overlay='ciiAPEX', velocity_limits=(15*kms, 30*kms), cutout_reg_stub='med-large')
