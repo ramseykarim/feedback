@@ -98,10 +98,14 @@ cutout_box_filenames = {
 
 vlim_memo = { # hash things somehow and put them here
     '8um': (40, 320),
-    'cii.levels': np.arange(5, 121, 10), 'cii.generic': (0, 60),
+    'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]), 'cii.generic': (0, 65),
     '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 40),
     '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 18),
-    '13co10.levels': np.arange(0.25, 5, 0.5), '13co10.generic': (0, 4),
+
+    # '13co10.levels': np.arange(0.25, 5, 0.5), '13co10.generic': (0, 4), # these are good for large velocity intervals
+    '13co10.levels': np.arange(1, 22, 2), '13co10.generic': (0, 20), # small velocity intervals (like 1 km/s)
+
+    '12co10.levels': np.arange(5, 55, 5), '12co10.generic': (0, 40),
     '250um': (140, 4500), 'irac1': (1, 30), '70um': (-0.06, 3.5), # 70um can also do vmax=1.5 for greater sensitivity to low emission
     '160um': (-0.1, 2.5), '500um': (50, 500), '500um.levels': np.arange(200, 2001, 100), '500um.generic': (150, 500),
     'irac2': (1.5, 15), 'irac3': (10, 130),
@@ -899,7 +903,7 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
     # Contour colorbar (top)
     cbar_ax2 = ax.inset_axes([0, 1, 1, 0.05])
     velocity_stub = " "+make_vel_stub(velocity_limits) if (overlay_info['obs_type'] == 'cube' and velocity_limits) else ""
-    cbar2 = fig.colorbar(cs, cax=cbar_ax2, location='top', label=f"{get_data_name(overlay_stub)}{velocity_stub} ({overlay_info['unit'].to_string('latex_inline')})")
+    cbar2 = fig.colorbar(cs, cax=cbar_ax2, location='top', spacing='proportional', label=f"{get_data_name(overlay_stub)}{velocity_stub} ({overlay_info['unit'].to_string('latex_inline')})")
 
     # Beams
     beam_patch_kwargs = dict(alpha=0.9, hatch='////')
@@ -919,8 +923,8 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
         # Override velocity stub with empty string if neither image is a cube
         velocity_stub = ""
     cutout_stub = "" if cutout_reg_stub is None else f"cutout {cutout_reg_stub} from {os.path.basename(get_cutout_box_filename(cutout_reg_stub))}"
-    # 2023-05-03,04,05,09
-    fig.savefig(f"/home/ramsey/Pictures/2023-05-09/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}.png",
+    # 2023-05-03,04,05,09,10
+    fig.savefig(f"/home/ramsey/Pictures/2023-05-10/xu_intervals/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_moment"))
     # Some cleanup since things seem to pile up
     plt.close(fig)
@@ -1027,4 +1031,10 @@ def real_medium_pv(reg_filename_idx=0):
 
 
 if __name__ == "__main__":
-    overlay_moment(background='500um', overlay='ciiAPEX', velocity_limits=(15*kms, 30*kms), cutout_reg_stub='med-large')
+    vel_lims_list = [(16, 20), (21, 23), (25, 28)]
+    # vel_lims_list = [(x, x+1) for x in range(10, 15)]
+    f_vel_lims = lambda j : tuple(x*kms for x in vel_lims_list[j])
+    data_memo = {}
+    for line_stub in ['13co10', '13co32', '12co10', '12co32', 'ciiAPEX']:
+        for i in range(len(vel_lims_list)):
+            overlay_moment(background='250um', overlay=line_stub, velocity_limits=f_vel_lims(i), cutout_reg_stub='med-large', data_memo=data_memo)
