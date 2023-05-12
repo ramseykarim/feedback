@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.ticker as ticker
 from matplotlib.colors import LogNorm
+from matplotlib.lines import Line2D
 import sys
 import os
 import glob
@@ -72,6 +73,11 @@ make_simple_vel_stub = lambda x : ".".join(f"{y.to_value():.1f}" for y in x)
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
+"""
+File i/o and other useful, reusable things.
+Dictionaries/lists of constants/names and helper functions that use them.
+"""
+
 large_map_filenames = {
         'cii': "sofia/m16_CII_final_15_5_0p5_clean.fits",
         '12co10': "purplemountain/G17co12.fits", '13co10': "purplemountain/G17co13.fits",
@@ -95,7 +101,6 @@ cutout_box_filenames = {
     'med-large': "m16_cutout_box_medium-large.reg", # sort of like the Hill 2012 footprint, includes some of the filament. Goes well outside CII
     'med': "m16_cutout_box_medium.reg", # CII and CO (3-2) footprint, aligned in equatorial (so there will be NaN gaps)
 }
-
 vlim_memo = { # hash things somehow and put them here
     '8um': (40, 320),
     'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]), 'cii.generic': (0, 65),
@@ -110,6 +115,12 @@ vlim_memo = { # hash things somehow and put them here
     '160um': (-0.1, 2.5), '500um': (50, 500), '500um.levels': np.arange(200, 2001, 100), '500um.generic': (150, 500),
     'irac2': (1.5, 15), 'irac3': (10, 130),
 }
+default_reg_filename_list = [ # commonly used region filenames
+    "catalogs/N19_points_along_path_1.reg", "catalogs/m16_up_points_along_path.reg",
+    "catalogs/m16_across_pillars_points_along_path.reg", "catalogs/spire_up_points_along_path.reg",
+    "catalogs/m16_across_points_along_path.reg",
+]
+
 def vlim_hash(data_stub, velocity_limits=None, generic=False):
     """
     May 3, 2023
@@ -311,6 +322,56 @@ def get_cutout_box_filename(cutout_box_stub):
     """
     return catalog.utils.search_for_file("catalogs/" + cutout_box_filenames[cutout_box_stub])
 
+
+def get_pv_and_regions(reg_filename_or_idx):
+    """
+    May 11, 2023
+    Load up to 1 vector as a PV path and 0 or more non-vector sky regions.
+    Returns (pv_path, reg_list, reg_fn_stub)
+    If no vector, pv_path is None.
+    If no regions, reg_list is empty list.
+    If no list at all (i.e. reg_filename_or_idx is None), then both of the above
+    and reg_fn_stub is empty string. reg_fn_stub is for record keeping, goes in
+    png metadata or image save filenames.
+
+    path_idx will apply only to vectors; has no effect if no vectors
+
+    """
+    if reg_filename_or_idx is None:
+        # Short circuit and return the default empty values
+        return (None, [], "")
+    # Some regions have been specified
+    if isinstance(reg_filename_or_idx, int):
+        # Index into existing list; all these only have 1 vector
+        reg_filename_short = default_reg_filename_list[reg_filename_or_idx]
+        # First (only) vector
+        path_idx = 0
+    elif isinstance(reg_filename_or_idx, tuple):
+        # Tuple of filename, path_idx
+        reg_filename_short, path_idx = reg_filename_or_idx
+    elif isinstance(reg_filename_or_idx, str):
+        # Filename, assume first (or only) path in file
+        reg_filename_short = reg_filename_or_idx
+        path_idx = 0
+    else:
+        raise RuntimeError(f"Unknown path specifier {reg_filename_or_idx}")
+    try:
+        reg_filename = catalog.utils.search_for_file(reg_filename_short)
+    except Exception as e:
+        raise RuntimeError(f"Issue with path specifier {reg_filename_or_idx}") from e
+    # Regions.read will return an empty list if no plottable regions (i.e. vectors only)
+    reg_list = regions.Regions.read(reg_filename)
+    pv_path = pvdiagrams.path_from_ds9(reg_filename, index=path_idx)
+    reg_fn_stub = os.path.basename(reg_filename_short).replace('.reg', '')
+    if path_idx != 0:
+        # Indicate path index if it's not 0
+        reg_fn_stub += f"-p{path_idx}"
+    return (pv_path, reg_list, reg_fn_stub)
+
+
+"""
+Image creation functions below here
+"""
 
 def manual_pv_slice_series():
     """
@@ -820,7 +881,7 @@ def pv_regrid_debug():
     plt.show()
     # fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='debug', file=__file__, func="pv_regrid_debug"))
 
-def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_memo=None, data_memo_rules='background', cutout_reg_stub='N19'):
+def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_memo=None, data_memo_rules='background', cutout_reg_stub='N19', reg_filename_or_idx=None, plot_stars=False):
     """
     May 3, 2023
     Ambitious code project: make flexible image-contour overlays.
@@ -846,6 +907,19 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
         dmr = -1
     else:
         dmr = ['background', 'overlay', 'both'].index(data_memo_rules)
+
+    """
+    Load in regions to plot, if any
+    This can be up to one path and any number of astropy regions-recognized regions
+    """
+    pv_path, reg_list, reg_fn_stub = get_pv_and_regions(reg_filename_or_idx)
+
+    """ Hillenbrand Stars """
+    if plot_stars:
+        star_df = pd.read_csv(catalog.utils.search_for_file("catalogs/hillenbrand_stars_1.csv"), index_col='ID')
+        star_ra = star_df['RA'].values
+        star_dec = star_df['DE'].values
+        del star_df
 
     # Load in background
     img, img_info = get_2d_map(background_stub, velocity_limits=velocity_limits, average_Tmb=True, data_memo=data_memo)
@@ -918,25 +992,62 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
         ax.add_artist(patch)
         beam_x -= 0.03
 
+    """ Plot paths and regions """
+    # Before starting this, save the current x and y limits in case a region goes out of bounds
+    ref_xlim = ax.get_xlim()
+    ref_ylim = ax.get_ylim()
+    # Check for PV paths, plot if found
+    reg_color = "LimeGreen"
+    if pv_path:
+        ax.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color=reg_color, linestyle='-', lw=1, transform=ax.get_transform('world'))
+        ax.text(pv_path._coords[0].ra.deg, pv_path._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color=reg_color, fontsize=10, va='center', ha='right', transform=ax.get_transform('world'))
+    if reg_list:
+        for reg in reg_list:
+            if isinstance(reg, regions.LineSkyRegion):
+                # Skip Line regions
+                continue
+            reg_patch = reg.to_pixel(img_info['wcs']).as_artist()
+            # Gotta mess around with the lines vs other patches
+            if isinstance(reg_patch, Line2D):
+                # Point!!!
+                reg_patch.set(mec=reg_color)
+                ax.add_artist(reg_patch)
+            else:
+                # Anything besides Point
+                reg_patch.set(ec=reg_color)
+                ax.add_patch(reg_patch)
+    if plot_stars:
+        # Plot stars if requested; if plot_stars is True, then stars_ra and stars_dec exist
+        ax.scatter(star_ra, star_dec, mec=marcs_colors[3], mfc='None', marker='o', transform=ax.get_transform('world'))
+    ax.set_xlim(ref_xlim)
+    ax.set_ylim(ref_ylim)
+
+
+
     velocity_stub = "" if not velocity_limits else "_"+make_simple_vel_stub(velocity_limits)
     if overlay_info['obs_type'] != 'cube' and img_info['obs_type'] != 'cube':
         # Override velocity stub with empty string if neither image is a cube
         velocity_stub = ""
     cutout_stub = "" if cutout_reg_stub is None else f"cutout {cutout_reg_stub} from {os.path.basename(get_cutout_box_filename(cutout_reg_stub))}"
-    # 2023-05-03,04,05,09,10
-    fig.savefig(f"/home/ramsey/Pictures/2023-05-10/xu_intervals/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}.png",
+    if reg_fn_stub:
+        reg_fn_stub = "_"+reg_fn_stub
+    if plot_stars:
+        reg_fn_stub += '_with-stars'
+    # 2023-05-03,04,05,09,10,11
+    fig.savefig(f"/home/ramsey/Pictures/2023-05-11/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}{reg_fn_stub}.png",
         metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_moment"))
     # Some cleanup since things seem to pile up
     plt.close(fig)
 
-def real_medium_pv(reg_filename_idx=0):
+def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     """
     May 5, 2023
     Re-create the PV diagrams from real_medium_spectra but without the other
     stuff on the plots.
+    Formerly real_medium_pv, but planning to use it live so gave it a better name.
     """
+    # Moved line_stub_list to argument
     # Use CII and either 12 or 13CO 3-2
-    line_stub_list = ['12co32', 'ciiAPEX']
 
     # Reference image
     reference_filename_short = "spitzer/SPITZER_I4_mosaic_ALIGNED.fits"
@@ -951,19 +1062,21 @@ def real_medium_pv(reg_filename_idx=0):
 
     pv_vmaxes = {'ciiAPEX': 20, '12co32': 30, '13co32': 15}
     pv_levels = {'ciiAPEX': (3, 37, 4), '12co32': (5, 41, 5), '13co32': (1, 27, 2.5)}
+    def _get_levels(line_stub):
+        """
+        Get levels from the above dictionary. Return None if not present.
+        """
+        if line_stub in pv_levels:
+            return np.arange(*pv_levels[line_stub])
+        else:
+            return None
     velocity_limits = (8*kms, 35*kms)
     velocity_intervals = np.arange(20, 35, 2)
 
-    reg_filename_list = ["catalogs/N19_points_along_path_1.reg", "catalogs/m16_up_points_along_path.reg",
-        "catalogs/m16_across_pillars_points_along_path.reg", "catalogs/spire_up_points_along_path.reg",
-        "catalogs/m16_across_points_along_path.reg",]
-
-    reg_filename_short = reg_filename_list[reg_filename_idx]
-    reg_filename = catalog.utils.search_for_file(reg_filename_short)
     # Most of these files have 3 points and a vector
-    # If it doesn't have 3 points, ignore the points and use the vector.
-    point_reg_list = regions.Regions.read(reg_filename)
-    pv_path = pvdiagrams.path_from_ds9(reg_filename, index=0)
+    # In theory, it can have any number of points which will be handled correctly
+    # If it doesn't have points, ignore the points and use the vector.
+    pv_path, point_reg_list, reg_fn_stub = get_pv_and_regions(reg_filename_or_idx)
 
     fig = plt.figure(figsize=(18, 6))
     gs = fig.add_gridspec(1, 2, width_ratios=[1, 5])
@@ -987,15 +1100,15 @@ def real_medium_pv(reg_filename_idx=0):
     # Plot
     ax_pv = fig.add_subplot(gs[0, 1], projection=WCS(sl0.header))
     ls0, ls1 = line_stub_list
-    # Background [0]
-    im = ax_pv.imshow(sl0.data, origin='lower', cmap='plasma', vmin=0, vmax=pv_vmaxes[ls0], aspect=(sl0.data.shape[1]/(2.5*sl0.data.shape[0])))
-    cs = ax_pv.contour(sl0.data, colors='k', linewidths=1, linestyles=':', levels=np.arange(*pv_levels[ls0]))
+    # Background [0]; can either use Greys(_r) to match wtih plasma(_r) contours, or plasma to match with cool contours
+    im = ax_pv.imshow(sl0.data, origin='lower', cmap='Greys_r', vmin=0, vmax=pv_vmaxes.get(ls0, None), aspect=(sl0.data.shape[1]/(2.5*sl0.data.shape[0])))
+    cs = ax_pv.contour(sl0.data, colors='k', linewidths=1, linestyles=':', levels=_get_levels(ls0))
     pv_cbar = fig.colorbar(im, ax=ax_pv, location='right', label=cube.data.unit.to_string('latex_inline'))
     for l in cs.levels:
         pv_cbar.ax.axhline(l, color='k')
     ax_pv.text(0.05, 0.95, cube_utils.cubenames[ls0], fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
     # Overlay [1]
-    cs = ax_pv.contour(sl1_reproj, cmap='cool', linewidths=1.5, levels=np.arange(*pv_levels[ls1]), vmax=pv_vmaxes[ls1])
+    cs = ax_pv.contour(sl1_reproj, cmap='plasma_r', linewidths=1.5, levels=_get_levels(ls1), vmax=pv_vmaxes.get(ls1, None))
     for l in cs.levels:
         pv_cbar.ax.axhline(l, color='w', linewidth=2)
     ax_pv.text(0.05, 0.90, cube_utils.cubenames[ls1], fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
@@ -1024,17 +1137,29 @@ def real_medium_pv(reg_filename_idx=0):
     ax_ref_img.text(pv_path._coords[0].ra.deg, pv_path._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color=marcs_colors[1], fontsize=10, va='center', ha='right', transform=ax_ref_img.get_transform('world'))
 
     plt.tight_layout()
-    # 2023-05-06
-    savename = f"/home/ramsey/Pictures/2023-05-06/pv_{ls1}_on_{ls0}_along_{os.path.basename(reg_filename_short).replace('.reg', '')}.png"
+    # 2023-05-06,11
+    savename = f"/home/ramsey/Pictures/2023-05-11/pv_{ls1}_on_{ls0}_along_{reg_fn_stub}.png"
     fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='pv',
-        file=__file__, func="real_medium_pv"))
+        file=__file__, func="fast_pv"))
 
 
 if __name__ == "__main__":
-    vel_lims_list = [(16, 20), (21, 23), (25, 28)]
-    # vel_lims_list = [(x, x+1) for x in range(10, 15)]
-    f_vel_lims = lambda j : tuple(x*kms for x in vel_lims_list[j])
-    data_memo = {}
-    for line_stub in ['13co10', '13co32', '12co10', '12co32', 'ciiAPEX']:
-        for i in range(len(vel_lims_list)):
-            overlay_moment(background='250um', overlay=line_stub, velocity_limits=f_vel_lims(i), cutout_reg_stub='med-large', data_memo=data_memo)
+    """
+    Moment 0 examples
+    """
+    # data_memo = {}
+    # vel_lims_list = [(16, 20), (21, 23), (25, 28)]
+    # # vel_lims_list = [(x, x+1) for x in range(10, 15)]
+    # f_vel_lims = lambda j : tuple(x*kms for x in vel_lims_list[j])
+    # for line_stub in ['13co10', '13co32', '12co10', '12co32', 'ciiAPEX']:
+    #     for i in range(len(vel_lims_list)):
+    #         overlay_moment(background='250um', overlay=line_stub, velocity_limits=f_vel_lims(i), cutout_reg_stub='med-large', data_memo=data_memo)
+    overlay_moment(background='250um', overlay='ciiAPEX', velocity_limits=(21*kms, 22*kms), cutout_reg_stub='med', reg_filename_or_idx="catalogs/N19_pv_2.reg", plot_stars=False)
+
+    """
+    PV examples
+    """
+    # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['13co32', '13co10'])
+    # fast_pv(reg_filename_or_idx=0)
+    # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
+    # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['12co10', 'ciiAPEX'])

@@ -553,6 +553,13 @@ def path_from_ds9(reg_file_name, index, width=None):
     """
     # Get list of Paths
     path_list = pvextractor.paths_from_regfile(reg_file_name)
+    if not path_list:
+        # Added May 11, 2023; still using this!
+        # No lines or vectors; return a null value in accordance with how many were requested
+        if index is None:
+            return path_list
+        else:
+            return None
     if index is None:
         # Assign width to all Paths; you can always go change it
         if width is not None:
