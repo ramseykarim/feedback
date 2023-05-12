@@ -26,8 +26,7 @@ __author__ = "Ramsey Karim"
 
 
 
-def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None,
-    return_header=False, **extra_header_kws):
+def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None, return_header=False, **extra_header_kws):
     """
     Make a fresh, simple WCS object based on a few parameters. Does not need
         any existing data or WCS info.
@@ -147,8 +146,7 @@ def image_overlap(wcs_obj1, wcs_obj2):
     return is_overlap
 
 
-def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1,
-    shrink_height_factor=1, shrink_width_factor=1, **other_kwargs):
+def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1, shrink_height_factor=1, shrink_width_factor=1, **other_kwargs):
     """
     Create a WCS object with a simliar footprint to one existing WCS object and
         a similar pixel scale to another WCS object.
@@ -188,19 +186,6 @@ def make_wcs_like(wcs_for_footprint, wcs_for_pixels, degrade_pixelscale_factor=1
         **other_kwargs)
 
 
-if __name__ == "__main__":
-    # Location of VLT Halpha data
-    data_directory = "../ancillary_data/vlt/omegacam/"
-    # All filenames
-    vlt_fns = glob.glob(f"{data_directory}/ADP*")
-else:
-    # This doesn't matter if we're not running this particular file
-    # If we're not running this file, it means we're probably not using VLT
-    # data, just repurposing some of the WCS code above
-    data_directory = None
-    vlt_fns = None
-
-
 def iterate_over_chips(filename_list):
     """
     Generator function for cycling through all the CCD chips from multiple
@@ -215,12 +200,12 @@ def iterate_over_chips(filename_list):
     # Iterate over the different files
     for i in range(len(filename_list)):
         # Check the number of chips in this file
-        with fits.open(vlt_fns[i]) as hdul:
+        with fits.open(filename_list[i]) as hdul:
             n_chips = len(hdul) - 1
         # Iterate over the chips in this file.
         # Use fits.getdata so we don't keep HDULists open
         for j in range(1, n_chips + 1):
-            data, header = fits.getdata(vlt_fns[i], j, header=True)
+            data, header = fits.getdata(filename_list[i], j, header=True)
             yield data, WCS(header)
 
 
@@ -240,7 +225,18 @@ def list_of_chips(filename_list, wcs_reference):
     return list_to_return
 
 
-if __name__ == "__main__":
+def do_vlt_mosaic_rcw49():
+    """
+    This used to be all under if name == main, but since I'm about to reuse
+    this code for M16 I will set this aside and rewrite the script for M16
+    """
+
+    # Location of VLT Halpha data
+    data_directory = "../ancillary_data/vlt/omegacam/"
+    # All filenames
+    vlt_fns = glob.glob(f"{data_directory}/ADP*")
+
+
     # I want the reference WCS to have roughly the same footprint as the IRAC data
     irac_fn = glob.glob("../ancillary_data/spitzer/irac/300*").pop()
     # IRAC pixel_scale_matrix is diagonal (0s on off-diag), so we can copy this style
@@ -316,3 +312,9 @@ if __name__ == "__main__":
     # plt.subplot(122, projection=new_w)
     # plt.imshow(mosaic_footprint, origin='lower')
     # plt.show()
+
+def do_vlt_mosaic_m16():
+    """
+    May 13, 2023
+    """
+    ...
