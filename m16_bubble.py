@@ -120,6 +120,7 @@ default_reg_filename_list = [ # commonly used region filenames
     "catalogs/m16_across_pillars_points_along_path.reg", "catalogs/spire_up_points_along_path.reg",
     "catalogs/m16_across_points_along_path.reg",
 ]
+onesigmas = {'12co10': 0.415, '13co10': 0.200, 'c18o10': 0.202}
 
 def vlim_hash(data_stub, velocity_limits=None, generic=False):
     """
@@ -367,6 +368,111 @@ def get_pv_and_regions(reg_filename_or_idx):
         # Indicate path index if it's not 0
         reg_fn_stub += f"-p{path_idx}"
     return (pv_path, reg_list, reg_fn_stub)
+
+
+"""
+CO Column density
+"""
+def find_co10_noise():
+    """
+    May 16, 2023
+    Find the PMO CO 1-0 noise.
+    Use the following 0-indexed boxes:
+        X 8-37, Y 69-90, channel 0-78
+        X 8-54, Y 69-90, channel 0-65
+    I think it goes (chanel, Y, X) but it always surprises me. Yes it does!
+    The shape is (200, 97, 97) so I can't even tell by dimensions.
+
+    The larger box has a little bit of signal left in it, but both boxes are
+    relatively clear after channel 150 so I can try that too.
+
+    Worked well!
+    12CO10 is 0.415 K
+    13CO10 is 0.200 K
+    C18O10 is 0.202 K
+
+    Each box produces a very similar answer such that the variation from box to
+    box is minimal (~few percent).
+    """
+    cube_fn = get_map_filename('12co10')
+    cube = cube_utils.CubeData(cube_fn)
+    # Get a signal-free subcube to test the RMS
+    clean_slab_params = [
+        ((0, 78), (69, 90), (8, 37)),
+        ((0, 65), (69, 90), (8, 54)),
+        ((150, None), (69, 90), (8, 37)),
+        ((150, None), (69, 90), (8, 54)),
+        ]
+    for i in range(len(clean_slab_params)):
+        clean_slab = cube.data[tuple(slice(*x) for x in clean_slab_params[i])]
+        # plt.subplot(121)
+        # plt.imshow(clean_slab.moment0().to_value(), origin='lower')
+        # plt.subplot(122)
+        # plt.plot(clean_slab.mean(axis=(1, 2)))
+        # plt.show()
+        clean_slab_rms = clean_slab.std()
+        print(f"box {i}: {clean_slab_rms:0.2f}")
+
+
+def co_column_manage_inputs():
+    """
+    May 16, 2023
+    Wrapper function for the more general function below.
+    This function is specific to the M16 CO 1-0 and 3-2 maps we have.
+    It does the work of m16_deepdive.integrate_13_and_18_co_for_column_density
+    and m16_deepdive.get_excitation_temperature_12co.
+
+    The only user input is whether to use 1-0 or 3-2.
+    Can consider adding C18O 1-0 later.
+    And write in the capability (to be refined later) to use specific velocity limits.
+    """
+    line = '10'
+    if line == '32':
+        thick_cube_stub = '12co32'
+        thin_cube_stub = '13co32'
+        thick_channel_uncertainty = cube_utils.onesigmas[thick_cube_stub]
+        thin_channel_uncertainty = cube_utils.onesigmas[thin_cube_stub]
+    elif line == '10':
+        thick_cube_stub = '12co10'
+        thin_cube_stub = '13co10'
+        thick_channel_uncertainty = onesigmas[thick_cube_stub]
+        thin_channel_uncertainty = onesigmas[thin_cube_stub]
+
+    # Placeholder for velocity limits argument
+    velocity_limits = None
+    # Expose the if logic as the top layer, since we only need to check once!
+    if velocity_limits is None:
+        def _apply_velocity_limits(cube):
+            return cube
+    else:
+        def _apply_velocity_limits(cube):
+            return cube.spectral_slab(*velocity_limits)
+
+    # Load 12 (optically thick) and 13 or 18 (optically thin) maps.
+    # Get excitation temperature from optically thick cube
+    thick_cube_fn = get_map_filename(thick_cube_stub)
+    thick_cube_obj = cube_utils.CubeData(thick_cube_fn)
+    thick_cube = _apply_velocity_limits(thick_cube_obj.data)
+    # Save this in final cube
+    peak_temperature = thick_cube.max(axis=0).to(u.K)
+    del thick_cube_obj, thick_cube
+
+    # Get integrated optically thin emission
+    thin_cube_fn = get_map_filename(thin_cube_stub)
+    thin_cube_obj = cube_utils.CubeData(thin_cube_fn).convert_to_kms()
+    thin_cube = _apply_velocity_limits(thin_cube_obj.data)
+    # Todo: make a cleaner moment image by trimming out the emission-free parts
+    # Save this in final cube
+    mom0 = thin_cube.moment0().to(u.K*kms)
+    # Noise
+    cube_dv = np.abs(np.diff(thin_cube.spectral_axis[:2]))[0].to(kms).to_value()
+    n_channels = thin_cube.shape[0]
+    noise = thin_channel_uncertainty * cube_dv * np.sqrt(n_channels)
+    del thin_cube_obj, thin_cube
+
+    plt.imshow(mom0.to_value(), origin='lower')
+    plt.show()
+
 
 
 """
@@ -1154,7 +1260,7 @@ if __name__ == "__main__":
     # for line_stub in ['13co10', '13co32', '12co10', '12co32', 'ciiAPEX']:
     #     for i in range(len(vel_lims_list)):
     #         overlay_moment(background='250um', overlay=line_stub, velocity_limits=f_vel_lims(i), cutout_reg_stub='med-large', data_memo=data_memo)
-    overlay_moment(background='250um', overlay='ciiAPEX', velocity_limits=(21*kms, 22*kms), cutout_reg_stub='med', reg_filename_or_idx="catalogs/N19_pv_2.reg", plot_stars=False)
+    # overlay_moment(background='250um', overlay='ciiAPEX', velocity_limits=(21*kms, 22*kms), cutout_reg_stub='med', reg_filename_or_idx="catalogs/N19_pv_2.reg", plot_stars=False)
 
     """
     PV examples
@@ -1163,3 +1269,8 @@ if __name__ == "__main__":
     # fast_pv(reg_filename_or_idx=0)
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['12co10', 'ciiAPEX'])
+
+    """
+    CO column
+    """
+    co_column_manage_inputs()
