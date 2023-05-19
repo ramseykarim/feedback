@@ -2,9 +2,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import glob
 import os, sys
+from collections import defaultdict
 
 from astropy.io import fits
 from astropy.wcs import WCS
+from astropy.wcs import utils as wcs_utils
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5, ICRS
 
@@ -20,11 +22,18 @@ The image is an Halpha image that we will find quite useful.
 Created: 4/16/2020
 
 Updated: 8/11/2020
-Moved the VLT-specific stuff to if name == main so I can reuse the WCS stuff
+Moved the VLT-specific stuff to if name == main so I can reuse the WCS stuff.
+
+Updated: 2023-05-19
+Moved the RCW 49 VLT stuff out of if name == main to a function so that I can
+do M16 VLT in another function. if name == main should just contain
+function calls now, not big free-standing scripts.
+I organized it into a main() function which can sit at the top where I can see it.
 """
 __author__ = "Ramsey Karim"
 
-
+def main():
+    do_vlt_mosaic_m16()
 
 def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None, return_header=False, **extra_header_kws):
     """
@@ -316,5 +325,36 @@ def do_vlt_mosaic_rcw49():
 def do_vlt_mosaic_m16():
     """
     May 13, 2023
+    And work on May 19, 2023
+
+    The files ADP.*.fits.fz seem to be 32 tiles with a PrimaryHDU at the front,
+    so len(hdul) == 33
     """
-    ...
+    data_directory = "/home/ramsey/Documents/Research/Feedback/m16_data/vlt"
+
+    def _get_pixel_scale_from_single_tile():
+        # Need pixel scale for WCS
+        with fits.open(os.path.join(data_directory, "ADP.2015-05-11T10:19:18.363.fits.fz")) as hdul:
+            single_tile_wcs = WCS(hdul[1].header)
+        return np.mean(np.abs(wcs_utils.proj_plane_pixel_scales(single_tile_wcs))) * u.deg
+
+    def _get_list_of_chips():
+        # Use the functions I built back in 2020 to cycle thru chips and return a big list
+        # First get a list of all filenames, and then sort them by their filter
+        vlt_fns = glob.glob(os.path.join(data_directory, "ADP*"))
+
+        # Check headers
+        filters = defaultdict(list)
+        for fn in vlt_fns:
+            hdr = fits.getheader(fn)
+            filters[hdr['FILTER']].append(fn)
+        print(filters)
+
+        # Next, use list_of_chips(list_of_filenames, target WCS object)
+        # The return value from that can go straight into reproject_and_coadd
+
+    _get_list_of_chips()
+
+
+if __name__ == "__main__":
+    main()

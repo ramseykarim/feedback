@@ -73,6 +73,24 @@ make_simple_vel_stub = lambda x : ".".join(f"{y.to_value():.1f}" for y in x)
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
+ratio_12co_to_H2 = 8.5e-5
+Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)->N(H) section
+
+ratio_12co_to_13co = 44.65 # call it 45 in paper, the difference will be miniscule
+
+los_distance_M16 = 1740 * u.pc # Kuhn et al 2019
+err_los_distance_M16 = 130 * u.pc # Kuhn et al 2019; it was +130, -120, so for a symmetric error bar I'll take +/- 130
+
+H_mass_amu = 1.00794
+Hmass = const.u * H_mass_amu
+# H2_mass is 1/1e4 larger than 2x Hmass. All of these ignore He
+# no longer using this: # H2_mass_permole = 2.016 * u.g / u.mol
+# no longer using this: H2_mass =  (H2_mass_permole / const.N_A).decompose()
+# Fix all instances of H2_mass to be 2*Hmass (easier to find them thru NameErrors)
+
+# Adopting Y = 0.25, Z=0
+mean_molecular_weight_neutral = 1.33
+
 """
 File i/o and other useful, reusable things.
 Dictionaries/lists of constants/names and helper functions that use them.
@@ -430,13 +448,13 @@ def co_column_manage_inputs():
     if line == '32':
         thick_cube_stub = '12co32'
         thin_cube_stub = '13co32'
-        thick_channel_uncertainty = cube_utils.onesigmas[thick_cube_stub]
-        thin_channel_uncertainty = cube_utils.onesigmas[thin_cube_stub]
+        thick_channel_uncertainty = cube_utils.onesigmas[thick_cube_stub] * u.K
+        thin_channel_uncertainty = cube_utils.onesigmas[thin_cube_stub] * u.K
     elif line == '10':
         thick_cube_stub = '12co10'
         thin_cube_stub = '13co10'
-        thick_channel_uncertainty = onesigmas[thick_cube_stub]
-        thin_channel_uncertainty = onesigmas[thin_cube_stub]
+        thick_channel_uncertainty = onesigmas[thick_cube_stub] * u.K
+        thin_channel_uncertainty = onesigmas[thin_cube_stub] * u.K
 
     # Placeholder for velocity limits argument
     velocity_limits = None
@@ -461,19 +479,305 @@ def co_column_manage_inputs():
     thin_cube_fn = get_map_filename(thin_cube_stub)
     thin_cube_obj = cube_utils.CubeData(thin_cube_fn).convert_to_kms()
     thin_cube = _apply_velocity_limits(thin_cube_obj.data)
+    # Grab a couple other things from the CubeData object
+    beam = thin_cube_obj.data.beam
+    save_path = os.path.dirname(thin_cube_obj.full_path)
     # Todo: make a cleaner moment image by trimming out the emission-free parts
     # Save this in final cube
-    mom0 = thin_cube.moment0().to(u.K*kms)
+    mom0 = thin_cube.moment0()
     # Noise
-    cube_dv = np.abs(np.diff(thin_cube.spectral_axis[:2]))[0].to(kms).to_value()
+    cube_dv = np.abs(np.diff(thin_cube.spectral_axis[:2]))[0].to(kms)
     n_channels = thin_cube.shape[0]
-    noise = thin_channel_uncertainty * cube_dv * np.sqrt(n_channels)
+    moment0_noise = thin_channel_uncertainty * cube_dv * np.sqrt(n_channels)
     del thin_cube_obj, thin_cube
 
-    plt.imshow(mom0.to_value(), origin='lower')
-    plt.show()
+    # plt.imshow(mom0.to(u.K*kms).to_value(), origin='lower')
+    # plt.show()
+
+    col_dens_calculator = COColumnDensity(thin_cube_stub)
+    col_dens_calculator.set_data(peak_temperature, mom0.to(u.K*kms))
+    col_dens_calculator.set_uncertainty(thick_channel_uncertainty, moment0_noise)
+    col_dens_calculator.set_abundance_ratios(ratio_12co_to_13co, ratio_12co_to_H2)
+    col_dens_calculator.calculate_column_density()
+    col_dens_calculator.calculate_mass_per_pixel(mom0.wcs, los_distance=los_distance_M16, e_los_distance=err_los_distance_M16, thin_line_beam=beam)
+
+    # plt.subplot(121)
+    # plt.imshow(col_dens_calculator.H2_column_density.to_value(), origin='lower')
+    # plt.subplot(122)
+    # plt.imshow(col_dens_calculator.mass_per_pixel.to_value(), origin='lower')
+    # plt.show()
+
+    """ Write results to FITS """
+    savename = os.path.join(save_path, f"column_density_{thin_cube_stub}.fits")
+
+    header_pairs = col_dens_calculator.create_header_comments()
+
+    def make_and_fill_header():
+        # fill header with stuff, make it from WCS
+        hdr = mom0.wcs.to_header()
+        for k, v in header_pairs:
+            hdr[k] = v
+        return hdr
+
+    # common messages
+    h2_msg = "This is MOLECULAR hydrogen (H2)"
+    mass_msg = "mass is per pixel on this image"
+
+    extensions = [
+        ('H2coldens', col_dens_calculator.H2_column_density, h2_msg),
+        ('err_H2coldens', col_dens_calculator.e_H2_column_density, h2_msg),
+        ('12COcoldens', col_dens_calculator.thick_line_column_density),
+        ('err_12COcoldens', col_dens_calculator.e_thick_line_column_density),
+        ('13COcoldens', col_dens_calculator.thin_line_column_density),
+        ('err_13COcoldens', col_dens_calculator.e_thin_line_column_density),
+        ('mass', col_dens_calculator.mass_per_pixel, mass_msg),
+        ('err_mass', col_dens_calculator.e_mass_per_pixel, mass_msg),
+    ]
+
+    # Going to try just copying the header, I think it's fine
+
+    def make_extension(ext_tup, header_template):
+        # make an HDU from a tuple of info and (shared) header starter
+        if len(ext_tup) == 2:
+            extname, data = ext_tup
+            msg = None
+        else:
+            extname, data, msg = ext_tup
+        ext_header = header_template.copy()
+        ext_header['EXTNAME'] = extname
+        ext_header['BUNIT'] = str(data.unit)
+        if msg:
+            ext_header['COMMENT'] = msg
+        return fits.ImageHDU(data=data.to_value(), header=ext_header)
+
+    phdu = fits.PrimaryHDU()
+    header_template = make_and_fill_header()
+    list_of_hdus = [phdu] + [make_extension(ext_info, header_template) for ext_info in extensions]
+    hdul = fits.HDUList(list_of_hdus)
+    hdul.writeto(savename)
+    print("Done, wrote to ", savename)
 
 
+class COColumnDensity:
+    """
+    May 17, 2023
+    General use class to calculate CO column density and propagate uncertainty.
+    Instances are specific to the optically thin species (isotope and transition)
+    i.e. 13co10 or 13co32 or c18o10.
+    The actual data is fed in outside of this class, which does no file I/O of
+    its own.
+    Making it a class instead of a function to have more fun with it.
+    """
+    def __init__(self, optically_thin_line_stub):
+        """
+        Initialize instance using a line stub like '13co10', whatever the
+        optically thin species is.
+        The function will then obtain molecular constants from internal
+        dictionaries.
+        :param optically_thin_line_stub: str, line stub describing optically
+            thin CO line
+        """
+        # Constants, in order:
+        # B_0 (MHz), E_upper (K), mu (Debye), nu (GHz), J_upper
+        # From the above, we construct g and S
+        _constants = {
+            '13co10': (55101.01, 5.28880, 0.11046, 110.20135400, 1),
+            # '13co32': (),
+            # 'c18o10': (),
+        }
+        if optically_thin_line_stub not in '13co10':
+            raise RuntimeError(f"Line {optically_thin_line_stub} not supported.")
+        B0, Eu, mu, nu, self.Ju = _constants[optically_thin_line_stub]
+        self.B0 = B0 * u.MHz
+        self.Eu = Eu * u.K
+        self.mu = mu * u.Debye
+        # relying on the units to correct bugs from mixing up "mu" and "nu"
+        self.nu = nu * u.GHz
+
+    def set_data(self, peak_temperature, integrated_intensity):
+        """
+        Provide data to the COColumnDensity instance.
+        Both inputs should be Quantity arrays of matching dimension and share
+        WCS, so that a given pixel references the same sky position
+        in both images. WCS info does not need to be specified at this stage,
+        just needs to be the same for both.
+        :param peak_temperature: Quantity, peak temperature of optically thick
+            line to be used as excitation temperature Tex
+        :param integrated_intensity: Quantity, integrated intensity of optically
+            thin line to be used for column density calculation
+        """
+        self.peak_temperature = peak_temperature
+        self.integrated_intensity = integrated_intensity
+
+    def set_uncertainty(self, e_pt, e_ii):
+        """
+        Set the uncertainties for both data values.
+        Argument order is the same as for self.set_data():
+            peak_temperature, integrated_intensity
+        Both arguments should be scalar Quantity objects, but could adapt this
+        in the future to accept maps if uncertainty ever varies.
+        :param e_pt: scalar (0-D, single value) Quantity, uncertainty in
+            peak_temperature. This is just channel noise of the optically thick
+            line.
+        :param e_ii: scalar Quantity, uncertainty in integrated_intensity.
+            This must be calculated from the channel noise, the channel width,
+            and the number of integrated channels for the optically thin line.
+        """
+        self.e_pt = e_pt
+        self.e_ii = e_ii
+
+    def set_abundance_ratios(self, thick_to_thin, co_to_h2):
+        """
+        Give abundance ratios for, for example, 12CO/13CO and 12CO/H2.
+        :param thick_to_thin: float, scalar abundance ratio expressed as
+            12CO/13CO or something similar, so that the number is > 1.
+            This is an argument rather than an internally stored variable because
+            the abundance may depend on galactocentric radius (in the Galactic context).
+        :param co_to_h2: float, scalar abundance ratio expressed as
+            12CO/H2. This is opposite to the ratio above for 12CO/13CO) since
+            this its more common appearance in the literature. This means the
+            number should be < 1, typically ~8e-5.
+            Leaving this as an argument just in case, though I will probably
+            be using 8.5e-5 in any Galactic context in the near future,
+            from Xander's 2021(?) book.
+        """
+        self.ratio_thick_to_thin = thick_to_thin
+        self.ratio_co_to_h2 = co_to_h2
+
+    def _calculate_thin_line_column_density(self):
+        """
+        Calculate the column densities and propagate uncertainty.
+        Makes use of astropy.constants (const)
+        """
+        # Let Tex be equal to peak MB temperature in the opt. thick line.
+        # This is an assumption, so I'll keep them as separate variables.
+        self.Tex = self.peak_temperature
+        self.e_Tex = self.e_pt
+        # Rotational partition function Qrot
+        Qrot = (const.k_B * self.Tex / (const.h * self.B0)).decompose() + (1./3)
+        e_Qrot = (const.k_B * self.e_Tex / (const.h * self.B0)).decompose() # constant falls of in derivative
+        # Exponential term
+        exp_term = np.exp(self.Eu / self.Tex)
+        e_exp_term = self.e_Tex * exp_term * self.Eu/(self.Tex**2) # d(e^(a/x)) = (a dx / x^2) e^(a/x)
+        # Some constants
+        g = 2*self.Ju + 1
+        S = self.Ju / g
+        # Prefactor (after cancelling 4pi from top and bottom)
+        prefactor_numerator = const.eps0 * 3 * const.k_B
+        prefactor_denominator = 2 * np.pi**2 * self.nu * S * self.mu**2
+        prefactor = prefactor_numerator / prefactor_denominator
+        # All together
+        self.thin_line_column_density = (prefactor * (Qrot/g) * exp_term * self.integrated_intensity).to(u.cm**-2)
+        # Uncertainty! d(cxyz) = cyz dx + cxz dy + cxy dz. But you gotta do quadrature sum instead of regular sum
+        # Collected all constants (prefactor_numerator/prefactor_denominator and 1/g) at the end, outside the derivatives and quad sum
+        helper_1 = (Qrot * exp_term * self.e_ii)**2
+        helper_2 = (Qrot * e_exp_term * self.integrated_intensity)**2
+        helper_3 = (e_Qrot * exp_term * self.integrated_intensity)**2
+        self.e_thin_line_column_density = (np.sqrt(helper_1 + helper_2 + helper_3) * prefactor/g).to(u.cm**-2)
+
+    def _calculate_thick_line_column_density(self):
+        """
+        Make the much simpler jump from optically thin line column to the 12CO column
+        For now, I don't have a 12CO/C18O abundance, so that one will have to wait.
+        Only 12/13 ratio.
+        """
+        self.thick_line_column_density = self.ratio_thick_to_thin * self.thin_line_column_density
+        self.e_thick_line_column_density = self.ratio_thick_to_thin * self.e_thin_line_column_density
+
+    def _calculate_H2_column_density(self):
+        """
+        Make the simple jump from 12CO column density to H2 column density
+        """
+        self.H2_column_density = self.thick_line_column_density / self.ratio_co_to_h2
+        self.e_H2_column_density = self.e_thick_line_column_density / self.ratio_co_to_h2
+
+    def calculate_column_density(self):
+        """
+        Calculate all column densities. Call this method of an instance.
+        """
+        self._calculate_thin_line_column_density()
+        self._calculate_thick_line_column_density()
+        self._calculate_H2_column_density()
+
+    def calculate_mass_per_pixel(self, wcs_obj, los_distance, e_los_distance=0., thin_line_beam=None):
+        """
+        Calculate the H2 gas mass in each pixel.
+        Mean molecular weight of 1.33 is assumed, implying Y = 0.25 and Z = 0.
+        :param wcs_obj: WCS object describing the image grid used for the input data.
+        :param los_distance: scalar Quantity, heliocentric distance to the target.
+        :param e_los_distance: scalar Quantity, uncertainty on the heliocentric
+            distance to the target los_distance. Default is 0, implying no
+            uncertainty in this value.
+        :param thin_line_beam: Beam, optional, the Beam object for the optically
+            thin CO line observation. Used to correct the mass/pixel error map
+            for correlated pixels so that the mass errors from summing over
+            these pixels is not unrealistically small.
+            The correction only affects the error map, not the value map.
+            If this argument is left alone or set to None, this correction will
+            be skipped.
+        """
+        self.los_distance = los_distance
+        self.e_los_distance = e_los_distance
+        # Pixel area
+        self.pixel_scale = misc_utils.get_pixel_scale(wcs_obj) # angular unit Quantity
+        self.pixel_area = (self.pixel_scale * self.los_distance / u.radian)**2 # physical area
+        e_pixel_area = 2 * (self.pixel_scale/u.radian)**2 * self.los_distance * self.e_los_distance
+        # Particle mass
+        # H2 mass = 2 * H mass
+        self.particle_mass = 2 * mean_molecular_weight_neutral * Hmass
+        self.mass_per_pixel = (self.pixel_area * self.H2_column_density * self.particle_mass).to(u.solMass)
+        # Uncertainty from both column density and distance
+        e_from_pixel = e_pixel_area * self.H2_column_density * self.particle_mass
+        e_from_coldens = self.pixel_area * self.e_H2_column_density * self.particle_mass
+        self.e_mass_per_pixel = np.sqrt(e_from_pixel**2 + e_from_coldens**2).to(u.solMass)
+        # Correlated pixel correction
+        if thin_line_beam is not None:
+            self.pixels_per_beam = (thin_line_beam.sr / self.pixel_scale**2).decompose()
+            # Multiply the uncertainties by the sqrt of pixels/beam oversampling factor
+            self.e_mass_per_pixel *= np.sqrt(self.pixels_per_beam)
+        else:
+            # Set pixels_per_beam to None as a signal that the correction wasn't made
+            self.pixels_per_beam = None
+
+
+    def create_header_comments(self):
+        """
+        Create and return a list of header items that describe the
+        calculation process. These include relevant scalar quantities that we
+        might want to reference later.
+        :returns: list, FITS Header-standard tuples of (key, value) with str elements.
+        Does not override WCS information at all, only adds DATE, CREATOR, HISTORY, and COMMENTS.
+        """
+        def process_text_into_phrases(text):
+            """ Turn a block of newline-separated string text into individual strings """
+            # Remove trailing and leading whitespace from entire block
+            # Split by newline and remove leading/trailing whitespace from phrases
+            return [line.strip() for line in text.strip().split("\n")]
+
+        header_text = f"""
+            12CO/H2 = {self.ratio_co_to_h2:.2E}
+            12C/13C = {self.ratio_thick_to_thin:.2f}
+            Hmass = {Hmass:.3E}
+            mean mol weight (atomic) = {mean_molecular_weight_neutral:.2f}
+            adopted particle mass = {self.particle_mass:.2E}
+            pixel scale = {self.pixel_scale.to(u.arcsec):.3E}
+            pixel area = {self.pixel_area.to(u.pc**2):.3E}
+            LOS distance = {self.los_distance.to(u.pc):.2f}
+            err LOS distance = {self.e_los_distance.to(u.pc):.2f}
+        """
+        header_phrases = process_text_into_phrases(header_text)
+        if self.pixels_per_beam is not None:
+            optional_text = f"""
+                sqrt(pixels/beam) multiplied into the uncertainties to account for oversampling
+                sqrt(pixels/beam) = {np.sqrt(self.pixels_per_beam):.2f}
+            """
+            header_phrases += process_text_into_phrases(optional_text)
+        date_text = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        creator_text = f"Ramsey, {__file__}.{type(self).__name__}.create_header_comments"
+
+        header_kws = [('DATE', date_text), ('CREATOR', creator_text)]
+        header_kws += [('HISTORY', phrase) for phrase in header_phrases]
+        return header_kws
 
 """
 Image creation functions below here

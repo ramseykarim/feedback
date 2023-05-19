@@ -3439,7 +3439,7 @@ def calculate_co_column_density():
     hdul = fits.HDUList(list_of_hdus)
     hdul.writeto(savename, overwrite=True)
 
-    plt.show()
+    # plt.show()
 
 
 def calculate_pillar_lifetimes_from_columndensity():

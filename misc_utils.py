@@ -116,7 +116,8 @@ def get_pixel_scale(wcs_obj):
     :param wcs_obj: the WCS object for a FITS image
     :return: angular pixel scale as Quantity
     """
-    ps = np.mean(np.abs(np.diag(wcs_obj.pixel_scale_matrix))) * u.deg
+    # This appears to be an older method, but looks pretty decent
+    # ps = np.mean(np.abs(np.diag(wcs_obj.pixel_scale_matrix))) * u.deg
     c0, c1 = wcs_obj.pixel_to_world(0, 0), wcs_obj.pixel_to_world(1, 0)
     return c0.separation(c1)
 
