@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import glob
 import os, sys
 from collections import defaultdict
+import datetime
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -11,7 +12,8 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5, ICRS
 
 from reproject import reproject_interp
-from reproject.mosaicking import reproject_and_coadd
+from reproject import mosaicking
+import regions
 
 
 """
@@ -299,7 +301,7 @@ def do_vlt_mosaic_rcw49():
         return final_new_image, footprint
 
 
-    final_new_image, mosaic_footprint = reproject_and_coadd(
+    final_new_image, mosaic_footprint = mosaicking.reproject_and_coadd(
         list_of_chips(vlt_fns, new_w), new_w, shape_out=new_w.array_shape,
         reproject_function=reproject_interp, combine_function='mean',
         match_background=True,
@@ -331,6 +333,8 @@ def do_vlt_mosaic_m16():
     so len(hdul) == 33
     """
     data_directory = "/home/ramsey/Documents/Research/Feedback/m16_data/vlt"
+    filter_name = 'g_SDSS'
+    reg_filename_short = os.path.join(data_directory, "vlt_mosaic_footprint_small.reg")
 
     def _get_pixel_scale_from_single_tile():
         # Need pixel scale for WCS
@@ -343,18 +347,61 @@ def do_vlt_mosaic_m16():
         # First get a list of all filenames, and then sort them by their filter
         vlt_fns = glob.glob(os.path.join(data_directory, "ADP*"))
 
-        # Check headers
+        # Check headers and sort by filter name
         filters = defaultdict(list)
         for fn in vlt_fns:
             hdr = fits.getheader(fn)
             filters[hdr['FILTER']].append(fn)
-        print(filters)
 
-        # Next, use list_of_chips(list_of_filenames, target WCS object)
-        # The return value from that can go straight into reproject_and_coadd
+        # Get the filenames for only the selected filter
+        filenames_list = filters[filter_name]
+        # Return generator function for chips as tuple(array, WCS)
+        return list(iterate_over_chips(filenames_list))
 
-    _get_list_of_chips()
 
+    def _get_wcs_for_mosaic(pixel_scale):
+        # Try just making WCS from the tiles
+        # chips_list is list(tuple(array, WCS))
+        # return mosaicking.find_optimal_celestial_wcs(chips_list)
+        #### never mind, this makes a 400mil pixel image that eats up all of my laptop memory
+        # Instead, work from a box region file
+        footprint_box_reg = regions.Regions.read(reg_filename_short).pop()
+        # Follow make_wcs_like
+        fp_cr_coord = footprint_box_reg.center
+        grid_shape = tuple(int(round((x / pixel_scale).decompose().to_value())) for x in (footprint_box_reg.height, footprint_box_reg.width))
+        return make_wcs(ref_coord=fp_cr_coord, grid_shape=grid_shape, pixel_scale=pixel_scale)
+
+    print(_get_pixel_scale_from_single_tile().to(u.arcsec))
+    wcs_obj = _get_wcs_for_mosaic(_get_pixel_scale_from_single_tile())
+    print(wcs_obj)
+
+    return
+
+    ###### Run the functions above
+    chips = _get_list_of_chips()
+    wcs_obj, shape_out = _get_wcs_for_mosaic(chips)
+
+    print(shape_out)
+    print("Starting mosaic...")
+
+    final_new_image, mosaic_footprint = mosaicking.reproject_and_coadd(
+        chips, wcs_obj, shape_out=shape_out,
+        reproject_function=reproject_interp, combine_function='mean',
+        match_background=True,
+    )
+    print("THIS FINISHED RUNNING")
+
+    new_header = fits.Header()
+    new_header.update(wcs_obj.to_header())
+    new_header['FILTER'] = filter_name
+    new_header['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    new_header['CREATOR'] = f"Ramsey, {__file__}.do_vlt_mosaic_m16"
+    new_header['COMMENT'] = f"Mosiac from VLT {filter_name} images"
+
+    savename = os.path.join(data_directory, f"mosaic_{filter_name}.fits")
+
+    fits.writeto(savename, final_new_image, new_header, overwrite=False)
+    print("WROTE FILE")
 
 if __name__ == "__main__":
     main()
