@@ -35,7 +35,7 @@ I organized it into a main() function which can sit at the top where I can see i
 __author__ = "Ramsey Karim"
 
 def main():
-    do_vlt_mosaic_m16()
+    write_spitzer_ratios(1, 2)
 
 def make_wcs(ref_coord=None, ref_pixel=None, grid_shape=None, pixel_scale=None, return_header=False, **extra_header_kws):
     """
@@ -209,6 +209,8 @@ def iterate_over_chips(filename_list):
     :returns: iterator that will return (data, WCS) on calls to next() method
     """
     # Iterate over the different files
+
+    # for fn in filename_list: # why can't we use this? error?
     for i in range(len(filename_list)):
         # Check the number of chips in this file
         with fits.open(filename_list[i]) as hdul:
@@ -333,16 +335,20 @@ def do_vlt_mosaic_m16():
     so len(hdul) == 33
     """
     data_directory = "/home/ramsey/Documents/Research/Feedback/m16_data/vlt"
-    filter_name = 'g_SDSS'
-    reg_filename_short = os.path.join(data_directory, "vlt_mosaic_footprint_small.reg")
+    if not os.path.isdir(data_directory):
+        data_directory = "/home/rkarim/Research/Feedback/m16_data/vlt"
+
+    filter_name = 'NB_659'
+    reg_filename_short = "vlt_mosaic_footprint_small.reg"
+    reg_filename = os.path.join(data_directory, reg_filename_short)
 
     def _get_pixel_scale_from_single_tile():
         # Need pixel scale for WCS
-        with fits.open(os.path.join(data_directory, "ADP.2015-05-11T10:19:18.363.fits.fz")) as hdul:
+        with fits.open(os.path.join(data_directory, "ADP.2015-05-11T10.19.18.363.fits.fz")) as hdul:
             single_tile_wcs = WCS(hdul[1].header)
         return np.mean(np.abs(wcs_utils.proj_plane_pixel_scales(single_tile_wcs))) * u.deg
 
-    def _get_list_of_chips():
+    def _get_list_of_chips(wcs_obj=None):
         # Use the functions I built back in 2020 to cycle thru chips and return a big list
         # First get a list of all filenames, and then sort them by their filter
         vlt_fns = glob.glob(os.path.join(data_directory, "ADP*"))
@@ -353,37 +359,66 @@ def do_vlt_mosaic_m16():
             hdr = fits.getheader(fn)
             filters[hdr['FILTER']].append(fn)
 
+        print(filters.keys())
         # Get the filenames for only the selected filter
         filenames_list = filters[filter_name]
-        # Return generator function for chips as tuple(array, WCS)
-        return list(iterate_over_chips(filenames_list))
+        # If there is a wcs provided, use the list_of_chips filtering function
+        if wcs_obj is None:
+            # Return generator function for chips as tuple(array, WCS)
+            return iterate_over_chips(filenames_list)
+        else:
+            return list_of_chips(filenames_list, wcs_obj)
 
 
-    def _get_wcs_for_mosaic(pixel_scale):
+    def _get_wcs_for_mosaic(pixel_scale=None, chips_list=None, do_huge_image=False):
         # Try just making WCS from the tiles
         # chips_list is list(tuple(array, WCS))
-        # return mosaicking.find_optimal_celestial_wcs(chips_list)
-        #### never mind, this makes a 400mil pixel image that eats up all of my laptop memory
-        # Instead, work from a box region file
-        footprint_box_reg = regions.Regions.read(reg_filename_short).pop()
-        # Follow make_wcs_like
-        fp_cr_coord = footprint_box_reg.center
-        grid_shape = tuple(int(round((x / pixel_scale).decompose().to_value())) for x in (footprint_box_reg.height, footprint_box_reg.width))
-        return make_wcs(ref_coord=fp_cr_coord, grid_shape=grid_shape, pixel_scale=pixel_scale)
+        if do_huge_image:
+            # Require chips_list
+            if chips_list is None:
+                raise RuntimeError("chips_list required for WCS creation if do_huge_image==True")
+            #### this makes a 400mil pixel image that eats up all of my laptop memory
+            return mosaicking.find_optimal_celestial_wcs(chips_list)
+        else:
+            # Require pixel_scale
+            if pixel_scale is None:
+                raise RuntimeError("pixel_scale required for WCS creation if do_huge_image==False")
+            # Instead, work from a box region file
+            footprint_box_reg = regions.Regions.read(reg_filename).pop()
+            # Follow make_wcs_like
+            fp_cr_coord = footprint_box_reg.center
+            grid_shape = tuple(int(round((x / pixel_scale).decompose().to_value())) for x in (footprint_box_reg.height, footprint_box_reg.width))
+            return make_wcs(ref_coord=fp_cr_coord, grid_shape=grid_shape, pixel_scale=pixel_scale)
 
-    print(_get_pixel_scale_from_single_tile().to(u.arcsec))
-    wcs_obj = _get_wcs_for_mosaic(_get_pixel_scale_from_single_tile())
-    print(wcs_obj)
 
-    return
 
     ###### Run the functions above
-    chips = _get_list_of_chips()
-    wcs_obj, shape_out = _get_wcs_for_mosaic(chips)
+
+    do_huge_image = False
+    if do_huge_image:
+        wcs_obj, shape_out = _get_wcs_for_mosaic(chips_list=_get_list_of_chips(), do_huge_image=do_huge_image)
+        print(wcs_obj)
+        print(shape_out)
+        print(f"Number of pixels: {shape_out[0]*shape_out[1]:E}")
+    else:
+        # print(_get_pixel_scale_from_single_tile().to(u.arcsec))
+        wcs_obj = _get_wcs_for_mosaic(_get_pixel_scale_from_single_tile(), do_huge_image=do_huge_image)
+        print(wcs_obj)
+        shape_out = wcs_obj.array_shape
+        print(f"Number of pixels: {shape_out[0]*shape_out[1]:E}")
+
 
     print(shape_out)
-    print("Starting mosaic...")
 
+    if do_huge_image:
+        # List (reproject_and_coadd uses the len of the iterable, which I think is bad)
+        chips = list(_get_list_of_chips())
+    else:
+        # List, but potentially smaller
+        chips = _get_list_of_chips(wcs_obj=wcs_obj)
+
+
+    print("Starting mosaic...")
     final_new_image, mosaic_footprint = mosaicking.reproject_and_coadd(
         chips, wcs_obj, shape_out=shape_out,
         reproject_function=reproject_interp, combine_function='mean',
@@ -398,10 +433,128 @@ def do_vlt_mosaic_m16():
     new_header['CREATOR'] = f"Ramsey, {__file__}.do_vlt_mosaic_m16"
     new_header['COMMENT'] = f"Mosiac from VLT {filter_name} images"
 
-    savename = os.path.join(data_directory, f"mosaic_{filter_name}.fits")
+    if do_huge_image:
+        suffix = ""
+    else:
+        suffix = "_" + reg_filename_short.replace('.reg', '').replace('vlt_mosaic_footprint_', '')
+
+    savename = os.path.join(data_directory, f"mosaic_{filter_name}{suffix}.fits")
 
     fits.writeto(savename, final_new_image, new_header, overwrite=False)
     print("WROTE FILE")
+
+def do_spitzer_mosaic_m16():
+    """
+    May 23, 2023
+    IRAC mosaic from GLIMPSE panels
+    For now, only doing 2 bands (2 and 4)
+    Also MIPS mosaic at 24 micron
+    Code should be similar so I can do both in this function
+    """
+    data_directory = "/home/rkarim/Research/Feedback/m16_data/spitzer"
+    if not os.path.isdir(data_directory):
+        raise RuntimeError("Be warned, this will probably not run on the laptop.")
+        data_directory = "/home/ramsey/Documents/Research/Feedback/m16_data/spitzer"
+
+    data_finder = "GLM*I1*" # MG or GLM*1/2/3/4, for MIPS and IRAC respectively
+    data_description = {'MG*': "MIPS24um", 'GLM*I1*': "IRAC1", 'GLM*I2*': "IRAC2", 'GLM*I3*': "IRAC3", 'GLM*I4*': "IRAC4"}[data_finder]
+
+    def _get_header_info():
+        # Get some important keywords from the header
+        fn = glob.glob(os.path.join(data_directory, data_finder)).pop()
+        hdr = fits.getheader(fn)
+        keys_to_save = ['TELESCOP', 'INSTRUME', 'CHNLNUM', 'WAVELENG', 'PROGID', 'PROTITLE', 'PROGRAM', 'OBSRVR', 'OBSRVRID', 'PROGID2', 'BUNIT', 'ORIGIN', 'CREATOR', 'PIPEVERS', 'MOSAICER', 'PROJECT']
+        cards_to_save = [] # these will be tuples
+        # print(hdr.tostring(sep='\n'))
+        for k in keys_to_save:
+            if k in hdr:
+                cards_to_save.append(hdr.cards[k])
+        # Use "extend" or "append" to add these to a Header; using "set" looks worse
+        return cards_to_save
+
+
+    def _get_list_of_tiles():
+        # Find filenames and make a list of (data, WCS) tuples
+        # Probably will use a lot of memory but that's the cost of business
+        filenames_list = glob.glob(os.path.join(data_directory, data_finder))
+
+        tiles_list = []
+        for fn in filenames_list:
+            data, hdr = fits.getdata(fn, header=True)
+            tiles_list.append((data, WCS(hdr)))
+        return tiles_list
+
+    def _get_wcs_for_mosaic(tiles_list):
+        # Just make WCS from tiles
+        return mosaicking.find_optimal_celestial_wcs(tiles_list, frame='galactic')
+
+
+
+
+
+    ###### Run the functions from above
+    saved_cards = _get_header_info()
+
+    tiles = _get_list_of_tiles()
+    wcs_obj, shape_out = _get_wcs_for_mosaic(tiles)
+
+    print(wcs_obj)
+    print(shape_out)
+    print(f"Number of pixels: {shape_out[0]*shape_out[1]:E}")
+
+    print("Starting mosaic...")
+    final_new_image, mosaic_footprint = mosaicking.reproject_and_coadd(
+        tiles, wcs_obj, shape_out=shape_out,
+        reproject_function=reproject_interp, combine_function='mean',
+        match_background=True,
+    )
+    print("THIS FINISHED RUNNING")
+
+    new_header = fits.Header()
+    new_header.update(wcs_obj.to_header())
+    new_header['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    new_header['CREATOR'] = f"Ramsey, {__file__}.do_spitzer_mosaic_m16"
+    new_header['COMMENT'] = f"Mosiac from Spitzer {data_description} images"
+    new_header.extend(saved_cards)
+
+    savename = os.path.join(data_directory, f"m16_{data_description}_mosaic.fits")
+
+    fits.writeto(savename, final_new_image, new_header, overwrite=False)
+    print("WROTE FILE")
+
+
+def write_spitzer_ratios(numerator, denominator):
+    """
+    May 23, 2023
+    Make and write out some ratios
+    I did something like this a while back for RCW 49, it's not worth finding and reusing that code, it's so simple to rewrite it.
+    """
+    data_directory = "/home/rkarim/Research/Feedback/m16_data/spitzer"
+    if not os.path.isdir(data_directory):
+        data_directory = "/home/ramsey/Documents/Research/Feedback/m16_data/spitzer"
+
+    def _find_name(stub):
+        if stub == 'mips24':
+            raise RuntimeError("Need to reproject these")
+            return "MIPS24um"
+        else:
+            # Stub is integer
+            return f"IRAC{stub}"
+    def _make_fn(stub):
+        return os.path.join(data_directory, f"m16_{_find_name(stub)}_mosaic.fits")
+    fn_num = _make_fn(numerator)
+    fn_denom = _make_fn(denominator)
+    savename = os.path.join(data_directory, f"ratio_{_find_name(numerator)}_to_{_find_name(denominator)}.fits")
+
+    d_num, h_num = fits.getdata(fn_num, header=True)
+    d_denom, h_denom = fits.getdata(fn_denom, header=True)
+    ratio = d_num / d_denom
+
+    hdr = h_num.copy()
+    hdr['BUNIT'] = 'dimensionless'
+    hdr['COMMENT'] = f"Ratio of {_find_name(numerator)} to {_find_name(denominator)} mosaics"
+
+    fits.PrimaryHDU(data=ratio, header=hdr).writeto(savename)
 
 if __name__ == "__main__":
     main()
