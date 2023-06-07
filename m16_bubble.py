@@ -98,9 +98,13 @@ Dictionaries/lists of constants/names and helper functions that use them.
 
 large_map_filenames = {
         'cii': "sofia/m16_CII_final_15_5_0p5_clean.fits",
-        '12co10': "purplemountain/G17co12.fits", '13co10': "purplemountain/G17co13.fits",
-        'c18o10': "purplemountain/G17c18o.fits",
+        '12co10-pmo': "purplemountain/G17co12.fits", '13co10-pmo': "purplemountain/G17co13.fits",
+        'c18o10-pmo': "purplemountain/G17c18o.fits",
+        '12co10-nob': "nobeyama/FGN_01700+0000_2x2_12CO_v1.00_cube.fits", '13co10-nob': "nobeyama/FGN_01700+0000_2x2_13CO_v1.00_cube.fits",
+        'c18o10-nob': "nobeyama/FGN_01700+0000_2x2_C18O_v1.00_cube.fits",
+        'rrl': "thor_vla/RRL_stacked_L17.50_deg.m16cutout.fits",
 }
+observatory_names = {'pmo': "PMO", 'nob': "NRO"}
 herschel_path = "herschel/anonymous1603389167/1342218995/level2_5"
 photometry_filenames = {
     '8um': "spitzer/SPITZER_I4_mosaic_ALIGNED.fits", '250um': "extdPSW/hspirepsw696_25pxmp_1823_m1335_1342218995_1342218996_1462565962570.fits.gz",
@@ -108,6 +112,10 @@ photometry_filenames = {
     '500um': "extdPLW/hspireplw696_25pxmp_1823_m1335_1342218995_1342218996_1462565958982.fits.gz",
     '70um': "HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz",
     '160um': "HPPJSMAPR/hpacs_25HPPJSMAPR_1822_m1337_00_v1.0_1471714553094.fits.gz",
+    '850um': "apex/atlasgal-m16-large.fits", '24um': "spitzer/m16_MIPS24um_mosaic.fits.fz",
+    'NB_659': "vlt/mosaic_NB_659_small.fits.fz", 'g_SDSS': "vlt/mosaic_g_SDSS.fits.fz",
+    '90cm': "magpis_vla/G17.000000+0.750000_90cm.goodheader.fits",
+
 }
 photometry_beams = {
     '8um': (1.98, 1.98, 0), '70um': (9.0, 5.75, 62),
@@ -120,15 +128,18 @@ cutout_box_filenames = {
     'med': "m16_cutout_box_medium.reg", # CII and CO (3-2) footprint, aligned in equatorial (so there will be NaN gaps)
 }
 vlim_memo = { # hash things somehow and put them here
-    '8um': (40, 320),
-    'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]), 'cii.generic': (0, 65),
+    '8um': (40, 320), 'irac4': (40, 320),
+    'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]), 'cii.generic': (0, 14), #65 is better for most
     '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 40),
     '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 18),
+    'rrl.levels': np.arange(3, 30, 6), # RRLs should be "sliced" into a 1 km/s channel
+    '90cm.levels': np.arange(0, 0.61, 0.06), '850um': (0, 0.5), '850um.levels': np.concatenate([np.arange(.15, 2.1, 0.3), np.arange(3, 6, 1)]), '850um.generic': (0.15, 2),
 
     # '13co10.levels': np.arange(0.25, 5, 0.5), '13co10.generic': (0, 4), # these are good for large velocity intervals
     '13co10.levels': np.arange(1, 22, 2), '13co10.generic': (0, 20), # small velocity intervals (like 1 km/s)
 
-    '12co10.levels': np.arange(5, 55, 5), '12co10.generic': (0, 40),
+    '12co10.levels': np.arange(2.5, 26, 2.5), # 5,55,5 good for most
+    '12co10.generic': (0, 20), # 0,40 good for most
     '250um': (140, 4500), 'irac1': (1, 30), '70um': (-0.06, 3.5), # 70um can also do vmax=1.5 for greater sensitivity to low emission
     '160um': (-0.1, 2.5), '500um': (50, 500), '500um.levels': np.arange(200, 2001, 100), '500um.generic': (150, 500),
     'irac2': (1.5, 15), 'irac3': (10, 130),
@@ -138,7 +149,7 @@ default_reg_filename_list = [ # commonly used region filenames
     "catalogs/m16_across_pillars_points_along_path.reg", "catalogs/spire_up_points_along_path.reg",
     "catalogs/m16_across_points_along_path.reg",
 ]
-onesigmas = {'12co10': 0.415, '13co10': 0.200, 'c18o10': 0.202}
+onesigmas = {'12co10-pmo': 0.415, '13co10-pmo': 0.200, 'c18o10-pmo': 0.202}
 
 def vlim_hash(data_stub, velocity_limits=None, generic=False):
     """
@@ -147,6 +158,9 @@ def vlim_hash(data_stub, velocity_limits=None, generic=False):
     Ignore 'APEX' or 'CONV' suffix; this rarely makes a difference.
     """
     data_stub = data_stub.replace('CONV', '').replace('APEX', '')
+    if '-' in data_stub:
+        # Get rid of the observatory tag
+        data_stub = data_stub.split('-')[0]
     if velocity_limits is None:
         return data_stub
     elif generic:
@@ -166,12 +180,15 @@ def get_vlim(key):
     Ignore 'APEX' or 'CONV' suffix; this rarely makes a difference.
     """
     key = key.replace('CONV', '').replace('APEX', '')
+    if '-' in key:
+        # Get rid of the observatory tag
+        key = key.split('-')[0]
     vlims = {}
     vlims_keys = ['vmin', 'vmax']
     if key in vlim_memo:
         val = vlim_memo[key]
         for k, v in zip(vlims_keys, val):
-            if v:
+            if v is not None:
                 vlims[k] = v
     # special rule (can remove later): if no vmin but velocity specified (e.g. moment map), vmin=0
     if 'vmin' not in vlims and '.' in key.replace('.generic', ''):
@@ -185,6 +202,9 @@ def get_levels(data_stub):
     Try to find memoized contour levels
     """
     data_stub = data_stub.replace('CONV', '').replace('APEX', '')
+    if '-' in data_stub:
+        # Get rid of the observatory tag
+        data_stub = data_stub.split('-')[0]
     key = data_stub + ".levels"
     return vlim_memo.get(key, None)
 
@@ -211,11 +231,15 @@ def get_map_filename(data_stub, beam=None):
             return (os.path.join(herschel_path, photometry_filenames[data_stub]),)
         else:
             return (photometry_filenames[data_stub],)
-    elif data_stub[:4] == 'irac':
+    elif data_stub[:4] == 'irac' and '-' not in data_stub:
         # irac1, irac2, irac3. Stick to '8um' instead of irac4, though it will work either way
         return (f"spitzer/SPITZER_I{data_stub[-1]}_mosaic_ALIGNED.fits",)
+    elif 'irac' in data_stub and '-large' in data_stub:
+        # Large IRAC mosaic (like, "irac1-large")
+        return (f"spitzer/m16_IRAC{data_stub.replace('-large', '')[-1]}_mosaic.fits.fz",)
     # At this point, must be a cube
     elif data_stub in large_map_filenames:
+        # Works for CII and the observatory-tagged CO
         fn = large_map_filenames[data_stub]
         if beam == 'APEX':
             return fn.replace('.fits', '.APEXbeam.fits')
@@ -231,7 +255,11 @@ def get_map_filename(data_stub, beam=None):
 def get_data_name(data_stub):
     if data_stub in cube_utils.cubenames:
         return cube_utils.cubenames[data_stub]
+    elif '-' in data_stub and data_stub.split('-')[0] in cube_utils.cubenames:
+        return cube_utils.cubenames[data_stub.split('-')[0]] + " " + observatory_names[data_stub.split('-')[1]]
     elif data_stub[:4] == 'irac':
+        if '-' in data_stub:
+            data_stub = data_stub.split('-')[0]
         return str([3.6, 4.5, 5.8, 8][int(data_stub[-1]) - 1]) + " $\mu$m"
     else:
         warnings.warn(f"unrecognized data_stub <{data_stub}>, submitting empty string \"\" as name")
@@ -270,22 +298,34 @@ def get_2d_map(data_stub, velocity_limits=None, average_Tmb=False, data_memo=Non
         info_dict['hdr'] = hdr
         if 'BUNIT' in hdr:
             # If this throws an error I'll cross that bridge when I get to it
-            info_dict['unit'] = u.Unit(hdr['BUNIT'])
+            unit_str = hdr['BUNIT']
+            if 'BEAM' in unit_str:
+                # Probably Jy/beam
+                unit_str = unit_str.lower().replace('jy', 'Jy')
+            info_dict['unit'] = u.Unit(unit_str)
+            # heads up: 850 micron is in Jy/beam
 
-        # Beam lookup (the images never have beams in headers...)
+        # Beam lookup (the images almost never have beams in headers...)
         if data_stub[:4] == 'irac':
             beam_key = '8um' # they're all the same
         else:
             beam_key = data_stub
-        if beam_key in photometry_beams:
-            major, minor, pa = photometry_beams[beam_key]
-            beam_params = dict(major=major*u.arcsec, pa=pa*u.deg)
-            if minor is not None:
-                beam_params['minor'] = minor*u.arcsec
-            info_dict['beam'] = cube_utils.Beam(**beam_params)
-        else:
-            # No beam!
-            pass
+        try:
+            # See if the beam is in the header
+            info_dict['beam'] = cube_utils.Beam.from_fits_header(hdr)
+        except cube_utils.NoBeamException:
+            # Look for the beam in our dictionaries
+            if beam_key in photometry_beams:
+                major, minor, pa = photometry_beams[beam_key]
+                beam_params = dict(major=major*u.arcsec, pa=pa*u.deg)
+                if minor is not None:
+                    beam_params['minor'] = minor*u.arcsec
+                info_dict['beam'] = cube_utils.Beam(**beam_params)
+            else:
+                # No beam!
+                # Notify me about this
+                warnings.warn(f"No beam found for {data_stub}")
+                pass
 
         info_dict['obs_type'] = 'image'
         return img, info_dict
@@ -398,38 +438,57 @@ def find_co10_noise():
     Use the following 0-indexed boxes:
         X 8-37, Y 69-90, channel 0-78
         X 8-54, Y 69-90, channel 0-65
-    I think it goes (chanel, Y, X) but it always surprises me. Yes it does!
+    I think it goes (channel, Y, X) but it always surprises me. Yes it does!
     The shape is (200, 97, 97) so I can't even tell by dimensions.
 
     The larger box has a little bit of signal left in it, but both boxes are
     relatively clear after channel 150 so I can try that too.
 
     Worked well!
+    PMO observations:
     12CO10 is 0.415 K
     13CO10 is 0.200 K
     C18O10 is 0.202 K
 
     Each box produces a very similar answer such that the variation from box to
     box is minimal (~few percent).
+
+    May 24, 2023
+    Reusing this for the Nobeyama CO noise. I'll find new boxes for this.
+    Nobeyama observations:
+    12CO10 is 1.4 K
+    13CO10 is 0.7 K
+    C18O10 is 0.6 K
     """
-    cube_fn = get_map_filename('12co10')
+    data_stub = 'c18o10-nob'
+    cube_fn = get_map_filename(data_stub)
     cube = cube_utils.CubeData(cube_fn)
+    print("Shape of ", data_stub, cube.data.shape)
     # Get a signal-free subcube to test the RMS
-    clean_slab_params = [
-        ((0, 78), (69, 90), (8, 37)),
-        ((0, 65), (69, 90), (8, 54)),
-        ((150, None), (69, 90), (8, 37)),
-        ((150, None), (69, 90), (8, 54)),
+    if data_stub.split('-')[1] == 'pmo':
+        clean_slab_params = [ # PMO
+            ((0, 78), (69, 90), (8, 37)),
+            ((0, 65), (69, 90), (8, 54)),
+            ((150, None), (69, 90), (8, 37)),
+            ((150, None), (69, 90), (8, 54)),
+            ]
+    elif data_stub.split('-')[1] == 'nob':
+        clean_slab_params = [ # NRO Nobeyama
+            ((0, 127), (430, None), (0, None)), # low V, top two tiles
+            ((0, 127), (0, 430), (427, None)), # low V, bottom right tile
+            ((384, None), (430, None), (0, None)), # high V, top two tiles
+            ((384, None), (0, 430), (427, None)), # high V, bottom right tile
         ]
     for i in range(len(clean_slab_params)):
         clean_slab = cube.data[tuple(slice(*x) for x in clean_slab_params[i])]
-        # plt.subplot(121)
-        # plt.imshow(clean_slab.moment0().to_value(), origin='lower')
-        # plt.subplot(122)
-        # plt.plot(clean_slab.mean(axis=(1, 2)))
-        # plt.show()
+        plt.figure(f"Slab {i}")
+        plt.subplot(121)
+        plt.imshow(clean_slab.moment0().to_value(), origin='lower')
+        plt.subplot(122)
+        plt.plot(clean_slab.mean(axis=(1, 2)))
         clean_slab_rms = clean_slab.std()
         print(f"box {i}: {clean_slab_rms:0.2f}")
+    plt.show()
 
 
 def co_column_manage_inputs():
@@ -860,9 +919,39 @@ def manual_pv_slice_series():
         # ax_img.set_xlabel("RA")
         # ax_img.set_ylabel("Dec")
         ax_pv.coords[1].set_format_unit(kms)
-
+        # 2023-04-26, 06-07
         savename = f"/home/ramsey/Pictures/2023-04-26/m16_pv_{orientation}_{slice_idx:03d}.png"
         fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title=f'{line_stub}, using stub/file {filename}', file=__file__, func='manual_pv_slice_series'))
+
+def pv_slice_series_overlay():
+    """
+    June 7, 2023
+    Use the pvdiagrams.py framework to make PV diagram overlays into a movie.
+    It would be cool to do this with the manual_pv_slice_series() code but
+    an overlay will involve different pixel grids, so that would be too difficult.
+    """
+    # Load PV info
+    path_info = pvdiagrams.linear_series_from_ds9(catalog.utils.search_for_file("catalogs/m16_pv_vectors_0.reg"))
+
+    # Load cubes
+    img_stub = 'ciiAPEX'
+    img_cube_obj = cube_utils.CubeData(get_map_filename(img_stub))
+
+    # Reference image
+    ref_vel_lims = (10*kms, 35*kms)
+    ref_mom0 = img_cube_obj.data.spectral_slab(*ref_vel_lims).moment0()
+    ref_img = ref_mom0.to_value()
+
+    # Colors
+    ref_img_cmap = 'Greys_r'
+    pv_img_cmap = 'Greys_r'
+    pv_contour_cmap = 'plasma'
+
+    """
+    go thru and look at run_plot_and_save_series and plot_path in pvdiagrams.py
+    will need to iterate somewhat manually using cues from these two functions
+    """
+    ...
 
 def m16_large_moment0():
     """
@@ -1291,7 +1380,7 @@ def pv_regrid_debug():
     plt.show()
     # fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='debug', file=__file__, func="pv_regrid_debug"))
 
-def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_memo=None, data_memo_rules='background', cutout_reg_stub='N19', reg_filename_or_idx=None, plot_stars=False):
+def overlay_moment(background='8um', overlay='cii', velocity_limits=None, velocity_limits2=None, data_memo=None, data_memo_rules='background', cutout_reg_stub='N19', reg_filename_or_idx=None, plot_stars=False):
     """
     May 3, 2023
     Ambitious code project: make flexible image-contour overlays.
@@ -1329,6 +1418,7 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
         star_df = pd.read_csv(catalog.utils.search_for_file("catalogs/hillenbrand_stars_1.csv"), index_col='ID')
         star_ra = star_df['RA'].values
         star_dec = star_df['DE'].values
+        #### TODO: this does not work in Galactic, need to load them in as SkyCoords (or convert) and then plot based on image frame
         del star_df
 
     # Load in background
@@ -1343,9 +1433,19 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
         data_memo[img_info['vlim_hash']] = (img, img_info)
 
     # Load in overlay
-    overlay, overlay_info = get_2d_map(overlay_stub, velocity_limits=velocity_limits, average_Tmb=True, data_memo=data_memo)
+    if velocity_limits2 is None:
+        velocity_limits2 = velocity_limits
+    overlay, overlay_info = get_2d_map(overlay_stub, velocity_limits=velocity_limits2, average_Tmb=True, data_memo=data_memo)
     # Regrid overlay to background
-    overlay_regrid = reproject_interp((overlay, overlay_info['wcs']), img_info['wcs'], shape_out=img.shape, return_footprint=False)
+    try:
+        overlay_regrid = reproject_interp((overlay, overlay_info['wcs']), img_info['wcs'], shape_out=img.shape, return_footprint=False)
+    except Exception as e:
+        print(e)
+        print(overlay.shape)
+        print(overlay_info['wcs'])
+        print(img.shape)
+        print(img_info['wcs'])
+        raise RuntimeError
     # From here on out, don't use the overlay wcs, use the img wcs
     # Memoize it if it's not already there
     if dmr > 0 and overlay_info['vlim_hash'] not in data_memo:
@@ -1371,6 +1471,7 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
         contour_kwargs = {}
     else:
         contour_args = (overlay_regrid,)
+        # Generic vlim is also used for contour colors
         contour_kwargs = dict(levels=memo_levels, **get_generic_vlim(overlay_stub))
     cs = ax.contour(*contour_args, **contour_kwargs, cmap='magma_r')
 
@@ -1386,7 +1487,7 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
     cbar = fig.colorbar(im, cax=cbar_ax, label=f"{get_data_name(background_stub)}{velocity_stub} ({img_info['unit'].to_string('latex_inline')})")
     # Contour colorbar (top)
     cbar_ax2 = ax.inset_axes([0, 1, 1, 0.05])
-    velocity_stub = " "+make_vel_stub(velocity_limits) if (overlay_info['obs_type'] == 'cube' and velocity_limits) else ""
+    velocity_stub = " "+make_vel_stub(velocity_limits2) if (overlay_info['obs_type'] == 'cube' and velocity_limits2) else ""
     cbar2 = fig.colorbar(cs, cax=cbar_ax2, location='top', spacing='proportional', label=f"{get_data_name(overlay_stub)}{velocity_stub} ({overlay_info['unit'].to_string('latex_inline')})")
 
     # Beams
@@ -1428,13 +1529,17 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
                 ax.add_patch(reg_patch)
     if plot_stars:
         # Plot stars if requested; if plot_stars is True, then stars_ra and stars_dec exist
-        ax.scatter(star_ra, star_dec, mec=marcs_colors[3], mfc='None', marker='o', transform=ax.get_transform('world'))
+        # print("Plotting stars?")
+        # print(star_ra)
+        ax.plot(star_ra, star_dec, mec=marcs_colors[3], mfc='k', marker='o', linestyle='none', transform=ax.get_transform('world'))
     ax.set_xlim(ref_xlim)
     ax.set_ylim(ref_ylim)
 
 
 
     velocity_stub = "" if not velocity_limits else "_"+make_simple_vel_stub(velocity_limits)
+    if velocity_limits2 != velocity_limits:
+        velocity_stub += "_"+make_simple_vel_stub(velocity_limits2)
     if overlay_info['obs_type'] != 'cube' and img_info['obs_type'] != 'cube':
         # Override velocity stub with empty string if neither image is a cube
         velocity_stub = ""
@@ -1443,8 +1548,11 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, data_m
         reg_fn_stub = "_"+reg_fn_stub
     if plot_stars:
         reg_fn_stub += '_with-stars'
-    # 2023-05-03,04,05,09,10,11
-    fig.savefig(f"/home/ramsey/Pictures/2023-05-11/overlay_{overlay_stub}_on_{background_stub}{velocity_stub}{reg_fn_stub}.png",
+    # 2023-05-03,04,05,09,10,11,26,30, 06-02,07
+    savedir = "/home/ramsey/Pictures/2023-06-07"
+    if not os.path.exists(savedir):
+        os.makedirs(savedir)
+    fig.savefig(os.path.join(savedir, f"overlay_{overlay_stub}_on_{background_stub}{velocity_stub}{reg_fn_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_moment"))
     # Some cleanup since things seem to pile up
     plt.close(fig)
@@ -1552,6 +1660,143 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='pv',
         file=__file__, func="fast_pv"))
 
+def channel_movie(data_stub, vel_lims=(0, 45)):
+    """
+    May 31, 2023
+    Quick! Channel movie
+    """
+    fn = get_map_filename(data_stub)
+    cube_obj = cube_utils.CubeData(fn)
+
+    savename_f = lambda i : f"/home/ramsey/Pictures/2023-05-31/movie/{data_stub}_{i:03d}.png"
+
+    ilo, ihi = [cube_obj.data.closest_spectral_channel(v*kms) for v in vel_lims]
+    for i in range(ilo, ihi+1):
+        fig = plt.figure(figsize=(10,10))
+        ax = fig.add_subplot(111, projection=cube_obj.wcs_flat)
+        ax.imshow(cube_obj.data[i].to_value(), origin='lower', **get_generic_vlim(data_stub), cmap='plasma')
+        ax.set_title(f"{cube_obj.data.spectral_axis[i].to(kms):.2f}")
+        fig.savefig(savename_f(i), metadata=catalog.utils.create_png_metadata(title='for movie', file=__file__, func="channel_movie"))
+        print(f"{ilo}->{i}->{ihi}")
+        plt.close(fig)
+
+def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
+    """
+    June 6, 2023
+    Compare some spectra
+    At first, don't worry about spatial resolution
+    Follow m16_pictures.paper_spectra
+    """
+    lines = ['cii', '12co10-pmo']
+
+    if reg_set_number == 1:
+        reg_filename_short = "catalogs/N19_points.reg"
+    elif reg_set_number == 2:
+        reg_filename_short = "catalogs/N19_points_2.reg"
+    elif reg_set_number == 3:
+        reg_filename_short = "catalogs/m16_northridge_points.reg"
+    else:
+        raise NotImplementedError(f"reg_set_number =/= {reg_set_number}")
+
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    multiplier = {'cii': 1,
+        '12co10': 0.5, '13co10': 1, 'c18o10': 15,
+        '12co32': 1, '13co32': 1,
+    }
+
+    def get_multiplier(stub):
+        if '-' in stub:
+            stub = stub.split('-')[0]
+        return multiplier[stub]
+
+    """ Make 2 sets of spectra """
+    if line_set_number == 1:
+        short_names = ['cii', '12co10-pmo', '12co32',]; set_stub = "12"
+    elif line_set_number == 2:
+        short_names = ['cii', '13co10-pmo', '13co32',]; set_stub = "13"
+    else:
+        raise NotImplementedError(f"line_set_number =/= {line_set_number}")
+
+    # Create Figure and Axes
+
+    if reg_set_number == 1:
+        figsize = (15, 5)
+        grid_shape = (1, 3)
+    elif reg_set_number in [2, 3]:
+        figsize = (15, 10)
+        grid_shape = (3, 3)
+    else:
+        raise NotImplementedError
+
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(*grid_shape, hspace=0.05, wspace=0.05, left=0.05, right=0.95, bottom=0.05, top=0.95)
+    axes = [] # hold the axes in same order as reg_list
+    # Iterate thru reg_list and make an Axes for each
+    for reg_idx in range(len(reg_list)):
+        ax = fig.add_subplot(gs[np.unravel_index(reg_idx, grid_shape)])
+        axes.append(ax)
+
+    # Iterate thru cubes, and then thru regs inside of those (load 1 cube at a time, regs are much quicker already loaded)
+    for line_idx, line_stub in enumerate(short_names):
+        fn = get_map_filename(line_stub)
+        cube = cube_utils.CubeData(fn)
+        # cube.convert_to_K()
+        cube.data = cube.data.with_spectral_unit(kms)
+        for reg_idx, reg in enumerate(reg_list):
+            pixreg = reg.to_pixel(cube.wcs_flat)
+            j, i = [int(round(c)) for c in pixreg.center.xy]
+            try:
+                spectrum = cube.data[:, i, j]
+            except IndexError:
+                spectrum = np.full(cube.data.shape[0], np.nan) * cube.data.unit
+            multiplier_stub = '' if get_multiplier(line_stub) == 1 else f' $\\times${get_multiplier(line_stub)}'
+            line_name = get_data_name(line_stub)
+            p = axes[reg_idx].plot(cube.data.spectral_axis.to_value(), spectrum.to_value()*get_multiplier(line_stub), label=f"{line_name}{multiplier_stub}", alpha=0.75)
+
+    # Iterate thru regs/Axes again and dress up the plots
+    for reg_idx in range(len(reg_list)):
+        ax = axes[reg_idx]
+        ss = ax.get_subplotspec()
+        ax.set_xlabel(" ")
+        ax.set_ylabel(" ")
+        ax.xaxis.set_ticks_position('both')
+        ax.yaxis.set_ticks_position('both')
+        ax.xaxis.set_tick_params(direction='in', which='both')
+        ax.yaxis.set_tick_params(direction='in', which='both')
+        if not ss.is_last_row():
+            # hide ticklabels except bottom row
+            ax.tick_params(axis='x', labelbottom=False)
+        if not ss.is_first_col():
+            # hide ticklabels except left column
+            ax.tick_params(axis='y', labelleft=False)
+        if reg_idx == len(reg_list)-1:
+            ax.legend(loc='upper right', fontsize=13)
+        ax.set_xlim((0, 46))
+        if line_set_number == 1:
+            ax.set_ylim((-5, 45))
+        elif line_set_number == 2:
+            ax.set_ylim((-3, 23))
+
+        ax.text(0.06, 0.94, reg_list[reg_idx].meta['text'], transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
+        for v in range(10, 31, 2):
+            # Some light velocity gridlines around the important velocities
+            ax.axvline(v, color='k', alpha=0.07)
+        if velocities_to_mark is not None:
+            for v in velocities_to_mark:
+                ax.axvline(v, color='k', alpha=0.4)
+        ax.axhline(0, color='k', alpha=0.1)
+        # Use this line to verify background subtractions done correctly
+        # print(f"{reg_list[reg_idx].meta['text']} {check_if_region_is_southern(reg_list[reg_idx].meta['text'])}")
+
+    fig.supxlabel(f"LSR Velocity ({kms.to_string('latex_inline')})")
+    fig.supylabel(f"Line intensity ({u.K.to_string('latex_inline')})")
+
+    reg_fn_stub = str(reg_set_number) #os.path.basename(reg_filename_short).replace('.reg', '')
+    # 2023-06-06,07
+    fig.savefig(f"/home/ramsey/Pictures/2023-06-07/sample_spectra_{reg_fn_stub}_{set_stub}.png",
+        metadata=catalog.utils.create_png_metadata(title=f"points: {reg_filename_short}",
+        file=__file__, func="plot_spectra"))
+
 
 if __name__ == "__main__":
     """
@@ -1566,6 +1811,12 @@ if __name__ == "__main__":
     #         overlay_moment(background='250um', overlay=line_stub, velocity_limits=f_vel_lims(i), cutout_reg_stub='med-large', data_memo=data_memo)
     # overlay_moment(background='250um', overlay='ciiAPEX', velocity_limits=(21*kms, 22*kms), cutout_reg_stub='med', reg_filename_or_idx="catalogs/N19_pv_2.reg", plot_stars=False)
 
+    # for i in range(10, 34, 2):
+    # i = 22
+    # vel_lims = (i*kms, (i+2)*kms)
+    # overlay_moment(background='ciiAPEX', overlay='12co10-pmo', velocity_limits=(15*kms, 18*kms), velocity_limits2=(18*kms, 20*kms), cutout_reg_stub='med', plot_stars=False, reg_filename_or_idx="catalogs/N19_points_2.reg")
+    # overlay_moment(background='ciiAPEX', overlay='12co10-pmo', velocity_limits=(12*kms, 16*kms), velocity_limits2=(16*kms, 20*kms), cutout_reg_stub='med', plot_stars=False, reg_filename_or_idx="catalogs/m16_northridge_points.reg")
+
     """
     PV examples
     """
@@ -1574,7 +1825,24 @@ if __name__ == "__main__":
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['12co10', 'ciiAPEX'])
 
+    pv_slice_series_overlay()
+
     """
     CO column
     """
-    co_column_manage_inputs()
+    # find_co10_noise()
+
+    """
+    Channel movies
+    """
+    # channel_movie('ciiAPEX', vel_lims=(0, 10))
+
+    """
+    Spectra
+    """
+    # for i in range(1, 3):
+    #     for j in range(1, 3):
+    #         if i == j == 1:
+    #             continue
+    #         print("Doing", i, j)
+    # plot_spectra(reg_set_number=3, line_set_number=1, velocities_to_mark=(12, 16, 20))

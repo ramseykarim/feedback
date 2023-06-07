@@ -655,8 +655,7 @@ def linear_series_from_description(start_center, end_center, pvpath_length,
     return center_coord, max([x for x in (series_length, pvpath_length) if x is not None]), path_generator()
 
 
-def linear_series_from_ds9(reg_file_name, pvpath_length=None,
-    pvpath_angle=None, pvpath_width=None, **kwargs):
+def linear_series_from_ds9(reg_file_name, pvpath_length=None, pvpath_angle=None, pvpath_width=None, **kwargs):
     """
     Creates a linear series of parallel Paths. Generator function, so generates
     lazily. Sources the
@@ -708,9 +707,7 @@ def linear_series_from_ds9(reg_file_name, pvpath_length=None,
         points_not_paths=points_not_paths, **kwargs)
 
 
-def run_plot_and_save_series(cube, vlims,
-    center_coord, length_scale, path_generator,
-    savename, **plot_kwargs):
+def run_plot_and_save_series(cube, vlims, center_coord, length_scale, path_generator, savename, **plot_kwargs):
     """
     Save a series of images created from a series of Paths
     :param cube: a CubeData instance for plot_path()

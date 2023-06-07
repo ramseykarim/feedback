@@ -14,6 +14,7 @@ from astropy import modeling
 
 from spectral_cube import SpectralCube
 from spectral_cube.spectral_cube import Beam
+from radio_beam.beam import NoBeamException
 try:
     import MontagePy.main as montage
 except ModuleNotFoundError:
@@ -73,6 +74,9 @@ cubenames = {
     # For convenience, some frequently used non-cube names
     '8um': "8 $\mu$m", '70um': "70 $\mu$m", '160um': "160 $\mu$m",
     '250um': "250 $\mu$m", '350um': "350 $\mu$m", '500um': "500 $\mu$m",
+    '24um': "24 $\mu$m", '850um': "850 $\mu$m", 'rrl': "Stacked RRLs",
+    'NB_659': "H$\alpha$ (NB659)", 'g_SDSS': "4770 $\AA$ (g_SDSS)",
+    '90cm': "90 cm continuum"
 }
 
 
@@ -226,11 +230,18 @@ class CubeData:
     def equivalency(self):
         if self.equivalencies is None:
             if 'beam' in str(self.data.unit).lower():
-                # BIMA
-                try:
+                # BIMA probably?
+                # Now, RRLs from VLA are an option (Jy/beam)
+                if 'RESTFREQ' in self.header:
+                    # Try with the E (e.g. BIMA)
                     restfrq = self.header['RESTFREQ'] * u.Hz
-                except:
-                    print(self.header)
+                if 'RESTFRQ' in self.header:
+                    # Try without the E (e.g. VLA)
+                    restfrq = self.header['RESTFRQ'] * u.Hz
+                else:
+                    # print(self.header.tostring(sep='\n'))
+                    print(self.basename)
+                    print(self.unit)
                     raise NotImplementedError
                 beam = self.data.beam
                 beam_area = beam.sr
