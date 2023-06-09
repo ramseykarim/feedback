@@ -1205,6 +1205,7 @@ def irac8um_to_cii_figure(band=4):
     dv_channel = np.mean(np.diff(velocity_axis))
     print(dv_channel.to(u.MHz))
     cii_mom0 = cii_cube.moment0().to(u.K*kms)
+    # note from the future (2023-06-09) I think this is wrong, I should have divided by 0.5 km/s (channel width), not 1 km/s
     cii_mom0_cgs = (cii_mom0/kms).decompose().to(u.Jy/u.sr, equivalencies=u.brightness_temperature(line_center)) * dv_channel
     cii_mom0_cgs = cii_mom0_cgs.to(intensity_unit_cgs)
     hdu = fits.PrimaryHDU(data=(cii_mom0_cgs/intensity_unit_cgs).decompose().to_value(),
@@ -1247,7 +1248,8 @@ def jwst3um_to_fir_figure():
     wcs_obj = mosaic_vlt.make_wcs(**wcs_kwargs)
     """ Use this WCS for both CII and JWST """
 
-    if True:
+    if False:
+        """ Reproject and convolve NIRCAM F335M """
         # Get the 3 micron image ready for resampling/convolution
         fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/jw02739-o001_t001_nircam_clear-f335m_i2d.fits")
         reproj_kwargs = {}
@@ -1286,15 +1288,161 @@ def jwst3um_to_fir_figure():
             hdr[k] = v
         hdu = fits.PrimaryHDU(data=img_3um, header=hdr)
         hdu.writeto(savename)
+    """ Reprojected and convolved (done June 8, 2023) """
+    if True:
+        """
+        Convert to ergs s-1 cm-2 sr-1
+        I am following irac8um_to_cii_figure() pretty closely here
+        """
+        # Already reproj and conv filename
+        fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_conv.fits")
+        img, hdr = fits.getdata(fn_3um, header=True)
+        f335m_bandwidth_wl = 0.347 * u.micron # https://jwst-docs.stsci.edu/jwst-near-infrared-camera/nircam-instrumentation/nircam-filters
+        ### WRONG!!!! # f335m_bandwidth = f335m_bandwidth.to(u.Hz, equivalencies=u.spectral()) ### WRONG
+        f335m_band_center_wl = 3.365 * u.micron
 
+        # Convert wavelength bandwidth to frequency without assuming it's linear.
+        def convert_band_width(width, center):
+            # Let both width and center be in wavelength units
+            wl0, wl1 = center-(width/2), center+(width/2)
+            # Reverse 1 and 0 notation to get the sign right
+            f1, f0 = tuple(wl.to(u.Hz, equivalencies=u.spectral()) for wl in (wl0, wl1))
+            return f1 - f0
 
-    # Convolve the 3 micron? or should we do this earlier. the original image is 7k x 4x so conv may be inefficient
+        f335m_band_width_freq = convert_band_width(f335m_bandwidth_wl, f335m_band_center_wl)
 
-    # fig = plt.figure(figsize=(15, 10))
-    # ax_cii_obs = plt.subplot(131)
-    # ax_cii_synth = plt.subplot(132)
-    # ax_fir_synth = plt.subplot(133)
+        img_unit = u.Unit(hdr['BUNIT'])
+        intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
+        intensity_3um = (img * img_unit * f335m_band_width_freq).to(intensity_unit_cgs)
 
+        """ DEBUG compare to IRAC 8 micron  """
+        if False:
+            fn_8um = catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic.fits")
+            img = reproject_interp(fn_8um, wcs_obj, shape_out=wcs_kwargs['grid_shape'], return_footprint=False)
+            irac4_effective_width = 3.94e12 * u.Hz # 3.94 THz from Table 4.3 of IRAC Instrument Handbook (per irac8um_to_cii_figure)
+            # irac4_band_center = (7.873 * u.micron).to(u.Hz, equivalencies=u.spectral())
+            ### I think effective width is the way to go, it seems intended for this purpose
+            img_unit = u.Unit(fits.getheader(fn_8um)['BUNIT'])
+            intensity_8um_obs = (img * img_unit * irac4_effective_width).to(intensity_unit_cgs)
+
+            fig = plt.figure(figsize=(17, 8))
+
+            ax1 = plt.subplot(133)
+            ax2 = plt.subplot(132)
+            ax3 = plt.subplot(131)
+
+            im = ax1.imshow(intensity_3um.to_value(), origin='lower')
+            fig.colorbar(im, ax=ax1, label=f"3 micron, {intensity_3um.unit.to_string('latex_inline')}")
+            ax1.set_title("F335M")
+
+            ratio = (intensity_8um_obs/intensity_3um).decompose()
+            im = ax2.imshow(ratio.to_value(), origin='lower', cmap='jet', vmin=0, vmax=15)
+            fig.colorbar(im, ax=ax2, label=f"8 micron / 3 micron ({ratio.unit})")
+            ax2.set_title("IRAC4 / F335M")
+
+            im = ax3.imshow(intensity_8um_obs.to_value(), origin='lower')
+            fig.colorbar(im, ax=ax3, label=f"8 micron, {intensity_8um_obs.unit.to_string('latex_inline')}")
+            ax3.set_title("IRAC4")
+
+            plt.tight_layout()
+            savedir = "/home/ramsey/Pictures/2023-06-09"
+            if not os.path.exists(savedir):
+                os.makedirs(savedir)
+            fig.savefig(os.path.join(savedir, "f335m_irac4_compare_bandwidth.png"),
+                metadata=catalog.utils.create_png_metadata(title='compare 3 and 8 micron',
+                    file=__file__, func="jwst3um_to_fir_figure"))
+            # plt.show()
+
+        """ Get CII moment 0 and convert to cgs """
+        cii_cube = cube_utils.CubeData('cii').convert_to_kms().data
+        cii_mom0 = cii_cube.spectral_slab(19*kms, 27*kms).moment0()
+        line_center = cii_cube.header['RESTFREQ'] * u.Hz
+        # Calculate velocity axis in frequency, do the same interval thing for 1 km/s -> Hz conversion
+        velocity_axis_freq = cii_cube.spectral_axis[::-1].to(u.Hz, equivalencies=u.doppler_radio(line_center))
+        # Ratio of these converts km/s to Hz correctly (I think)
+        channel_width_freq = np.mean(np.diff(velocity_axis_freq)) # last element, so it matches the first below
+        channel_width_vel = np.mean(np.diff(cii_cube.spectral_axis))
+        # The conversion from T_B to S_nu is linear, so we can divide out velocity and multiply back in frequency later with no consequence.
+        cii_mom0_cgs = (cii_mom0/channel_width_vel).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(line_center)) * channel_width_freq
+        cii_mom0_cgs = cii_mom0_cgs.to(intensity_unit_cgs) # finish the conversion
+
+        """ Reproject CII onto the grid """
+        cii_reproj = reproject_interp((cii_mom0_cgs.to_value(), cii_mom0.wcs), wcs_obj, shape_out=wcs_kwargs['grid_shape'], return_footprint=False) * cii_mom0_cgs.unit
+
+        """
+        I am using Cornelia's newer conversions from her 2021 paper; the last time I did this, I used the 2017 paper.
+        These are to be used as:
+        y = 10^b * x^a
+        where a, b:
+        8um->CII: 0.70, -1.79
+        8um->FIR: 1.19, +1.39
+        """
+        def convert_8um_to(measurement_name, value):
+            if measurement_name == 'CII':
+                a, b = 0.70, -1.79
+            elif measurement_name == 'FIR':
+                a, b = 1.19, 1.39
+            else:
+                raise NotImplementedError(f"-> {measurement_name}")
+            return ((10**b) * (value.to_value()**a)) * value.unit
+
+        """ Xander confirmed that 8 micron is 10x brighter than 3 micron """
+        coefficient_3_to_8 = 10
+
+        intensity_FIR = convert_8um_to("FIR", intensity_3um*coefficient_3_to_8)
+        intensity_CII = convert_8um_to("CII", intensity_3um*coefficient_3_to_8)
+
+        fig = plt.figure(figsize=(15, 5))
+        cii_vmax = 0.003
+        matplotlib.rcParams['mathtext.fontset'] = 'stix'
+        matplotlib.rcParams['font.family'] = 'STIXGeneral'
+        cmap = 'jet'
+
+        ax_cii_obs = plt.subplot(131, projection=wcs_obj)
+        im = ax_cii_obs.imshow(cii_reproj.to_value(), origin='lower', vmin=0, vmax=cii_vmax, cmap=cmap)
+        cbar_ax = ax_cii_obs.inset_axes([1.04, 0, 0.06, 1])
+        cbar = fig.colorbar(im, cax=cbar_ax)
+        cbar.set_label(label=r"$I_{\rm [C\ II],\,observed}$ "+f"({cii_reproj.unit.to_string('latex_inline')})")
+
+        ax_cii_synth = plt.subplot(132, projection=wcs_obj)
+        im = ax_cii_synth.imshow(intensity_CII.to_value(), origin='lower', vmin=0, vmax=cii_vmax, cmap=cmap)
+        cbar_ax = ax_cii_synth.inset_axes([1.04, 0, 0.06, 1])
+        cbar = fig.colorbar(im, cax=cbar_ax)
+        cbar.set_label(label=r"$I_{\rm [C\ II],\,predicted\ from\ F335M}$ "+f"({intensity_CII.unit.to_string('latex_inline')})")
+
+        ax_fir_synth = plt.subplot(133, projection=wcs_obj)
+        im = ax_fir_synth.imshow(intensity_FIR.to_value(), origin='lower', vmin=0, vmax=0.7, cmap=cmap)
+        cbar_ax = ax_fir_synth.inset_axes([1.04, 0, 0.06, 1])
+        cbar = fig.colorbar(im, cax=cbar_ax)
+        cbar.set_label(label=r"$I_{\rm FIR,\,predicted\ from\ F335M}$ "+f"({intensity_FIR.unit.to_string('latex_inline')})")
+
+        for i, ax in enumerate([ax_cii_obs, ax_cii_synth, ax_fir_synth]):
+            ax.set_xlabel("RA (J2000)")
+            if i == 0:
+                ax.set_ylabel("Dec (J2000)")
+            else:
+                ax.set_ylabel(" ")
+
+        # CII beam patch
+        beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
+        beam_patch = cii_cube.beam.ellipse_to_plot(*(ax_cii_obs.transAxes + ax_cii_obs.transData.inverted()).transform([0.91, 0.075]), misc_utils.get_pixel_scale(wcs_obj))
+        beam_patch.set(**beam_patch_kwargs)
+        ax_cii_obs.add_artist(beam_patch)
+
+        # Other beam patch, 1.5''
+        new_beam = cube_utils.Beam(1.5*u.arcsec)
+        for ax in (ax_cii_synth, ax_fir_synth):
+            beam_patch = new_beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.91, 0.075]), misc_utils.get_pixel_scale(wcs_obj))
+            beam_patch.set(**beam_patch_kwargs)
+            ax.add_artist(beam_patch)
+
+        plt.subplots_adjust(left=0.05, right=0.95, top=0.95)
+        savedir = "/home/ramsey/Pictures/2023-06-09"
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+        fig.savefig(os.path.join(savedir, "cii_fir_3um_figure.png"),
+            metadata=catalog.utils.create_png_metadata(title='NIRCAM F335M used to predict cii,FIR. next to upGREAT CII',
+                file=__file__, func="jwst3um_to_fir_figure"))
 
 
 
