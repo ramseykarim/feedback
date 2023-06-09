@@ -30,6 +30,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
 
 from reproject import mosaicking
+from reproject import reproject_adaptive
 
 import pandas as pd
 
@@ -47,6 +48,7 @@ Cutout2D = pvdiagrams.Cutout2D
 
 from . import cube_pixel_spectra as cps1
 from . import cube_pixel_spectra_2 as cps2
+from . import mosaic_vlt
 
 mpl_cm = pvdiagrams.mpl_cm
 mpl_colors = pvdiagrams.mpl_colors
@@ -1209,6 +1211,92 @@ def irac8um_to_cii_figure(band=4):
         header=new_hdr)
     hdu.writeto(cii_fn_out)
     print()
+
+
+def jwst3um_to_fir_figure():
+    """
+    June 8, 2023
+    Xander asked me for an image similar to the one above, in irac8um_to_cii_figure,
+    but this time using NIRCAM 3.3 micron
+    Xander's message:
+        I am involved in a far-IR mission proposal. In support of this,
+        could you make a figure of the pillars of creation with 3 panels.
+        Left, the integrated [CII] intensity from upgreat.
+        On the right, the far-IR intensity derived from the JWST 3.3um image
+        using a scaling factor of I(8um)/I(3.3)=10 and the relationship derived
+        by Cornelia for I(FIR)/I(8um) in table 2 of her 2021 paper.
+        And then convolve this to a resolution of 1.5”. The middle panel would
+        follow the same procedure to scale the 3.3 um JWST map to the
+        [CII] intensity (also from table 2) again convolved to 1.5”.
+    See the note in the function above for some hints on how to convert.
+    Xander has already given me 8um/3um = 10, so that's easy.
+
+    I will use the footprint jwst_reproj_footprint.reg and follow mosaic_vlt.py
+    on using a footprint to find WCS.
+    """
+
+    # Region and footprint
+    reg_filename_short = "catalogs/jwst_reproj_footprint.reg"
+    footprint_box_reg = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short)).pop()
+    # Make WCS with footprint
+    wcs_kwargs = {}
+    # Set pixel scale to 0.5'' by hand, since Xander wants 1.5'' resolution
+    wcs_kwargs['pixel_scale'] = 0.5 * u.arcsec
+    wcs_kwargs['ref_coord'] = footprint_box_reg.center
+    wcs_kwargs['grid_shape'] = tuple(int(round((x / wcs_kwargs['pixel_scale']).decompose().to_value())) for x in (footprint_box_reg.height, footprint_box_reg.width))
+    wcs_obj = mosaic_vlt.make_wcs(**wcs_kwargs)
+    """ Use this WCS for both CII and JWST """
+
+    if True:
+        # Get the 3 micron image ready for resampling/convolution
+        fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/jw02739-o001_t001_nircam_clear-f335m_i2d.fits")
+        reproj_kwargs = {}
+        # Set up kernel for reprojection from 0.13'' to 1.5''
+        new_resolution = 1.5 * u.arcsec
+        kernel_fwhm = np.sqrt(new_resolution.to_value()**2 - 0.13**2) * u.arcsec
+        # Function needs width between +/- sigma, so 2*FWHM/2.355
+        # Also convert to pixels by dividing by pixel_scale (0.5''). The result is around 2.5 pixels (output image)
+        reproj_kwargs['kernel_width'] = (2 * kernel_fwhm / (wcs_kwargs['pixel_scale'] * 2.355)).decompose()
+        reproj_kwargs['sample_region_width'] = 9 # I calculated this from their recommendations in the reproject_adaptive documentation
+        reproj_kwargs['kernel'] = 'gaussian'
+        reproj_kwargs['return_footprint'] = False
+        # Reproject the 3um to the new WCS
+        img_3um = reproject_adaptive(fn_3um, wcs_obj, shape_out=wcs_kwargs['grid_shape'], hdu_in=1, **reproj_kwargs)
+
+        savename = os.path.join(os.path.dirname(fn_3um), "f335m_conv.fits")
+        # Stack up all they keys we'll add to the header
+        keys_to_add = [
+            ('DATE', f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"),
+            ('CREATOR', f"Ramsey, {__file__}.jwst3um_to_fir_figure"),
+            ('BMAJ', (f"{new_resolution.to(u.deg).to_value()}", 'deg')),
+            ('BMIN', (f"{new_resolution.to(u.deg).to_value()}", 'deg')),
+            ('BPA', ("0", 'deg')),
+            ('HISTORY', "Resolution is 1.5 arcsec"),
+            ('HISTORY', "Pixel scale is 0.5 arcsec"),
+        ]
+        keys_to_copy0 = ['TELESCOP', 'PROGRAM', 'INSTRUME', 'FILTER', 'PUPIL']
+        keys_to_copy1 = ['BUNIT']
+        keys_to_copy_lists = [keys_to_copy0, keys_to_copy1]
+        for i in range(2):
+            jhdr = fits.getheader(fn_3um, ext=i)
+            for k in keys_to_copy_lists[i]:
+                keys_to_add.append((k, jhdr[k]))
+        hdr = wcs_obj.to_header()
+        for k, v in keys_to_add:
+            hdr[k] = v
+        hdu = fits.PrimaryHDU(data=img_3um, header=hdr)
+        hdu.writeto(savename)
+
+
+    # Convolve the 3 micron? or should we do this earlier. the original image is 7k x 4x so conv may be inefficient
+
+    # fig = plt.figure(figsize=(15, 10))
+    # ax_cii_obs = plt.subplot(131)
+    # ax_cii_synth = plt.subplot(132)
+    # ax_fir_synth = plt.subplot(133)
+
+
+
 
 
 def simple_mom0_carma_molecules(line_name, pacs70_reproj=None):
@@ -2977,5 +3065,4 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
-    for i in [2, 3]:
-        irac8um_to_cii_figure(band=i)
+    jwst3um_to_fir_figure()
