@@ -379,13 +379,7 @@ def prepare_reference_image(spectr_cube_obj, flat_wcs, center_coord, size=None):
 
 
 
-def plot_path(cube, subcube, path,
-    center_coord=None, coord_to_mark=None,
-    img_to_plot=None, img_stretch='linear', pv_stretch='linear',
-    img_lims=None, pv_lims=None,
-    img_subplot=(121,), pv_subplot=(122,),
-    fig=None, show=True,
-    contours=False):
+def plot_path(cube, subcube, path, center_coord=None, coord_to_mark=None, img_to_plot=None, img_stretch='linear', pv_stretch='linear', img_lims=None, pv_lims=None, img_subplot=(121,), pv_subplot=(122,), fig=None, show=True, contours=False):
     """
     :param cube: CubeData
     :param subcube: a SpectralCube instance, already trimmed to the correct
@@ -578,8 +572,7 @@ def path_from_ds9(reg_file_name, index, width=None):
 SERIES OF PATHS FUNCTIONS
 """
 
-def linear_series_from_description(start_center, end_center, pvpath_length,
-    pvpath_angle, pvpath_width=None, points_not_paths=False, n_steps=30):
+def linear_series_from_description(start_center, end_center, pvpath_length, pvpath_angle, pvpath_width=None, points_not_paths=False, n_steps=30):
     """
     Create a linear series of parallel Paths. Generator function, so generates
     lazily.

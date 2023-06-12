@@ -931,27 +931,141 @@ def pv_slice_series_overlay():
     an overlay will involve different pixel grids, so that would be too difficult.
     """
     # Load PV info
-    path_info = pvdiagrams.linear_series_from_ds9(catalog.utils.search_for_file("catalogs/m16_pv_vectors_0.reg"))
+    path_filename_short = "catalogs/m16_pv_vectors_0.reg"
+    path_info = pvdiagrams.linear_series_from_ds9(catalog.utils.search_for_file(path_filename_short))
+    path_stub = os.path.split(path_filename_short)[-1].replace('.reg', '')
+    pv_vel_lims = (8*kms, 35*kms)
+    pv_vel_intervals = np.arange(16, 33, 2)
 
     # Load cubes
     img_stub = 'ciiAPEX'
-    img_cube_obj = cube_utils.CubeData(get_map_filename(img_stub))
+    img_cube_obj = cube_utils.CubeData(get_map_filename(img_stub)).convert_to_kms()
+
+    contour_stub = '12co32'
+    contour_cube_obj = cube_utils.CubeData(get_map_filename(contour_stub)).convert_to_kms()
 
     # Reference image
     ref_vel_lims = (10*kms, 35*kms)
     ref_mom0 = img_cube_obj.data.spectral_slab(*ref_vel_lims).moment0()
     ref_img = ref_mom0.to_value()
+    ref_contour_mom0 = contour_cube_obj.data.spectral_slab(*ref_vel_lims).moment0()
+    ref_contour = reproject_interp((ref_contour_mom0.to_value(), ref_contour_mom0.wcs), ref_mom0.wcs, ref_mom0.shape, return_footprint=False)
 
     # Colors
     ref_img_cmap = 'Greys_r'
-    pv_img_cmap = 'Greys_r'
-    pv_contour_cmap = 'plasma'
+    ref_contour_cmap = 'magma_r'
+    pv_img_cmap = 'plasma'
+    pv_img_contours_color = 'k'
+    pv_contour_cmap = 'cool'
+    reg_color = 'LimeGreen'
 
     """
     go thru and look at run_plot_and_save_series and plot_path in pvdiagrams.py
     will need to iterate somewhat manually using cues from these two functions
     """
-    ...
+
+    # Colorscale limits
+    pv_vmaxes = {'ciiAPEX': 20, '12co32': 30, '13co32': 15}
+    pv_levels = {'ciiAPEX': (3, 37, 4), '12co32': (5, 41, 5), '13co32': (1, 27, 2.5)}
+    def _get_levels(line_stub):
+        """
+        Get levels from the above dictionary. Return None if not present.
+        """
+        if line_stub in pv_levels:
+            return np.arange(*pv_levels[line_stub])
+        else:
+            return None
+
+
+    img_cube = img_cube_obj.data.spectral_slab(*pv_vel_lims)
+    contour_cube = contour_cube_obj.data.spectral_slab(*pv_vel_lims)
+
+    # path_info is: center_coord, length_scale, path_generator
+    path_generator = path_info[2]
+    for i, p in enumerate(path_generator):
+
+        if i%3 != 0:
+            continue
+
+        sl_img = pvextractor.extract_pv_slice(img_cube, p)
+        sl_contour_raw = pvextractor.extract_pv_slice(contour_cube, p)
+        sl_contour_raw.header['RESTFRQ'] = sl_img.header['RESTFRQ']
+        sl_wcs = WCS(sl_img.header)
+        sl_contour = reproject_interp((sl_contour_raw.data, sl_contour_raw.header), sl_wcs, shape_out=sl_img.data.shape, return_footprint=False)
+
+        fig = plt.figure(figsize=(10, 9))
+        gs = fig.add_gridspec(2, 1, height_ratios=[1, 1])
+
+        # Reference image
+        ax_ref = fig.add_subplot(gs[0,0], projection=ref_mom0.wcs)
+        cbar_ax = ax_ref.inset_axes([1, 0, 0.05, 1])
+        cbar_ax2 = ax_ref.inset_axes([0, 1, 1, 0.05])
+
+        im = ax_ref.imshow(ref_img, origin='lower', cmap=ref_img_cmap, vmin=0)
+        cbar = fig.colorbar(im, cax=cbar_ax, label=f"{get_data_name(img_stub)} ({ref_mom0.unit.to_string('latex_inline')})")
+        ax_ref.text(0.05, 0.93, make_vel_stub(ref_vel_lims), color='k', ha='left', va='bottom', transform=ax_ref.transAxes)
+
+        cs = ax_ref.contour(ref_contour, cmap=ref_contour_cmap, linewidths=0.5, alpha=0.6)
+        cbar = fig.colorbar(cs, cax=cbar_ax2, location='top', spacing='proportional', label=f"{get_data_name(contour_stub)} ({ref_contour_mom0.unit.to_string('latex_inline')})")
+
+        ax_ref.plot([c.ra.deg for c in p._coords], [c.dec.deg for c in p._coords], color=reg_color, linestyle='-', lw=1, transform=ax_ref.get_transform('world'))
+        ax_ref.text(p._coords[0].ra.deg, p._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color=reg_color, fontsize=10, va='center', ha='right', transform=ax_ref.get_transform('world'))
+
+        # Plot the footprint of the overlay if it would be visible at all
+        overlay_nan_map = np.isnan(ref_contour)
+        if np.any(overlay_nan_map):
+            ax_ref.contour(overlay_nan_map.astype(float), levels=[0.5], colors='SlateGray', linestyles=':', linewidths=1)
+        del overlay_nan_map
+
+        # Beams
+        beam_patch_kwargs = dict(alpha=0.9, hatch='////')
+        beam_x, beam_y = 0.93, 0.1
+        beam_ecs = [['white', 'grey'], [cs.cmap(cs.norm(cs.levels[j])) for j in [0, 2]]]
+        for j, cube in enumerate((img_cube, contour_cube)):
+            # Beam is known, plot it
+            patch = cube.beam.ellipse_to_plot(*(ax_ref.transAxes + ax_ref.transData.inverted()).transform([beam_x, beam_y]), misc_utils.get_pixel_scale(ref_mom0.wcs))
+            patch.set(**beam_patch_kwargs, facecolor=beam_ecs[j][0], edgecolor=beam_ecs[j][1])
+            ax_ref.add_artist(patch)
+            beam_x -= 0.03
+
+
+        # PV diagram
+        ax_pv = fig.add_subplot(gs[1,0], projection=sl_wcs)
+        cbar_ax = ax_pv.inset_axes([1, 0, 0.05, 1])
+        # Image
+        im = ax_pv.imshow(sl_img.data, origin='lower', cmap=pv_img_cmap, vmin=0, vmax=pv_vmaxes.get(img_stub, None), aspect=(sl_img.data.shape[1]/(2.5*sl_img.data.shape[0])))
+        cbar = fig.colorbar(im, cax=cbar_ax, label=img_cube.unit.to_string('latex_inline'))
+        # Contours
+        cs = ax_pv.contour(sl_img.data, colors=pv_img_contours_color, linewidths=1, linestyles=':', levels=_get_levels(img_stub))
+        for l in cs.levels:
+            cbar.ax.axhline(l, color=pv_img_contours_color)
+        cs = ax_pv.contour(sl_contour, cmap=pv_contour_cmap, linewidths=1.5, levels=_get_levels(contour_stub), vmax=pv_vmaxes.get(contour_stub, None))
+        for l in cs.levels:
+            cbar.ax.axhline(l, color=cs.cmap(cs.norm(l)))
+
+        # Plot horizontal gridlines
+        x_length = p._coords[0].separation(p._coords[1]).deg
+        for v in pv_vel_intervals:
+            ax_pv.plot([0, x_length], [v*1e3]*2, color='grey', alpha=0.7, linestyle='--', transform=ax_pv.get_transform('world'))
+        # Label observation names
+        ax_pv.text(0.05, 0.95, "Img: " + cube_utils.cubenames[img_stub], fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
+        ax_pv.text(0.05, 0.90, "Cont: " + cube_utils.cubenames[contour_stub], fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
+
+
+        ax_pv.coords[1].set_format_unit(u.km/u.s)
+        ax_pv.coords[1].set_major_formatter('x.xx')
+        ax_pv.coords[0].set_format_unit(u.arcsec)
+        ax_pv.coords[0].set_major_formatter('x.xx')
+
+        plt.tight_layout()
+
+        # 2023-06-12
+        savename = f"/home/ramsey/Pictures/2023-06-12/m16_pv_{path_stub}_{i:03d}.png"
+        fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='pv movie',
+            file=__file__, func='pv_slice_series_overlay'))
+
+
+
 
 def m16_large_moment0():
     """
