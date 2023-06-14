@@ -73,6 +73,7 @@ make_simple_vel_stub = lambda x : ".".join(f"{y.to_value():.1f}" for y in x)
 kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
+
 ratio_12co_to_H2 = 8.5e-5
 Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)->N(H) section
 
@@ -931,8 +932,9 @@ def pv_slice_series_overlay():
     an overlay will involve different pixel grids, so that would be too difficult.
     """
     # Load PV info
-    path_filename_short = "catalogs/m16_pv_vectors_0.reg"
-    path_info = pvdiagrams.linear_series_from_ds9(catalog.utils.search_for_file(path_filename_short))
+    # path_filename_short = "catalogs/m16_pv_vectors_2.reg"; n_steps = 60
+    path_filename_short = "catalogs/m16_pv_vectors_3.reg"; n_steps = 85
+    path_info = pvdiagrams.linear_series_from_ds9(catalog.utils.search_for_file(path_filename_short), n_steps=n_steps)
     path_stub = os.path.split(path_filename_short)[-1].replace('.reg', '')
     pv_vel_lims = (8*kms, 35*kms)
     pv_vel_intervals = np.arange(16, 33, 2)
@@ -984,7 +986,10 @@ def pv_slice_series_overlay():
     path_generator = path_info[2]
     for i, p in enumerate(path_generator):
 
-        if i%3 != 0:
+        # if i%3 != 0 and i < 44:
+        # if i != 14:
+
+        if os.path.isfile(f"/home/ramsey/Pictures/2023-06-13/m16_pv_{path_stub}_{i:03d}.png"):
             continue
 
         sl_img = pvextractor.extract_pv_slice(img_cube, p)
@@ -1044,12 +1049,15 @@ def pv_slice_series_overlay():
             cbar.ax.axhline(l, color=cs.cmap(cs.norm(l)))
 
         # Plot horizontal gridlines
+        xlim = ax_pv.get_xlim() # save existing xlim to reintroduce them later
         x_length = p._coords[0].separation(p._coords[1]).deg
-        for v in pv_vel_intervals:
+        for v in pv_vel_intervals: # these mess up the xlim
             ax_pv.plot([0, x_length], [v*1e3]*2, color='grey', alpha=0.7, linestyle='--', transform=ax_pv.get_transform('world'))
         # Label observation names
         ax_pv.text(0.05, 0.95, "Img: " + cube_utils.cubenames[img_stub], fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
         ax_pv.text(0.05, 0.90, "Cont: " + cube_utils.cubenames[contour_stub], fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
+        # Put xlim back in
+        ax_pv.set_xlim(xlim)
 
 
         ax_pv.coords[1].set_format_unit(u.km/u.s)
@@ -1059,10 +1067,12 @@ def pv_slice_series_overlay():
 
         plt.tight_layout()
 
-        # 2023-06-12
-        savename = f"/home/ramsey/Pictures/2023-06-12/m16_pv_{path_stub}_{i:03d}.png"
+        # 2023-06-12,13
+        savename = f"/home/ramsey/Pictures/2023-06-13/m16_pv_{path_stub}_{i:03d}.png"
         fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='pv movie',
             file=__file__, func='pv_slice_series_overlay'))
+
+        plt.close(fig)
 
 
 
@@ -1662,11 +1672,8 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, veloci
         reg_fn_stub = "_"+reg_fn_stub
     if plot_stars:
         reg_fn_stub += '_with-stars'
-    # 2023-05-03,04,05,09,10,11,26,30, 06-02,07
-    savedir = "/home/ramsey/Pictures/2023-06-07"
-    if not os.path.exists(savedir):
-        os.makedirs(savedir)
-    fig.savefig(os.path.join(savedir, f"overlay_{overlay_stub}_on_{background_stub}{velocity_stub}{reg_fn_stub}.png"),
+    # 2023-05-03,04,05,09,10,11,26,30, 06-02,07,14
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"overlay_{overlay_stub}_on_{background_stub}{velocity_stub}{reg_fn_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_moment"))
     # Some cleanup since things seem to pile up
     plt.close(fig)
@@ -1929,7 +1936,12 @@ if __name__ == "__main__":
     # i = 22
     # vel_lims = (i*kms, (i+2)*kms)
     # overlay_moment(background='ciiAPEX', overlay='12co10-pmo', velocity_limits=(15*kms, 18*kms), velocity_limits2=(18*kms, 20*kms), cutout_reg_stub='med', plot_stars=False, reg_filename_or_idx="catalogs/N19_points_2.reg")
-    # overlay_moment(background='ciiAPEX', overlay='12co10-pmo', velocity_limits=(12*kms, 16*kms), velocity_limits2=(16*kms, 20*kms), cutout_reg_stub='med', plot_stars=False, reg_filename_or_idx="catalogs/m16_northridge_points.reg")
+
+    vcii = (27*kms, 29*kms)
+    vco = (25*kms, 26*kms)
+    for l in ('12co32', '12co10-pmo'):
+        for v in (vco,):
+            overlay_moment(background='ciiAPEX', overlay=l, velocity_limits=vcii, velocity_limits2=v, cutout_reg_stub='med')
 
     """
     PV examples
@@ -1939,7 +1951,7 @@ if __name__ == "__main__":
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['12co10', 'ciiAPEX'])
 
-    pv_slice_series_overlay()
+    # pv_slice_series_overlay()
 
     """
     CO column

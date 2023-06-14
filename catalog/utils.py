@@ -20,6 +20,8 @@ from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 
+import datetime
+
 """
 RCW49 specific things
 """
@@ -41,7 +43,8 @@ m16_data_path = f"{feedback_path}m16_data/"
 
 misc_data_path = f"{feedback_path}misc_data/"
 
-figures_path = f"{feedback_path}feedback_code/figures/"
+figures_path = f"{feedback_path}feedback_code/figures/" # 2023: I haven't used this for years. Everything is in Pictures now
+picture_path = "/home/ramsey/Pictures" # 2023: this is the modern figure path. see todays_image_folder()
 
 # Similar to the PATH shell variable. Where to look for data, in this order
 data_paths = ["", ancillary_data_path, m16_data_path]
@@ -181,6 +184,23 @@ def create_png_metadata(title=None, file=None, func=None, **extra_metadata_kwarg
         metadata['Title'] = title
     metadata.update(extra_metadata_kwargs)
     return metadata
+
+
+"""
+Another personal utility that is long overdue: automatically check for and make
+today's image folder
+"""
+def todays_image_folder():
+    """
+    Return the path to today's image folder. Make it if it doesn't exist
+    :returns: str path to image folder. Not terminated with a '/'. Appropriate
+        for use in os.path.join()
+    """
+    todays_date = datetime.datetime.today().strftime('%Y-%m-%d')
+    today_directory = os.path.join(picture_path, todays_date)
+    if not os.path.exists(today_directory):
+        os.makedirs(today_directory)
+    return today_directory
 
 
 """
