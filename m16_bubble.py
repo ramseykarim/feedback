@@ -28,6 +28,7 @@ import glob
 import datetime
 import time
 import warnings
+import math
 
 # from math import ceil
 # from scipy import signal
@@ -39,6 +40,9 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
 # from astropy.table import Table, QTable
 from astropy import constants as const
+from astropy.convolution import convolve, convolve_fft
+
+from reproject import reproject_adaptive
 
 import pandas as pd
 # from io import StringIO
@@ -130,8 +134,8 @@ cutout_box_filenames = {
 }
 vlim_memo = { # hash things somehow and put them here
     '8um': (40, 320), 'irac4': (40, 320),
-    'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]), 'cii.generic': (0, 14), #65 is better for most
-    '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 40),
+    'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]), 'cii.generic': (0, 25), #65 is better for most, 14 good for some
+    '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 25), # or 40
     '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 18),
     'rrl.levels': np.arange(3, 30, 6), # RRLs should be "sliced" into a 1 km/s channel
     '90cm.levels': np.arange(0, 0.61, 0.06), '850um': (0, 0.5), '850um.levels': np.concatenate([np.arange(.15, 2.1, 0.3), np.arange(3, 6, 1)]), '850um.generic': (0.15, 2),
@@ -1054,8 +1058,8 @@ def pv_slice_series_overlay():
         for v in pv_vel_intervals: # these mess up the xlim
             ax_pv.plot([0, x_length], [v*1e3]*2, color='grey', alpha=0.7, linestyle='--', transform=ax_pv.get_transform('world'))
         # Label observation names
-        ax_pv.text(0.05, 0.95, "Img: " + cube_utils.cubenames[img_stub], fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
-        ax_pv.text(0.05, 0.90, "Cont: " + cube_utils.cubenames[contour_stub], fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
+        ax_pv.text(0.05, 0.95, "Image: " + cube_utils.cubenames[img_stub], fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
+        ax_pv.text(0.05, 0.90, "Contour: " + cube_utils.cubenames[contour_stub], fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
         # Put xlim back in
         ax_pv.set_xlim(xlim)
 
@@ -1740,17 +1744,17 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     ax_pv = fig.add_subplot(gs[0, 1], projection=WCS(sl0.header))
     ls0, ls1 = line_stub_list
     # Background [0]; can either use Greys(_r) to match wtih plasma(_r) contours, or plasma to match with cool contours
-    im = ax_pv.imshow(sl0.data, origin='lower', cmap='Greys_r', vmin=0, vmax=pv_vmaxes.get(ls0, None), aspect=(sl0.data.shape[1]/(2.5*sl0.data.shape[0])))
+    im = ax_pv.imshow(sl0.data, origin='lower', cmap='plasma', vmin=0, vmax=pv_vmaxes.get(ls0, None), aspect=(sl0.data.shape[1]/(2.5*sl0.data.shape[0])))
     cs = ax_pv.contour(sl0.data, colors='k', linewidths=1, linestyles=':', levels=_get_levels(ls0))
     pv_cbar = fig.colorbar(im, ax=ax_pv, location='right', label=cube.data.unit.to_string('latex_inline'))
     for l in cs.levels:
         pv_cbar.ax.axhline(l, color='k')
-    ax_pv.text(0.05, 0.95, cube_utils.cubenames[ls0], fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
+    ax_pv.text(0.05, 0.95, "Image: "+get_data_name(ls0), fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
     # Overlay [1]
-    cs = ax_pv.contour(sl1_reproj, cmap='plasma_r', linewidths=1.5, levels=_get_levels(ls1), vmax=pv_vmaxes.get(ls1, None))
+    cs = ax_pv.contour(sl1_reproj, cmap='cool', linewidths=1.5, levels=_get_levels(ls1), vmax=pv_vmaxes.get(ls1, None))
     for l in cs.levels:
         pv_cbar.ax.axhline(l, color='w', linewidth=2)
-    ax_pv.text(0.05, 0.90, cube_utils.cubenames[ls1], fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
+    ax_pv.text(0.05, 0.90, "Contour: "+get_data_name(ls1), fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
 
     # Plot velocity intervals
     x_length = pv_path._coords[0].separation(pv_path._coords[1]).deg
@@ -1776,8 +1780,8 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     ax_ref_img.text(pv_path._coords[0].ra.deg, pv_path._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color=marcs_colors[1], fontsize=10, va='center', ha='right', transform=ax_ref_img.get_transform('world'))
 
     plt.tight_layout()
-    # 2023-05-06,11
-    savename = f"/home/ramsey/Pictures/2023-05-11/pv_{ls1}_on_{ls0}_along_{reg_fn_stub}.png"
+    # 2023-05-06,11, 06-30
+    savename = os.path.join(catalog.utils.todays_image_folder(), f"pv_{ls1}_on_{ls0}_along_{reg_fn_stub}.png")
     fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='pv',
         file=__file__, func="fast_pv"))
 
@@ -1816,6 +1820,8 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
         reg_filename_short = "catalogs/N19_points_2.reg"
     elif reg_set_number == 3:
         reg_filename_short = "catalogs/m16_northridge_points.reg"
+    elif reg_set_number == 4:
+        reg_filename_short = "catalogs/N19_shell_edge.reg"
     else:
         raise NotImplementedError(f"reg_set_number =/= {reg_set_number}")
 
@@ -1846,6 +1852,9 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
     elif reg_set_number in [2, 3]:
         figsize = (15, 10)
         grid_shape = (3, 3)
+    elif reg_set_number in [4]:
+        figsize = (16, 9)
+        grid_shape = (2, 3)
     else:
         raise NotImplementedError
 
@@ -1892,11 +1901,11 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
             ax.tick_params(axis='y', labelleft=False)
         if reg_idx == len(reg_list)-1:
             ax.legend(loc='upper right', fontsize=13)
-        ax.set_xlim((0, 46))
+        ax.set_xlim((5, 41))
         if line_set_number == 1:
-            ax.set_ylim((-5, 45))
+            ax.set_ylim((-5, 27)) # or 46
         elif line_set_number == 2:
-            ax.set_ylim((-3, 23))
+            ax.set_ylim((-3, 13)) # or 23
 
         ax.text(0.06, 0.94, reg_list[reg_idx].meta['text'], transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(10, 31, 2):
@@ -1914,10 +1923,203 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
 
     reg_fn_stub = str(reg_set_number) #os.path.basename(reg_filename_short).replace('.reg', '')
     # 2023-06-06,07
-    fig.savefig(f"/home/ramsey/Pictures/2023-06-07/sample_spectra_{reg_fn_stub}_{set_stub}.png",
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"sample_spectra_{reg_fn_stub}_{set_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=f"points: {reg_filename_short}",
         file=__file__, func="plot_spectra"))
 
+
+def compare_8micron_and_cii_intensities(velocity_limits, reg_index=0):
+    """
+    June 27, 2023
+    At a certain point (set by point region), compare the 8 micron intensity
+    to the CII integrated intensity using Cornelia's conversion.
+    Show a spectrum of CII along with the comparison to help with integration
+    limits, and a moment image.
+    """
+    reg_set_number = 4
+    if reg_set_number == 1:
+        reg_filename_short = "catalogs/N19_points.reg"
+    elif reg_set_number == 2:
+        reg_filename_short = "catalogs/N19_points_2.reg"
+    elif reg_set_number == 3:
+        reg_filename_short = "catalogs/m16_northridge_points.reg"
+    elif reg_set_number == 4:
+        reg_filename_short = "catalogs/N19_shell_edge.reg"
+    else:
+        raise NotImplementedError(f"reg_set_number =/= {reg_set_number}")
+
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    reg = reg_list[reg_index]
+
+    # CII
+    line_stub = 'cii'
+    cube_fn = get_map_filename(line_stub)
+    cube_obj = cube_utils.CubeData(cube_fn).convert_to_kms()
+    wcs_flat = cube_obj.wcs_flat
+
+    # 8 micron
+    fn_8um = catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic_ALIGNED.fits")
+    img_8, hdr_8 = fits.getdata(fn_8um, header=True)
+    wcs_8 = WCS(hdr_8)
+
+    # Convolve 8um to cii
+    convolve_8 = False
+    bmaj, bmin, pa = photometry_beams['8um']
+    beam_8 = cube_utils.Beam(bmaj*u.arcsec, bmin*u.arcsec, pa*u.deg)
+    beam_cii = cube_obj.data.beam
+    beam_conv = beam_cii.deconvolve(beam_8)
+    pixel_scale = misc_utils.get_pixel_scale(wcs_8)
+    if convolve_8:
+        kernel = beam_conv.as_kernel(pixel_scale)
+        img_8 = convolve_fft(img_8, kernel)
+        img_8 = reproject_interp((img_8, wcs_8), wcs_flat, shape_out=cube_obj.data.shape[1:], return_footprint=False)
+        wcs_8 = wcs_flat
+        # kernel_fwhm = np.sqrt(beam_cii.major**2 - beam_8.major**2).to(u.arcsec)
+        # kernel_width = (2 * kernel_fwhm / (pixel_scale * 2.355)).decompose() # -1 to +1 sigma in pixels
+        # sample_region_width = math.ceil(kernel_width*3)
+        # print(kernel_width, sample_region_width)
+        # img_8 = reproject_adaptive((img_8, wcs_8), wcs_flat, shape_out=cube_obj.data.shape[1:], return_footprint=False, kernel_width=kernel_width, sample_region_width=sample_region_width)
+        # wcs_8 = wcs_flat
+
+    figsize = (13, 10)
+    fig = plt.figure(figsize=figsize)
+    grid_shape = (2, 3)
+    gs = fig.add_gridspec(*grid_shape)
+
+    ax_spec = fig.add_subplot(gs[0, :])
+    ax_img1 = fig.add_subplot(gs[1, 0], projection=wcs_flat)
+    ax_img2 = fig.add_subplot(gs[1, 1], projection=wcs_flat)
+    ax_img3 = fig.add_subplot(gs[1, 2], projection=wcs_8)
+    axes = [ax_img1, ax_img2, ax_img3]
+
+    full_velocity_limits = (0*kms, 45*kms)
+    all_limits = (full_velocity_limits, velocity_limits)
+
+    imgs = [cube_obj.data.spectral_slab(*vl).moment0() for vl in all_limits]
+
+    # Grab these for later
+    cii_line_center = cube_obj.data.header['RESTFREQ'] * u.Hz
+    velocity_axis_freq = cube_obj.data.spectral_axis[::-1].to(u.Hz, equivalencies=u.doppler_radio(cii_line_center))
+    channel_width_freq = np.mean(np.diff(velocity_axis_freq))
+    channel_width_vel = np.mean(np.diff(cube_obj.data.spectral_axis))
+
+    # work with the 8 micron
+    irac4_effective_width = 3.94e12 * u.Hz # 3.94 THz from Table 4.3 of IRAC Instrument Handbook (per irac8um_to_cii_figure)
+    pixreg = reg.to_pixel(wcs_8)
+    pj, pi = [int(round(c)) for c in pixreg.center.xy]
+    img_unit = u.Unit(hdr_8['BUNIT'])
+    intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
+    intensity_8 = (img_8[pi, pj] * img_unit * irac4_effective_width).to(intensity_unit_cgs)
+    img_8 = (img_8 * img_unit * irac4_effective_width).to(intensity_unit_cgs)
+    """
+    cii = 10^b * (8um)^a
+    for a, b = 0.70, -1.79
+    """
+    def convert_8um_to_cii(value):
+        # use Cornelia's numbers from 2021 paper
+        value = value.to(intensity_unit_cgs) # must be in these units
+        a, b = 0.70, -1.79
+        value_cii = ((10**b) * (value.to_value()**a)) * value.unit
+        # Now convert that to K km/s
+        # inverse of this
+        # cii_integrated_intensity_cgs = (cii_integrated_intensity/channel_width_vel).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(line_center)) * channel_width_freq
+        value_cii_kkms = (value_cii/channel_width_freq).to(u.K, equivalencies=u.brightness_temperature(cii_line_center)) * channel_width_vel
+        return value_cii_kkms.to(u.K * kms)
+
+    intensity_8_cii = convert_8um_to_cii(intensity_8)
+    img_8 = convert_8um_to_cii(img_8)
+    imgs.append(img_8)
+
+    save_img = False
+    if save_img:
+        keys_to_add = [
+            ('DATE', f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"),
+            ('CREATOR', f"Ramsey, {__file__}.compare_8micron_and_cii_intensities"),
+            ('BUNIT', f"{img_8.unit.to_string('latex_inline')}"),
+            ('BMAJ', (f"{beam_cii.major.to(u.deg).to_value()}", 'deg')),
+            ('BMIN', (f"{beam_cii.minor.to(u.deg).to_value()}", 'deg')),
+            ('BPA', ("0", 'deg')),
+            ('TELESCOP', 'Spitzer'),
+            ('CHNLNUM', '4'),
+            ('HISTORY', "CII resolution"),
+            ('HISTORY', "8 um converted to CII"),
+        ]
+        new_hdr = wcs_flat.to_header()
+        for k, v in keys_to_add:
+            new_hdr[k] = v
+        hdu = fits.PrimaryHDU(data=img_8.to_value(), header=new_hdr)
+        hdu.writeto(os.path.join(os.path.dirname(fn_8um), "irac4_to_cii_kkms.fits"))
+
+    save_cii = False
+
+
+    if save_cii:
+        keys_to_add = [
+            ('DATE', f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"),
+            ('CREATOR', f"Ramsey, {__file__}.compare_8micron_and_cii_intensities"),
+            ('BUNIT', f"{imgs[1].unit.to_string('latex_inline')}"),
+            ('BMAJ', (f"{beam_cii.major.to(u.deg).to_value()}", 'deg')),
+            ('BMIN', (f"{beam_cii.minor.to(u.deg).to_value()}", 'deg')),
+            ('BPA', ("0", 'deg')),
+            ('TELESCOP', 'SOFIA'),
+            ('COMMENT', "Moment 0"),
+            ('COMMENT', f"velocity interval {make_vel_stub(velocity_limits)}"),
+        ]
+        new_hdr = wcs_flat.to_header()
+        for k, v in keys_to_add:
+            new_hdr[k] = v
+        hdu = fits.PrimaryHDU(data=imgs[1].to_value(), header=new_hdr)
+        hdu.writeto(os.path.join(cube_obj.directory, f"m16_cii_moment0_{make_simple_vel_stub(velocity_limits)}.fits"))
+
+
+
+    pixreg = reg.to_pixel(wcs_flat)
+    pj, pi = [int(round(c)) for c in pixreg.center.xy]
+    cii_integrated_intensity = imgs[1][pi, pj]
+
+    for i in range(3):
+        im = axes[i].imshow(imgs[i].to_value(), origin='lower', vmin=0, vmax=(None if i<2 else 150))
+        fig.colorbar(im, ax=axes[i], label=f"{imgs[i].unit.to_string('latex_inline')}")
+        if i < 2:
+            axes[i].set_title(f"{line_stub} {make_vel_stub(all_limits[i])}")
+            reg_patch = pixreg.as_artist()
+        else:
+            axes[i].set_title(f"{line_stub} from {cube_utils.cubenames['8um']}")
+            reg_patch = reg.to_pixel(wcs_8).as_artist()
+        reg_patch.set(mec='k')
+        axes[i].add_artist(reg_patch)
+
+    spectrum = cube_obj.data[:, pi, pj]
+
+    ax_spec.plot(cube_obj.data.spectral_axis.to_value(), spectrum.to_value(), label='cii')
+    ax_spec.set_xlim((-5, 50))
+    ax_spec.set_ylim((-1, 10))
+
+    vlcolors = ['grey', 'k']
+    for i, vl in enumerate(all_limits):
+        for j, v in enumerate(vl):
+            ax_spec.axvline(v.to_value(), color=vlcolors[i], alpha=0.7, label=(make_vel_stub(vl) if j == 0 else None))
+    ax_spec.axhline(0, color='grey', alpha=0.2)
+
+    ax_spec.legend()
+
+    reg_stub = os.path.basename(reg_filename_short).replace('.fits', '') + f"_{reg_index}"
+    # 2023-05-03,04,05,09,10,11,26,30, 06-02,07,14
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"cii_irac4_{make_simple_vel_stub(velocity_limits)}_{reg_stub}.png"),
+        metadata=catalog.utils.create_png_metadata(title='cii and irac4-cii', file=__file__, func="compare_8micron_and_cii_intensities"))
+
+
+def n19_shell_dust_mass():
+    """
+    June 28, 2023
+    Plan: use T-tau_colorsolution.fits tau map to get column density.
+    Trim them using cube_utils.cutout2d_from_region.
+    Use CII 17 km/s channel to get shell mask and limit with box too.
+    Reproject it to the cutout2d tau map. Mask, sum, find mass.
+    Identify background to tau map and subtract background * pixels under mask.
+    Can background in DS9, average/median in circle.
+    """
+    ...
 
 if __name__ == "__main__":
     """
@@ -1936,20 +2138,35 @@ if __name__ == "__main__":
     # i = 22
     # vel_lims = (i*kms, (i+2)*kms)
     # overlay_moment(background='ciiAPEX', overlay='12co10-pmo', velocity_limits=(15*kms, 18*kms), velocity_limits2=(18*kms, 20*kms), cutout_reg_stub='med', plot_stars=False, reg_filename_or_idx="catalogs/N19_points_2.reg")
+    # vcii = (28*kms, 29*kms)
+    # vco = (25*kms, 26*kms)
+    # vcii = (28*kms, 29*kms)
+    # vco = (25*kms, 26*kms)
+    # l1 = '12co32'
+    # l2 = 'ciiAPEX'
+    # # for l in ('12co32',):# '12co10-pmo'):
+    # for dv1 in np.arange(-2, 6, 1):
+    #     for dv2 in np.arange(-2, 6, 1):
+    #         overlay_moment(background=l1, overlay=l2, velocity_limits=[np.around(v + dv1*kms, 2) for v in vco], velocity_limits2=[np.around(v + dv2*kms, 2) for v in vco], cutout_reg_stub='med')
 
-    vcii = (27*kms, 29*kms)
-    vco = (25*kms, 26*kms)
-    for l in ('12co32', '12co10-pmo'):
-        for v in (vco,):
-            overlay_moment(background='ciiAPEX', overlay=l, velocity_limits=vcii, velocity_limits2=v, cutout_reg_stub='med')
+    # for i in range(5):
+    #     compare_8micron_and_cii_intensities((20*kms, 21*kms), i)
 
     """
     PV examples
     """
-    # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['13co32', '13co10'])
+    # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['13co32', '13co10-pmo'])
     # fast_pv(reg_filename_or_idx=0)
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
-    # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['12co10', 'ciiAPEX'])
+    # error = False
+    # i = 0
+    # while not error:
+    #     try:
+    #         fast_pv(reg_filename_or_idx=("catalogs/N19_pv_paths_2.reg", i), line_stub_list=['12co32', 'ciiAPEX'])
+    #         plt.close(plt.gcf())
+    #         i += 1
+    #     except:
+    #         error = True
 
     # pv_slice_series_overlay()
 
@@ -1971,4 +2188,5 @@ if __name__ == "__main__":
     #         if i == j == 1:
     #             continue
     #         print("Doing", i, j)
-    # plot_spectra(reg_set_number=3, line_set_number=1, velocities_to_mark=(12, 16, 20))
+    plot_spectra(reg_set_number=4, line_set_number=1, velocities_to_mark=(17.5, 19.5, 21.5))
+    plot_spectra(reg_set_number=4, line_set_number=2, velocities_to_mark=(17.5, 19.5, 21.5))

@@ -28,6 +28,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy import units as u
 from astropy.coordinates import SkyCoord, FK5
+from astropy.convolution import convolve_fft
 
 from reproject import mosaicking
 from reproject import reproject_adaptive
@@ -1444,7 +1445,136 @@ def jwst3um_to_fir_figure():
             metadata=catalog.utils.create_png_metadata(title='NIRCAM F335M used to predict cii,FIR. next to upGREAT CII',
                 file=__file__, func="jwst3um_to_fir_figure"))
 
+def irac8um_to_cii_figure_2p5beam():
+    """
+    July 11, 2023
+    SALTUS mirror downgraded to 14 m, so resolution is 2.5'' at CII.
+    Use the IRAC 4 (beam size like 1.2 or something, I have it written down)
+    to scale using Cornelia's numbers. Make the plot exactly like the one
+    in jwst3um_to_fir_figure, and can also try to trim out stars before
+    convolution.
+    """
+    # Region and footprint
+    reg_filename_short = "catalogs/jwst_reproj_footprint.reg"
+    footprint_box_reg = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short)).pop()
+    # Make WCS with footprint
+    wcs_kwargs = {}
+    # Set pixel scale to 1'' by hand, since Xander wants 2.5'' resolution (pretty close to sqrt(2) nyquist)
+    wcs_kwargs['pixel_scale'] = 1 * u.arcsec
+    wcs_kwargs['ref_coord'] = footprint_box_reg.center
+    wcs_kwargs['grid_shape'] = tuple(int(round((x / wcs_kwargs['pixel_scale']).decompose().to_value())) for x in (footprint_box_reg.height, footprint_box_reg.width))
+    wcs_obj = mosaic_vlt.make_wcs(**wcs_kwargs)
+    """ Use this WCS for both CII and IRAC """
 
+    """ Get IRAC 4, conv + reproj, and convert to CII intensity """
+    # Load
+    fn_8um = catalog.utils.search_for_file("spitzer/SPITZER_I4_mosaic.fits")
+    img, hdr_8um = fits.getdata(fn_8um, header=True)
+    # Convolve
+    bmaj_8um = 1.98*u.arcsec # From Section 2.2.2 in the IRAC docs (see notes from today July 11 2023)
+    beam_8um = cube_utils.Beam(bmaj_8um)
+    beam_result = cube_utils.Beam(2.5*u.arcsec) # Per Xander's email
+    beam_conv = beam_result.deconvolve(beam_8um)
+    pixel_scale_8um = misc_utils.get_pixel_scale(WCS(hdr_8um))
+    kernel = beam_conv.as_kernel(pixel_scale_8um)
+    img = convolve_fft(img, kernel)
+    # Reproject
+    img = reproject_interp((img, hdr_8um), wcs_obj, shape_out=wcs_kwargs['grid_shape'], return_footprint=False)
+    # Convert to cgs units
+    irac4_effective_width = 3.94e12 * u.Hz # 3.94 THz from Table 4.3 of IRAC Instrument Handbook (per irac8um_to_cii_figure)
+    img_unit = u.Unit(hdr_8um['BUNIT'])
+    intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
+    intensity_8um_obs = (img * img_unit * irac4_effective_width).to(intensity_unit_cgs)
+    """
+    I am using Cornelia's newer conversions from her 2021 paper; the last time I did this, I used the 2017 paper.
+    These are to be used as:
+    y = 10^b * x^a
+    where a, b:
+    8um->CII: 0.70, -1.79
+    8um->FIR: 1.19, +1.39
+    """
+    def convert_8um_to(measurement_name, value):
+        if measurement_name == 'CII':
+            a, b = 0.70, -1.79
+        elif measurement_name == 'FIR':
+            a, b = 1.19, 1.39
+        else:
+            raise NotImplementedError(f"-> {measurement_name}")
+        return ((10**b) * (value.to_value()**a)) * value.unit
+    # Convert 8um to FIR, CII
+    intensity_FIR = convert_8um_to("FIR", intensity_8um_obs)
+    intensity_CII = convert_8um_to("CII", intensity_8um_obs)
+
+    """ Get CII moment 0 and convert to cgs """
+    cii_cube = cube_utils.CubeData('cii').convert_to_kms().data
+    cii_mom0 = cii_cube.spectral_slab(19*kms, 27*kms).moment0()
+    line_center = cii_cube.header['RESTFREQ'] * u.Hz
+    # Calculate velocity axis in frequency, do the same interval thing for 1 km/s -> Hz conversion
+    velocity_axis_freq = cii_cube.spectral_axis[::-1].to(u.Hz, equivalencies=u.doppler_radio(line_center))
+    # Ratio of these converts km/s to Hz correctly (I think)
+    channel_width_freq = np.mean(np.diff(velocity_axis_freq)) # last element, so it matches the first below
+    channel_width_vel = np.mean(np.diff(cii_cube.spectral_axis))
+    # The conversion from T_B to S_nu is linear, so we can divide out velocity and multiply back in frequency later with no consequence.
+    cii_mom0_cgs = (cii_mom0/channel_width_vel).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(line_center)) * channel_width_freq
+    cii_mom0_cgs = cii_mom0_cgs.to(intensity_unit_cgs) # finish the conversion
+
+    """ Reproject CII onto the grid """
+    cii_reproj = reproject_interp((cii_mom0_cgs.to_value(), cii_mom0.wcs), wcs_obj, shape_out=wcs_kwargs['grid_shape'], return_footprint=False) * cii_mom0_cgs.unit
+
+    """
+
+    Plot!
+
+    """
+    fig = plt.figure(figsize=(15, 5))
+    cii_vmax = 0.0016
+    matplotlib.rcParams['mathtext.fontset'] = 'stix'
+    matplotlib.rcParams['font.family'] = 'STIXGeneral'
+    cmap = 'jet'
+
+    ax_cii_obs = plt.subplot(131, projection=wcs_obj)
+    im = ax_cii_obs.imshow(cii_reproj.to_value(), origin='lower', vmin=0, vmax=cii_vmax, cmap=cmap)
+    cbar_ax = ax_cii_obs.inset_axes([1.04, 0, 0.06, 1])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label(label=r"$I_{\rm [C\ II],\,observed}$ "+f"({cii_reproj.unit.to_string('latex_inline')})")
+
+    ax_cii_synth = plt.subplot(132, projection=wcs_obj)
+    im = ax_cii_synth.imshow(intensity_CII.to_value(), origin='lower', vmin=0, vmax=cii_vmax, cmap=cmap)
+    cbar_ax = ax_cii_synth.inset_axes([1.04, 0, 0.06, 1])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label(label=r"$I_{\rm [C\ II],\,predicted\ from\ 8~\mu m}$ "+f"({intensity_CII.unit.to_string('latex_inline')})")
+
+    ax_fir_synth = plt.subplot(133, projection=wcs_obj)
+    im = ax_fir_synth.imshow(intensity_FIR.to_value(), origin='lower', vmin=0, vmax=0.25, cmap=cmap)
+    cbar_ax = ax_fir_synth.inset_axes([1.04, 0, 0.06, 1])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label(label=r"$I_{\rm FIR,\,predicted\ from\ 8~\mu m}$ "+f"({intensity_FIR.unit.to_string('latex_inline')})")
+
+    for i, ax in enumerate([ax_cii_obs, ax_cii_synth, ax_fir_synth]):
+        ax.set_xlabel("RA (J2000)")
+        if i == 0:
+            ax.set_ylabel("Dec (J2000)")
+        else:
+            ax.set_ylabel(" ")
+
+    # CII beam patch
+    beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
+    beam_patch = cii_cube.beam.ellipse_to_plot(*(ax_cii_obs.transAxes + ax_cii_obs.transData.inverted()).transform([0.91, 0.075]), misc_utils.get_pixel_scale(wcs_obj))
+    beam_patch.set(**beam_patch_kwargs)
+    ax_cii_obs.add_artist(beam_patch)
+
+    # Other beam patch, 1.5''
+    new_beam = beam_result
+    for ax in (ax_cii_synth, ax_fir_synth):
+        beam_patch = new_beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.91, 0.075]), misc_utils.get_pixel_scale(wcs_obj))
+        beam_patch.set(**beam_patch_kwargs)
+        ax.add_artist(beam_patch)
+
+    plt.subplots_adjust(left=0.05, right=0.95, top=0.95)
+    savedir = catalog.utils.todays_image_folder()
+    fig.savefig(os.path.join(savedir, "cii_fir_8um_figure.png"),
+        metadata=catalog.utils.create_png_metadata(title='IRAC 4 used to predict cii,FIR. next to upGREAT CII',
+            file=__file__, func="irac8um_to_cii_figure_2p5beam"))
 
 
 def simple_mom0_carma_molecules(line_name, pacs70_reproj=None):
@@ -3213,4 +3343,4 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
-    jwst3um_to_fir_figure()
+    irac8um_to_cii_figure_2p5beam()
