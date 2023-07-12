@@ -2428,10 +2428,10 @@ def multi_panel_moment_images():
 
         if data_stub in special_contour_levels:
             levels = special_contour_levels[data_stub]
-            print(data_stub, levels)
         else:
             # Normal case
             levels = contour_levels_base*contour_levels_coeff[data_stub]
+        print(data_stub, levels)
         ax.contour(img_reproj, **contour_kwargs, levels=levels, colors=(['white'] + ['k']*(len(levels) - 1)))
         # Beam
         patch = beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.8, 0.1]), misc_utils.get_pixel_scale(ref_wcs))
@@ -2442,8 +2442,8 @@ def multi_panel_moment_images():
     fig.supxlabel("Right Ascension", fontsize=default_text_kwargs['fontsize']+1)
     fig.supylabel("Declination", fontsize=default_text_kwargs['fontsize']+1)
 
-    # 2023-03-09,10,13,20,22,30,31, 04-20
-    plt.savefig("/home/ramsey/Pictures/2023-04-20/moment_panel.png",
+    # 2023-03-09,10,13,20,22,30,31, 04-20, 07-11 (just to check levels)
+    plt.savefig("/home/ramsey/Pictures/2023-07-11/moment_panel.png",
         metadata=catalog.utils.create_png_metadata(title="moment panel img for paper",
             file=__file__, func='multi_panel_moment_images'))
 
@@ -3343,4 +3343,5 @@ if __name__ == "__main__":
     # try_component_velocity_figure()
     # column_density_figure()
 
-    irac8um_to_cii_figure_2p5beam()
+    # irac8um_to_cii_figure_2p5beam()
+    multi_panel_moment_images()
