@@ -235,7 +235,7 @@ class CubeData:
                 if 'RESTFREQ' in self.header:
                     # Try with the E (e.g. BIMA)
                     restfrq = self.header['RESTFREQ'] * u.Hz
-                if 'RESTFRQ' in self.header:
+                elif 'RESTFRQ' in self.header:
                     # Try without the E (e.g. VLA)
                     restfrq = self.header['RESTFRQ'] * u.Hz
                 else:

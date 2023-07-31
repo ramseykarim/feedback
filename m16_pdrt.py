@@ -588,14 +588,19 @@ def make_paper_spaghetti_plot():
     plot.figure.legend(legend_handles, legend_labels, loc='upper center', ncols=len(ratio_ids), fontsize=12)
     plot._plt.subplots_adjust(top=0.95, wspace=0.05, hspace=0, bottom=0.08, left=0.06)
 
-    # 2023-04-07,10,11
-    save_path = f"/home/ramsey/Pictures/2023-04-11" # removed modelset name because we won't do anymore kosma-tau models
+    # 2023-04-07,10,11, 07-27
+    save_path = f"/home/ramsey/Pictures/2023-07-27" # removed modelset name because we won't do anymore kosma-tau models
+
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
     if not os.path.exists(save_path):
         print("Creating directory ", save_path)
         os.makedirs(save_path)
-    plot.savefig(os.path.join(save_path, "multipanel_overlay.png"),
-        metadata={'Author': "Ramsey Karim", 'Source': f'{__file__}.make_paper_spaghetti_plot',
-            'Title': 'multipanel spaghetti plot'})
+    plot.savefig(os.path.join(save_path, f"multipanel_overlay{dpi_stub}.png"),
+        metadata={'Author': "Ramsey Karim", 'Source': f"{__file__.replace('.py', '')}.make_paper_spaghetti_plot",
+            'Title': 'multipanel spaghetti plot'},
+        dpi=dpi)
 
 
 

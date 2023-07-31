@@ -123,8 +123,9 @@ photometry_filenames = {
 
 }
 photometry_beams = {
-    '8um': (1.98, 1.98, 0), '70um': (9.0, 5.75, 62),
-    '160um': (13.32, 11.31, 40.9), '250um': (18.4, None, 0),
+    '8um': (1.98, 1.98, 0),
+    '70um': (9.0, 5.75, 62), '160um': (13.32, 11.31, 40.9), # http://herschel.esac.esa.int/Docs/PACS/html/ch03.html#sec-characteristics-photometer
+    '250um': (18.4, None, 0),
     '350um': (25.2, None, 0), '500um': (36.7, None, 0),
 }
 cutout_box_filenames = {

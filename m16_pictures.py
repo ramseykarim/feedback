@@ -925,7 +925,7 @@ def background_samples_figure():
     """
     cii_cube = cps2.cutout_subcube(length_scale_mult=7)
     bg_reg_filename_short = "catalogs/pillar_background_sample_multiple_5.reg" # this used to be "5_v2" but I renamed "5_v2" to "5", so "5" is the most updated as of Dec 6, 2022
-    bg_reg = regions.read_ds9(catalog.utils.search_for_file(bg_reg_filename_short))
+    bg_reg = regions.Regions.read(catalog.utils.search_for_file(bg_reg_filename_short))
 
     #### Average north or all?
     average_north_or_all = 'north'
@@ -939,7 +939,7 @@ def background_samples_figure():
     default_label_text_size = 12
 
     cii_bg_spectrum = cii_cube.subcube_from_regions(bg_reg_subset).mean(axis=(1, 2))
-    kwargs = {'fill': False}
+    kwargs = {'fill': False, 'linewidth': 3}
     fig = plt.figure(figsize=(17.5, 6))
     gs = fig.add_gridspec(1, 3, left=0.03, right=0.99, top=0.97, bottom=0.1, wspace=0.3)
 
@@ -984,7 +984,7 @@ def background_samples_figure():
         artist = reg_pixel.as_artist(**kwargs, color=color)
         ax_img.add_artist(artist)
         x, y = reg_pixel.center.xy
-        ax_img.text(x, y, short_label, color=color, ha='center', va='center', fontsize=default_label_text_size)
+        ax_img.text(x, y-3, short_label, color=color, ha='center', va='center', fontsize=default_label_text_size)
 
     beam_patch_coords = [0.9, 0.1] # used to be [0.06, 0.94] # Axes coords
     beam_patch = cii_cube.beam.ellipse_to_plot(*(ax_img.transAxes + ax_img.transData.inverted()).transform(beam_patch_coords), misc_utils.get_pixel_scale(img_wcs))
@@ -1001,14 +1001,19 @@ def background_samples_figure():
     ax_spec.set_xlabel(f"Velocity ({kms.to_string('latex_inline')})")
     ax_spec.set_ylabel(f"{cube_utils.cubenames['cii']} line intensity ({u.K.to_string('latex_inline')})", labelpad=0)
     ax_spec.axhline(0, color='k', alpha=0.1)
-    for v in range(20, 29):
+    for v in range(20, 31):
         # Velocity gridlines around important velocities
-        ax_spec.axvline(v, color='k', alpha=0.07)
+        ax_spec.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
     ax_spec.legend()
+
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
     # 2022-01-14, 2022-11-29, 2023-02-22, 03-31
-    fig.savefig(f"/home/ramsey/Pictures/2023-03-31/cii_background_spectra_avg{avg_stub}.png",
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"cii_background_spectra_avg{avg_stub}{dpi_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}, avg {avg_stub}',
-            file=__file__, func='background_samples_figure'))
+            file=__file__, func='background_samples_figure'),
+        dpi=dpi)
 
 
 def background_samples_figure_molecular():
@@ -1077,6 +1082,10 @@ def background_samples_figure_molecular():
         metadata=catalog.utils.create_png_metadata(title=f'bg regions from {bg_reg_filename_short}',
             file=__file__, func='background_samples_figure'))
 
+
+
+
+""" JWST / IRAC / SALTUS """
 
 def irac8um_to_cii_figure(band=4):
     """
@@ -1243,7 +1252,12 @@ def jwst3um_to_fir_figure():
     # Make WCS with footprint
     wcs_kwargs = {}
     # Set pixel scale to 0.5'' by hand, since Xander wants 1.5'' resolution
-    wcs_kwargs['pixel_scale'] = 0.5 * u.arcsec
+    # wcs_kwargs['pixel_scale'] = 0.5 * u.arcsec
+    wcs_kwargs['pixel_scale'] = 1 * u.arcsec # 14m dish
+
+    # new_resolution = 1.5 * u.arcsec
+    new_resolution = 2.5 * u.arcsec # 14m dish
+
     wcs_kwargs['ref_coord'] = footprint_box_reg.center
     wcs_kwargs['grid_shape'] = tuple(int(round((x / wcs_kwargs['pixel_scale']).decompose().to_value())) for x in (footprint_box_reg.height, footprint_box_reg.width))
     wcs_obj = mosaic_vlt.make_wcs(**wcs_kwargs)
@@ -1255,18 +1269,21 @@ def jwst3um_to_fir_figure():
         fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/jw02739-o001_t001_nircam_clear-f335m_i2d.fits")
         reproj_kwargs = {}
         # Set up kernel for reprojection from 0.13'' to 1.5''
-        new_resolution = 1.5 * u.arcsec
+        # new_resolution = 1.5 * u.arcsec
+        new_resolution = 2.5 * u.arcsec # 14m dish
         kernel_fwhm = np.sqrt(new_resolution.to_value()**2 - 0.13**2) * u.arcsec
         # Function needs width between +/- sigma, so 2*FWHM/2.355
-        # Also convert to pixels by dividing by pixel_scale (0.5''). The result is around 2.5 pixels (output image)
+        # Also convert to pixels by dividing by pixel_scale (0.5''). The result is around 2.5 pixels (output image). For 14m dish (2.5'' beam, 1'' pixel), like 2.1 pixels
         reproj_kwargs['kernel_width'] = (2 * kernel_fwhm / (wcs_kwargs['pixel_scale'] * 2.355)).decompose()
-        reproj_kwargs['sample_region_width'] = 9 # I calculated this from their recommendations in the reproject_adaptive documentation
+        print("kernel_width", reproj_kwargs['kernel_width'])
+        reproj_kwargs['sample_region_width'] = 9 # I calculated this from their recommendations in the reproject_adaptive documentation (like approx *4). Still works for the 2.5'' beam, 1'' pixel
+        print("sample_region_width", reproj_kwargs['sample_region_width'])
         reproj_kwargs['kernel'] = 'gaussian'
         reproj_kwargs['return_footprint'] = False
         # Reproject the 3um to the new WCS
         img_3um = reproject_adaptive(fn_3um, wcs_obj, shape_out=wcs_kwargs['grid_shape'], hdu_in=1, **reproj_kwargs)
 
-        savename = os.path.join(os.path.dirname(fn_3um), "f335m_conv.fits")
+        savename = os.path.join(os.path.dirname(fn_3um), "f335m_conv_2p5as.fits")
         # Stack up all they keys we'll add to the header
         keys_to_add = [
             ('DATE', f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"),
@@ -1296,7 +1313,7 @@ def jwst3um_to_fir_figure():
         I am following irac8um_to_cii_figure() pretty closely here
         """
         # Already reproj and conv filename
-        fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_conv.fits")
+        fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_conv_2p5as.fits")
         img, hdr = fits.getdata(fn_3um, header=True)
         f335m_bandwidth_wl = 0.347 * u.micron # https://jwst-docs.stsci.edu/jwst-near-infrared-camera/nircam-instrumentation/nircam-filters
         ### WRONG!!!! # f335m_bandwidth = f335m_bandwidth.to(u.Hz, equivalencies=u.spectral()) ### WRONG
@@ -1430,18 +1447,19 @@ def jwst3um_to_fir_figure():
         beam_patch.set(**beam_patch_kwargs)
         ax_cii_obs.add_artist(beam_patch)
 
-        # Other beam patch, 1.5''
-        new_beam = cube_utils.Beam(1.5*u.arcsec)
+        # Other beam patch, 1.5'' or 2.5''
+        new_beam = cube_utils.Beam(new_resolution)
         for ax in (ax_cii_synth, ax_fir_synth):
             beam_patch = new_beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.91, 0.075]), misc_utils.get_pixel_scale(wcs_obj))
             beam_patch.set(**beam_patch_kwargs)
             ax.add_artist(beam_patch)
 
         plt.subplots_adjust(left=0.05, right=0.95, top=0.95)
-        savedir = "/home/ramsey/Pictures/2023-06-09"
+        # 2023-06-09, 07-12
+        savedir = catalog.utils.todays_image_folder()
         if not os.path.exists(savedir):
             os.makedirs(savedir)
-        fig.savefig(os.path.join(savedir, "cii_fir_3um_figure.png"),
+        fig.savefig(os.path.join(savedir, "cii_fir_3um_figure_2p5as.png"),
             metadata=catalog.utils.create_png_metadata(title='NIRCAM F335M used to predict cii,FIR. next to upGREAT CII',
                 file=__file__, func="jwst3um_to_fir_figure"))
 
@@ -1527,7 +1545,7 @@ def irac8um_to_cii_figure_2p5beam():
 
     """
     fig = plt.figure(figsize=(15, 5))
-    cii_vmax = 0.0016
+    cii_vmax = 0.003 # 0.0016 or 0.003
     matplotlib.rcParams['mathtext.fontset'] = 'stix'
     matplotlib.rcParams['font.family'] = 'STIXGeneral'
     cmap = 'jet'
@@ -1545,7 +1563,7 @@ def irac8um_to_cii_figure_2p5beam():
     cbar.set_label(label=r"$I_{\rm [C\ II],\,predicted\ from\ 8~\mu m}$ "+f"({intensity_CII.unit.to_string('latex_inline')})")
 
     ax_fir_synth = plt.subplot(133, projection=wcs_obj)
-    im = ax_fir_synth.imshow(intensity_FIR.to_value(), origin='lower', vmin=0, vmax=0.25, cmap=cmap)
+    im = ax_fir_synth.imshow(intensity_FIR.to_value(), origin='lower', vmin=0, vmax=0.7, cmap=cmap) # 0.25 or 0.7
     cbar_ax = ax_fir_synth.inset_axes([1.04, 0, 0.06, 1])
     cbar = fig.colorbar(im, cax=cbar_ax)
     cbar.set_label(label=r"$I_{\rm FIR,\,predicted\ from\ 8~\mu m}$ "+f"({intensity_FIR.unit.to_string('latex_inline')})")
@@ -1575,6 +1593,10 @@ def irac8um_to_cii_figure_2p5beam():
     fig.savefig(os.path.join(savedir, "cii_fir_8um_figure.png"),
         metadata=catalog.utils.create_png_metadata(title='IRAC 4 used to predict cii,FIR. next to upGREAT CII',
             file=__file__, func="irac8um_to_cii_figure_2p5beam"))
+
+""" """
+
+
 
 
 def simple_mom0_carma_molecules(line_name, pacs70_reproj=None):
@@ -1960,11 +1982,14 @@ def column_density_figure():
     column_extnames = {'cii': 'Hcoldens', 'co': 'H2coldens_all', 'dust': 'Hcoldens_best'}
 
     # divide by something (dust: N(H) -> N(H2))
-    column_factors = {'dust': 2}
+    column_factors = {'co': 0.5} # divide by; used to be dust: 2
     h_label, h2_label = "{\\rm H}", "{\\rm H}_2"
-    column_labels = {'cii': h_label, 'co': h2_label, 'dust': h2_label}
+    h_label, h2_label = "$N("+h_label+")$", "$N("+h2_label+")$"
+    ntot_label = "$N_{\\rm H}$"
+    # column_labels = {'cii': h_label, 'co': h2_label, 'dust': h2_label}
+    column_labels = {k: ntot_label for k in column_extnames.keys()}
     panel_labels = {'cii': cube_utils.cubenames['cii'], 'co': 'CO (1$-$0)', 'dust': 'FIR dust'}
-    vmaxes = {'cii': 3e22, 'co': 1.4e23, 'dust': 7e22}
+    vmaxes = {'cii': 3e22, 'co': 1.4e23*2, 'dust': 7e22*2}
 
     # JWST footprint for plotting
     # jwst_footprint_fn = catalog.utils.search_for_file("catalogs/jwst_reproj_footprint.reg")
@@ -1974,14 +1999,27 @@ def column_density_figure():
     ref_hdr = fits.getheader(catalog.utils.search_for_file(filenames_dict[reference_name]), extname=column_extnames[reference_name])
     ref_wcs = WCS(ref_hdr)
 
-    fig = plt.figure(figsize=(18, 5))
-    gs = fig.add_gridspec(1, 4, left=0.05, right=0.99, top=0.98, bottom=0.05, wspace=0.25)
+    # fig = plt.figure(figsize=(18, 5))
+    # grid_shape = (1, 4); gs_kwargs = dict(left=0.05, right=0.99, top=0.98, bottom=0.05, wspace=0.25)
+    fig = plt.figure(figsize=(9.3, 8))
+    grid_shape = (2, 2); gs_kwargs = dict(left=0.05, right=0.97, top=0.97, bottom=0.1, wspace=0.01, hspace=0.08)
+    gs = fig.add_gridspec(*grid_shape, **gs_kwargs)
+    def get_axis(i):
+        # get the ith axis, no matter what the shape is
+        if grid_shape == (1, 4):
+            ax = fig.add_subplot(gs[0, i], projection=ref_wcs)
+        elif grid_shape == (2, 2):
+            ax = fig.add_subplot(gs[i//2, i%2], projection=ref_wcs)
+        else:
+            raise NotImplementedError
+        return ax
+
     axes = []
     tick_labelsize = 9
 
     """ Cycle thru the column densities """
     for i, line_name in enumerate(['cii', 'co', 'dust']):
-        ax = fig.add_subplot(gs[0, i], projection=ref_wcs)
+        ax = get_axis(i)
         axes.append(ax)
 
         img_raw, hdr_raw = fits.getdata(catalog.utils.search_for_file(filenames_dict[line_name]), extname=column_extnames[line_name], header=True)
@@ -1997,7 +2035,7 @@ def column_density_figure():
         cbar = fig.colorbar(im, cax=cax)
         cax.tick_params(labelsize=tick_labelsize)
         cbar_tick_labelsize = tick_labelsize + 1
-        cbar.set_label("$N("+column_labels[line_name]+")$ ("+(u.cm**-2).to_string('latex_inline')+")", size=cbar_tick_labelsize)
+        cbar.set_label(column_labels[line_name]+" ("+(u.cm**-2).to_string('latex_inline')+")", size=cbar_tick_labelsize)
         cax.yaxis.offsetText.set(size=cbar_tick_labelsize)
         # Label
         text_x = 0.1 # 0.025
@@ -2005,11 +2043,11 @@ def column_density_figure():
 
 
     """ JWST reference image """
-    img_fn = catalog.utils.search_for_file("jwst/MAST_2022-10-26T1800/JWST/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits")
+    img_fn = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits")
     img, hdr = fits.getdata(img_fn, header=True)
     img = reproject_interp((img, hdr), ref_hdr, order='bilinear', return_footprint=False)
 
-    ax = fig.add_subplot(gs[0, 3], projection=ref_wcs)
+    ax = get_axis(3)
     stretch = np.arcsinh
     img_vlims = (1, 100)
     ax.imshow(stretch(img), origin='lower', vmin=stretch(img_vlims[0]), vmax=stretch(img_vlims[1]), cmap='Greys')
@@ -2048,14 +2086,21 @@ def column_density_figure():
         if not ss.is_first_col():
             # hide ticklabels all but left column
             ax.tick_params(axis='y', labelleft=False)
+        if not ss.is_last_row():
+            ax.tick_params(axis='x', labelleft=False)
 
     # Titles
     fig.supxlabel("Right Ascension")
     fig.supylabel("Declination")
-    # 2023-03-21,22, 04-19
-    fig.savefig("/home/ramsey/Pictures/2023-04-19/column_density_figure.png",
+
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
+    # 2023-03-21,22, 04-19, 07-25
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"column_density_figure{dpi_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title='column figure',
-                file=__file__, func='column_density_figure'))
+                file=__file__, func='column_density_figure'),
+        dpi=dpi)
 
 
 def multi_panel_moment_images():
@@ -2149,7 +2194,8 @@ def multi_panel_moment_images():
     photometry_lookup = {
         # (filename, needs_unit_conversion,)
         '8um': ("spitzer/SPITZER_I4_mosaic.fits", (1.98, 1.98, 0)), '12co10': ("bima/M16_12CO1-0_7x4_mom0.fits", None), '13co10': ("bima/M16.BIMA.13co.mom0.fits", None), 'c18o10': ("bima/M16.BIMA.c18o.masked_mom0.fits", None),
-        '70um': (herschel_dir_stub+"HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz", (9.0, 5.75, 62)), '160um': (herschel_dir_stub+"HPPJSMAPR/hpacs_25HPPJSMAPR_1822_m1337_00_v1.0_1471714553094.fits.gz", (13.32, 11.31, 40.9)),
+        '70um': (herschel_dir_stub+"HPPJSMAPB/hpacs_25HPPJSMAPB_blue_1822_m1337_00_v1.0_1471714532334.fits.gz", (12.16, 5.86, 63)), # used to be (9.0, 5.75, 62) but that is for PACS mode; need SPIRE-PACS parallel
+        '160um': (herschel_dir_stub+"HPPJSMAPR/hpacs_25HPPJSMAPR_1822_m1337_00_v1.0_1471714553094.fits.gz", (15.65, 11.64, 53.4)), # used to be (13.32, 11.31, 40.9)
         'hcop': ("carma/M16.ALL.hcop.sdi.mom0.fits", None), 'cs': ("carma/M16.ALL.cs.sdi.mom0.fits", None), 'hcn': ("carma/M16.ALL.hcn.sdi.mom0.fits", None), 'n2hp': ("carma/M16.ALL.n2hp.sdi.mom0.fits", None),
     }
 
@@ -2290,7 +2336,10 @@ def multi_panel_moment_images():
         cbar_ax.tick_params(labelsize=default_label_text_size)
     default_text_kwargs = dict(fontsize=16, color=marcs_colors[1], ha='left', va='center', weight='bold')
     text_x = 0.02
-    beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor='white', edgecolor='grey')
+    beam_patch_ec = "grey" # originally grey
+    beam_patch_fc = "white" # originally white
+    beam_color_stub = f"_b-ec{beam_patch_ec}-fc{beam_patch_fc}"
+    beam_patch_kwargs = dict(alpha=0.9, hatch='////', facecolor=beam_patch_fc, edgecolor=beam_patch_ec)
 
     # Grab the reference HEADER text file (no longer using an image)
     # This header, catalogs/inclusive_wcs_and_footprint.txt, uses a footprint inclusive of both JWST and CO10 and the pixel size of 12CO10
@@ -2442,10 +2491,14 @@ def multi_panel_moment_images():
     fig.supxlabel("Right Ascension", fontsize=default_text_kwargs['fontsize']+1)
     fig.supylabel("Declination", fontsize=default_text_kwargs['fontsize']+1)
 
-    # 2023-03-09,10,13,20,22,30,31, 04-20, 07-11 (just to check levels)
-    plt.savefig("/home/ramsey/Pictures/2023-07-11/moment_panel.png",
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
+    # 2023-03-09,10,13,20,22,30,31, 04-20, 07-11 (just to check levels), 07-26
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"moment_panel{beam_color_stub}{dpi_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title="moment panel img for paper",
-            file=__file__, func='multi_panel_moment_images'))
+            file=__file__, func='multi_panel_moment_images'),
+        dpi=dpi)
 
 
 def moment_helper_make_nice_wcs(get='header'):
@@ -2596,7 +2649,11 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
 
     """ Setup colors """
     chosen_cmap = 'Greys' # 'cool'
-    line_color = marcs_colors[1]
+    line_color = marcs_colors[7] # used to use marcs_colors[1]
+
+    # The numbers at the beginning of the paths
+    label_offset = {8: (10, 12), 'default': (8, -2)}
+
 
     # paths = [] # delete if it doesnt crash
 
@@ -2634,7 +2691,7 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
     # I need the WCS of the image
     reference_img_instead_of_cube = True
     if reference_img_instead_of_cube:
-        img, hdr = fits.getdata(catalog.utils.search_for_file("jwst/MAST_2022-10-26T1800/JWST/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits"), header=True)
+        img, hdr = fits.getdata(catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits"), header=True)
         ref_wcs = WCS(hdr)
         stretch = np.arcsinh
         vlims = (1, 100)
@@ -2743,14 +2800,15 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
 
     """ Finish reference image stuff """
     # handles = []
+    dx, dy = label_offset.get(choose_file, label_offset['default'])
     for idx, p in enumerate(path_list):
         l = ax_img.plot([c.ra.deg for c in p._coords], [c.dec.deg for c in p._coords], color=line_color, linestyle='-', lw=3, transform=ax_img.get_transform('world'))#, label=path_names[idx])
-        ax_img.text(p._coords[0].ra.deg + 8*u.arcsec.to(u.deg), p._coords[0].dec.deg - 2*u.arcsec.to(u.deg), f"{idx +1}", color=line_color, fontsize=16, va='top', ha='center', transform=ax_img.get_transform('world'))
+        ax_img.text(p._coords[0].ra.deg + dx*u.arcsec.to(u.deg), p._coords[0].dec.deg + dy*u.arcsec.to(u.deg), f"{idx +1}", color=line_color, fontsize=16, va='top', ha='center', transform=ax_img.get_transform('world'))
 
     # ax_img.set_title(f"[CII] integrated {img_vel_str} with paths overlaid")
     # ax_img.legend()
-    ax_img.set_xlabel("RA")
-    ax_img.set_ylabel("Dec")
+    ax_img.set_xlabel("Right Ascension")
+    ax_img.set_ylabel("Declination")
     ax_img.tick_params(axis='x', direction='in')
     ax_img.tick_params(axis='y', direction='in')
     cbar = fig.colorbar(im, cax=ax_cbar, ticks=stretch(img_ticks))
@@ -2761,10 +2819,16 @@ def paper_pv_diagrams(choose_file=0, molecular_line_stub='12co10'):
         cbar.ax.set_ylabel("Integrated intensity (K km s$^{-1}$)")
     if not reference_img_instead_of_cube:
         plot_ellipse_patch(ax_img, ref_wcs, subcube_cii)
-    # 2023-03-08,09,20, 05-02(for debug)
-    plt.savefig(f"/home/ramsey/Pictures/2023-05-02/pv_along_draft_cii_{molecular_line_stub}_{choose_file}.png",
+
+
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
+    # 2023-03-08,09,20, 05-02(for debug), 07-25
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"pv_along_draft_cii_{molecular_line_stub}_{choose_file}{dpi_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=f'pv_along {reg_filename_short}',
-            file=__file__, func="paper_pv_diagrams"))
+            file=__file__, func="paper_pv_diagrams"),
+        dpi=dpi)
 
 
 def paper_channel_maps():
@@ -2788,8 +2852,10 @@ def paper_channel_maps():
     # plt.show()
     """
 
-    line_stub = "hcop"
-    line_contour_stub = 'cs'
+    # line_stub = "hcop"
+    # line_contour_stub = 'cs'
+    line_stub = 'cii'
+    line_contour_stub = None
     """
     Major assumption: that the contour cube will have the SAME GRID as the image cube
     This is only valid for CS and HCOP
@@ -2861,10 +2927,15 @@ def paper_channel_maps():
     ha = 'left' if line_stub == 'cii' else 'center'
     text_y = 0.94
     default_text_kwargs = dict(fontsize=14, color=marcs_colors[1], ha=ha, va='center')
-    tick_labelsize = 14
-    tick_labelrotation = 15
+    tick_labelsize = 11 if line_stub == 'cii' else 14
+    tick_labelrotation = 30 if line_stub == 'cii' else 15 # had to check commit 51e68be to find what I used for CII
     # Colors
     cmap = 'plasma'
+    rio_green = "#1e4a31"
+    rio_gold = "#fccd01"
+    beam_patch_ec = "grey" if line_stub == 'cii' else "yellow" # originally grey
+    beam_patch_fc = "white" if line_stub == 'cii' else "green" # originally white
+    beam_color_stub = f"b-ec{beam_patch_ec}-fc{beam_patch_fc}"
     # Vlims
     vlims = {
         'cii': dict(vmin=1, vmax=50), '12co10': dict(vmin=0, vmax=100), 'hcop': dict(vmin=np.arcsinh(0), vmax=np.arcsinh(20)), 'cs': dict(vmin=0, vmax=10),
@@ -2903,7 +2974,7 @@ def paper_channel_maps():
         ax.text(text_x, text_y, f"{velocity.to_value():.0f} {velocity.unit.to_string('latex_inline')}", transform=ax.transAxes, **default_text_kwargs)
         # Beam (on every panel)
         patch = line_cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
-        patch.set(alpha=0.9, facecolor='white', edgecolor='grey')
+        patch.set(alpha=0.9, facecolor=beam_patch_fc, edgecolor=beam_patch_ec)
         ax.add_artist(patch)
 
         if gain_map is not None:
@@ -2911,16 +2982,18 @@ def paper_channel_maps():
 
         if line_contour_stub is not None:
             contour_data = line_contour_cube[channel_idx].to_value()
-            print("CONTOUR DATA", [f(contour_data) for f in (np.min, np.mean, np.median, np.max)])
+            print("INFO FOR MAKING CONTOURS", [f(contour_data) for f in (np.min, np.mean, np.median, np.max)])
             contour_color = 'k'
             gain_contour_color = 'white'
             contour_color_stub = f"{contour_color}-gain{gain_contour_color}"
             contours = ax.contour(contour_data, levels=clevels[line_contour_stub], colors=[gain_contour_color] + [contour_color]*(len(clevels[line_contour_stub])-1), linewidths=1)
             patch = line_contour_cube.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.8, 0.1]), misc_utils.get_pixel_scale(wcs_flat))
-            patch.set(alpha=0.9, facecolor='white', edgecolor='grey')
+            patch.set(alpha=0.9, facecolor=beam_patch_fc, edgecolor=beam_patch_ec)
             ax.add_artist(patch)
             # (contours.cmap(contours.norm(clevels[line_contour_stub][0])),) ## useful line for grabbing a color from a cmap
             ax.contour(gain_contour_map, levels=[0.5], linewidths=1, colors=gain_contour_color, alpha=0.8, linestyles=':')
+        else:
+            contour_color_stub = ""
 
 
     # Colorbar
@@ -2933,10 +3006,15 @@ def paper_channel_maps():
     fig.supxlabel("Right Ascension")
     fig.supylabel("Declination")
 
+    dpi = 255
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
     # 2023-03-15,20, 04-01,19
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/{line_stub}" + ('' if line_contour_stub is None else f"_{line_contour_stub}") + f"_channel_maps_{contour_color_stub}.png",
+    savename = f"{line_stub}" + ('' if line_contour_stub is None else f"_{line_contour_stub}") + f"_channel_maps_{contour_color_stub}_{beam_color_stub}{dpi_stub}.png"
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
         metadata=catalog.utils.create_png_metadata(title=f'{line_fn_short}'+('' if line_contour_stub is None else f" c: {line_contour_fn_short}, {str(list(clevels[line_contour_stub])).replace(' ', '')}"),
-        file=__file__, func="paper_channel_maps"))
+        file=__file__, func="paper_channel_maps"),
+        dpi=dpi)
 
 def paper_spectra():
     """
@@ -3049,7 +3127,7 @@ def paper_spectra():
         ax.text(0.06, 0.94, reg_list[reg_idx].meta['text'].replace("Shelf", "Ridge"), transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(20, 29):
             # Some light velocity gridlines around the important velocities
-            ax.axvline(v, color='k', alpha=0.07)
+            ax.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
         ax.axhline(0, color='k', alpha=0.1)
         # Use this line to verify background subtractions done correctly
         # print(f"{reg_list[reg_idx].meta['text']} {check_if_region_is_southern(reg_list[reg_idx].meta['text'])}")
@@ -3059,10 +3137,15 @@ def paper_spectra():
 
     conv_text = "using " + ("conv" if using_conv else "native") + " resolutions"
     conv_stub = "" if using_conv else "_unconv"
-    # 2023-03-28,31, 04-17,19
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/sample_spectra{conv_stub}{set_stub}.png",
+
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
+    # 2023-03-28,31, 04-17,19, 07-25,28
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"sample_spectra{conv_stub}{set_stub}{dpi_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=f"{conv_text}, points: {reg_filename_short}",
-        file=__file__, func="paper_spectra"))
+        file=__file__, func="paper_spectra"),
+        dpi=dpi)
 
 def paper_oi_cii_spectra():
     """
@@ -3202,7 +3285,7 @@ def paper_oi_cii_spectra():
         ax.set_xlim((15, 34))
         ax.set_ylim((-5, 45))
         for v in range(20, 28):
-            ax.axvline(v, color='k', alpha=0.07)
+            ax.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
         ax.axhline(0, color='k', alpha=0.1)
         # plot regions
         pixreg = reg_list[ax_idx].to_pixel(img_wcs)
@@ -3214,10 +3297,15 @@ def paper_oi_cii_spectra():
 
 
     conv_stub = '' if using_conv else '_unconv'
-    # 2023-04-18,19
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-19/cii_oi_spectra{conv_stub}.png",
+
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
+    # 2023-04-18,19, 07-26
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"cii_oi_spectra{conv_stub}{dpi_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=f'{reg_filename_short}',
-        file=__file__, func="paper_oi_cii_spectra"))
+        file=__file__, func="paper_oi_cii_spectra"),
+        dpi=dpi)
 
 def paper_cii_mol_overlay():
     """
@@ -3227,7 +3315,7 @@ def paper_cii_mol_overlay():
 
 
     # Reference image
-    ref_img, ref_hdr = fits.getdata(catalog.utils.search_for_file("jwst/MAST_2022-10-26T1800/JWST/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits"), header=True)
+    ref_img, ref_hdr = fits.getdata(catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_rotated.fits"), header=True)
     ref_wcs = WCS(ref_hdr)
     stretch = np.arcsinh
     vlims = (1, 100)
@@ -3323,11 +3411,16 @@ def paper_cii_mol_overlay():
     ax.text(65, 830, "0.5 pc", ha='left', va='top', fontsize=textsize+2, color=scale_bar_color)
 
     plt.subplots_adjust(top=0.97, bottom=0.05, left=0.07, right=0.9)
+
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
+
     # Save
-    # 2023-04-18,19,20
-    fig.savefig(f"/home/ramsey/Pictures/2023-04-20/cii_{mol_stub}_overlay{linewidth_stub}.png",
+    # 2023-04-18,19,20, 07-26
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"cii_{mol_stub}_overlay{linewidth_stub}{dpi_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=f'cii and {mol_stub}',
-        file=__file__, func="paper_cii_mol_overlay"))
+        file=__file__, func="paper_cii_mol_overlay"),
+        dpi=dpi)
 
 
 if __name__ == "__main__":
@@ -3336,12 +3429,23 @@ if __name__ == "__main__":
     # simple_mom0_carma_molecules('cii')
     # advanced_mom0_carma_molecules()
 
-    # background_samples_figure()
 
     # pv_vertical_series_thru_pillars('p2', 'cs')
 
     # try_component_velocity_figure()
+
+
+    """ The paper figures (most of them anyway) """
     # column_density_figure()
+    # paper_channel_maps()
+    # paper_pv_diagrams(choose_file=8) # choose_file=7 and 8
+    # multi_panel_moment_images()
+    paper_spectra()
+    # background_samples_figure()
+    # paper_oi_cii_spectra()
+    # paper_cii_mol_overlay()
+
+
+
 
     # irac8um_to_cii_figure_2p5beam()
-    multi_panel_moment_images()

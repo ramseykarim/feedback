@@ -2621,7 +2621,7 @@ def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version=None):
     im1 = ax1.imshow(img_ra_vel, origin='lower', aspect=(shape[1]/(vel_limits[1]-vel_limits[0])), extent=[0, shape[1], vel_limits[0], vel_limits[1]])
     fig.colorbar(im1, ax=ax1, label='$N$ valid components')
     # ax1.set_xlabel("RA")
-    ax1.set_ylabel("Velocity (km/s)")
+    ax1.set_ylabel(f"Velocity ({kms.to_string('latex_inline')})")
     ax1.xaxis.set_ticks([])
     # ax.invert_xaxis()
 
@@ -2629,8 +2629,8 @@ def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version=None):
     img_ra_dec = np.sum((amplitudes > amp_cutoff).astype(int), axis=0)
     im2 = ax2.imshow(img_ra_dec, origin='lower', vmin=0, vmax=3)
     cbar = fig.colorbar(im2, ax=ax2, ticks=list(range(0, 4)), label='$N$ valid components')
-    ax2.set_xlabel("RA")
-    ax2.set_ylabel("Dec")
+    ax2.set_xlabel("Right Ascension")
+    ax2.set_ylabel("Declination")
     ax2.tick_params(axis='x', direction='in')
 
     plt.subplots_adjust(bottom=0.1, top=0.95, left=0.12, right=0.98, hspace=0.07)
@@ -2641,13 +2641,16 @@ def make_3d_fit_viz_in_2d(n_submodels=3, line='hcop', version=None):
     # ax3.set_xlabel("Velocity (km/s)")
     # ax3.set_ylabel("Dec")
 
+    dpi = 300
+    dpi_stub = "" if dpi==100 else f"_dpi{dpi}"
 
     # plt.show()
-    # 2022-09-01,13
-    savename = f"/home/ramsey/Pictures/2022-09-13/p1_3d_viz_in_2d_{line}_{n_submodels}p"
+    # 2022-09-01,13, 2023-07-25
+    savename = os.path.join(catalog.utils.todays_image_folder(), f"p1_3d_viz_in_2d_{line}_{n_submodels}p{dpi_stub}")
     fig.savefig(f"{savename}.png",
         metadata=catalog.utils.create_png_metadata(title="projection of grid fit",
-            file=__file__, func="make_3d_fit_viz_in_2d"))
+            file=__file__, func="make_3d_fit_viz_in_2d"),
+            dpi=dpi)
     # elif True:
     #     from mayavi import mlab
     #     mlab.figure(bgcolor=(0.2, 0.2, 0.2), fgcolor=(0.93, 0.93, 0.93), size=(800, 700))
@@ -4867,7 +4870,7 @@ if __name__ == "__main__":
     # prepare_pdrt_tables_fir(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
     # prepare_pdrt_tables_g0(reg_filename="catalogs/pillar123_pointsofinterest_v2.reg")
 
-    table_sample_peak_brightness_temperatures()
+    # table_sample_peak_brightness_temperatures()
     # table_sample_column_densities()
 
     # for p in ['P1a-head', 'P2-head', 'P3-head']:
@@ -4921,8 +4924,11 @@ if __name__ == "__main__":
     # easy_pv_2() # most recently uncommented until Apr 19, 2022
 
     # make_3d_fit_viz_in_2d(3, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
-    # for i in range(1, 5):
-    #     make_3d_fit_viz_in_2d(i, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
+    """
+    July 25, 2023 note: hcop: use version 2. cii: use version 1 (version just controls what models u load)
+    """
+    for i in range(1, 5):
+        make_3d_fit_viz_in_2d(i, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
 
     # correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
