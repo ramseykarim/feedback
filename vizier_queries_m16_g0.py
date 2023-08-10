@@ -25,6 +25,10 @@ Created: Unknown, at least by late 2020
 
 As of June 2022, this is where I'm doing a lot of the M16 radiation field
 calculation. Good organization? probably not. works for now? yes
+
+August 3, 2023: Renamed from queries.py to vizier_queries_m16_g0.py because
+the old name is not specific or descriptive. Looking into the Stoop 2023 catalog
+this month.
 """
 # This was for RCW 49
 # catalog_data = Catalogs.query_object("10:24:17.509 -57:45:29.28", radius="0.0122628 deg", catalog="HSC")
@@ -96,14 +100,14 @@ def m16_stars():
 
 
     # make some filters for the catalog so we can try different G0 maps
-    filter = 5
+    filter = 4
     filter_stub = ""
     if filter == 0:
         # no filter
         pass
     if filter == 1 or filter == 4:
         # filter log10FUV_flux_solLum > 4.5 (8 stars) or 5.0 (4 stars)
-        catalog_df_OB = catalog_df_OB[catalog_df_OB['log10FUV_flux_solLum'] > 5.0]
+        catalog_df_OB = catalog_df_OB[catalog_df_OB['log10FUV_flux_solLum'] > 4.5]
         filter_stub += "_fuvlt4.5"
     if filter == 2 or filter == 4:
         # filter < x arcmin from y

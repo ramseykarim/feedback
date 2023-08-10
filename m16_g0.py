@@ -1,6 +1,11 @@
 """
 For exploring the stars and radiation field of M16 / NGC 6611
 
+
+If you're looking for where I load in the stars and make the lists and find G0,
+while you'd be correct in looking here first given the title, you want the
+queries.py file. I use a vizier query to load in the catalog.
+
 Created: June 16, 2022
 """
 __author__ = "Ramsey Karim"
@@ -50,7 +55,15 @@ Cutout2D = pvdiagrams.Cutout2D
 from . import cube_pixel_spectra as cps1
 from . import cube_pixel_spectra_2 as cps2
 
-from . import queries as vizier_queries
+from . import vizier_queries_m16_g0 as vizier_queries
+
+scoby_import_path = "/home/ramsey/Documents/Research/scoby-all/scoby"
+if os.path.isdir(scoby_import_path):
+    sys.path.append(scoby_import_path)
+    import scoby
+else:
+    scoby = None
+
 
 mpl_cm = pvdiagrams.mpl_cm
 mpl_colors = pvdiagrams.mpl_colors
@@ -182,5 +195,145 @@ def estimate_pushing_around_gas_with_stars():
     print(timescale.to(u.Myr))
 
 
+def convert_df_cols_from_str_to_coord_with_units(df, colname_ra, colname_dec, units=None, epoch="2000"):
+    """
+    August 3, 2023
+    Convert an RA and Dec column pair to SkyCoord column using correct unit, if unit row given.
+    Unit row is a Pandas row, so the units for the colname are obtained by indexing with the colnamed: units[colname]
+    Unit not given should be interpreted as HHMMSS or something, but I'll cross that bridge only if I need to.
+    Epoch defaults to 2000 and should be a string. It gets a "J" prepended to it and is passed to SkyCoord as obstime
+
+    Returned value is a Series whose index matches df.index. Values are individual SkyCoord objects.
+    """
+    if units is None:
+        raise NotImplementedError
+    def get_coord_vals(colname):
+        return df[colname].apply(lambda x: float(x)*u.Unit(units[colname]))
+    # print(df[colname_ra].values.astype(float))
+    ra_vals = get_coord_vals(colname_ra)
+    dec_vals = get_coord_vals(colname_dec)
+
+    epoch = "J"+epoch
+    coord_vals = [SkyCoord(*radec, frame='icrs', obstime=epoch) for radec in zip(ra_vals, dec_vals)]
+
+    coord_col = pd.Series(coord_vals, index=df.index)
+    return coord_col
+
+
+def convert_df_cols_to_skycoord_array(df, colname_ra, colname_dec, units=None, epoch="2000"):
+    """
+    August 3, 2023
+    Very similar to convert_df_cols_from_str_to_coord_with_units but instead of
+    creating individual SkyCoord objects, makes one SkyCoord with all the coords.
+    This should facilitate quicker separation calculations.
+    Same epoch and units rules as the other function.
+
+    Returns a single SkyCoord which contains an array of coordinates
+    """
+    if units is None:
+        raise NotImplementedError
+    def get_coord_vals(colname):
+        return df[colname].apply(lambda x: float(x)).values * u.Unit(units[colname])
+    ra_vals = get_coord_vals(colname_ra)
+    dec_vals = get_coord_vals(colname_dec)
+    epoch = "J"+epoch
+    c = SkyCoord(ra_vals, dec_vals, frame='icrs', obstime=epoch)
+    return c
+
+
+def poke_around_in_stoop_catalog():
+    """
+    August 3, 2023
+    Check out the Stoop catalog. catalogs/Stoop2023_tablec1.tsv
+    """
+    df = pd.read_csv(catalog.utils.search_for_file("catalogs/Stoop2023_tablec1.tsv"), delimiter=';', comment='#', skiprows=[51]) # line 52 (or 51, for 0 indexed) is just hyphens
+    u_row = df.iloc[0]
+    df.drop(index=0, inplace=True)
+    # print(df)
+    # for i,x in enumerate(df.columns):
+    #     print(i, x)
+
+    """ Compare the three different coordinate columns """
+    if False:
+        # c1 = convert_df_cols_from_str_to_coord_with_units(df, ra1, dec1, units=u_row)
+        c1 = convert_df_cols_to_skycoord_array(df, *(df.columns[x] for x in [0, 1]), units=u_row)
+        c2 = convert_df_cols_to_skycoord_array(df, *(df.columns[x] for x in [4, 5]), units=u_row, epoch="2015.5")
+        c3 = convert_df_cols_to_skycoord_array(df, *(df.columns[x] for x in [16, 17]), units=u_row)
+
+        print(u.Quantity(c1.separation(c3).to(u.mas)))
+        print(u.Quantity(c1.separation(c2).to(u.mas)))
+        print(u.Quantity(c2.separation(c3).to(u.mas)))
+        """
+        C2 == C3, and C1 is ~20mas different which is attributable to its different rounding (see the table)
+        Let's use C2 since it's the "official" author-provided table value and not a Simbad-provided value.
+        """
+
+    sptype_col = df['SpType']
+
+    """
+    Adjustments to spectral types
+    33: remove unknown binary
+    146: remove question mark
+    6: triple system, remove the parentheses around the binary system so I can parse it correctly
+    8, 142: replace "f+" with "f" so that parsing binaries works properly
+    52: Type Ae? Being parsed as A star, but not sure that is correct. For now, blank it
+    """
+    # Idx. 33 " + ?" and 146 "(?)" have question marks. 33 appears to be a binary with an unknown companion type, and 146 is just an uncertain type? (Check the paper)
+    sptype_col[33] = sptype_col[33].replace('+ ?', '').strip()
+    sptype_col[146] = sptype_col[146].replace('(?)', '').strip()
+    sptype_col[6] = sptype_col[6].replace('(', '').replace(')', '')
+    sptype_col[8] = sptype_col[8].replace('f+', 'f')
+    sptype_col[142] = sptype_col[142].replace('f+', 'f')
+    sptype_col[52] = sptype_col[52].replace('Ae', '')
+
+    def parse_spectral_type(s):
+        st_result = {}
+        for st_binary_component in scoby.spectral.parse_sptype.st_parse_binary(s):
+            # st_binary_component is string
+            st_bc_possibilities = scoby.spectral.parse_sptype.st_parse_slashdash(st_binary_component)
+            # st_bc_possibilities is list(string)
+            st_bc_possibilities_t = [scoby.spectral.parse_sptype.st_parse_type(x) for x in st_bc_possibilities]
+            # st_bc_possibilities_t is list(tuple(string))
+            st_result[st_binary_component] = st_bc_possibilities_t
+        return st_result
+
+
+    """
+    ####
+    #### Next, try to just parse the spectral types. might need to load in a function from the parser, because I want to do it without initializing the CatR object which needs all the tables
+    """
+
+    # print(sptype_col)
+    j = 0
+    k = 0
+    for i in sptype_col.index:
+        s = sptype_col[i]
+        if s.strip():
+            print(i, s)
+            st = parse_spectral_type(s)
+            print(st)
+            k += len(st)
+            print()
+            j += 1
+    print("TOTAL", j)
+    print("TOTAL UNITS", k)
+
+    # s = sptype_col[6]
+    # print(s)
+    # st_binary_components = scoby.spectral.parse_sptype.st_parse_binary(s)
+    # print(st_binary_components)
+    # st_bc_possibilities_list = [scoby.spectral.parse_sptype.st_parse_slashdash(x) for x in st_binary_components]
+    # st_bc_possibilities_t_list = [[scoby.spectral.parse_sptype.st_parse_type(y) for y in x] for x in st_bc_possibilities_list]
+    # print(st_bc_possibilities_t_list)
+    # print(parse_spectral_type(s))
+
+    """
+    At this point, after making the edits to the 6 stars, the spectral types appear
+    to parse without issue. There are 59 systems containing 67 stars (unpacking binaries/triples)
+    """
+
+
+    return df
+
 if __name__ == "__main__":
-    estimate_pushing_around_gas_with_stars()
+    df = poke_around_in_stoop_catalog()
