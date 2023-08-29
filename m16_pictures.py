@@ -3153,6 +3153,17 @@ def paper_oi_cii_spectra():
     Highlighting OI and CII spectra (and a molecule, maybe a 13CO or CS)
 
     The backbone of this code is copied from m16_pictures.paper_spectra (above)
+
+
+    August 29, 2023
+    Post-referee report, they have asked that we also present the normalized
+    spectra since the CS is a lot dimmer than CII. Marc suggested mirroring
+    the panels in the top left.
+    I will expand the 2x2 image into 3x3, with 7 total panels (the top-R and
+    bottom-L panels will be blank). I will have to have the pointer lines
+    extending from the point to both panels, instead of just one. That might
+    look a little funny, so I could consider numbering the panels or something.
+    For the version of this before this edit, see the first Aug 29 2023 commit.
     """
     reg_filename_short = "catalogs/pillar123_oi_spectrum_samples_v2.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
@@ -3171,17 +3182,35 @@ def paper_oi_cii_spectra():
         else:
             return 'north'
 
-    fig = plt.figure(figsize=(11, 10))
-    grid_shape = (2, 2)
-    gs = fig.add_gridspec(*grid_shape, left=0.1, right=0.98, top=0.9, bottom=0.06, wspace=0.1, hspace=0.12)
-    # Axes list holds the 3 spectrum axes, not the image axis
-    axes = []
-    # Iterate thru reg list and make Axes
-    for reg_idx in range(len(reg_list)):
-        ax = fig.add_subplot(gs[np.unravel_index(reg_idx+1, grid_shape)])
-        axes.append(ax)
+    fig = plt.figure(figsize=(16.5, 15)) # 2x2: 11, 10
+    grid_shape = (3, 3) # formerly 2x2
+    gs = fig.add_gridspec(*grid_shape, left=0.06, right=0.98, top=0.95, bottom=0.06, wspace=0.1, hspace=0.12)
+
+    # Axes list holds all the spectrum axes, not the image axis
+    # Axes are organized as: absolute = index, normalized = index + len(reg_list)
+    # But the axes list should only be modified/accessed by get_axis
+    axes = [None]*(len(reg_list)*2)
+    def get_axis(reg_index, norm=0):
+        """
+        Spectrum Axes object getter function. First call initializes the Axes.
+        reg_index should be one of 0, 1, 2 for P1a, P1b, P2 respectively
+        norm == 0 if absolute and 1 if normalized
+        norm == 0 controls the lower right set, == 1 controls upper left.
+        For organizational notes and diagram, see 2023-08-29 notes
+        """
+        preplanned_indices = ((5, 7, 8), (1, 3, 0))
+        assert norm in (0, 1)
+        assert 0 <= reg_index < len(reg_list)
+        list_index = reg_index + len(reg_list)*norm
+        if axes[list_index] is None:
+            # Axes does not exist; create
+            raveled_index = preplanned_indices[norm][reg_index]
+            axes[list_index] = fig.add_subplot(gs[np.unravel_index(raveled_index, grid_shape)])
+        return axes[list_index]
+
 
     img_ax = None # placeholder for later
+    img_ax_index = 4 # Formerly implied 0; see 2023-08-29 notes
     img_wcs = None # placeholder
     cii_cube, oi_cube = None, None
     vel_lims = (20*kms, 27*kms)
@@ -3203,13 +3232,17 @@ def paper_oi_cii_spectra():
                 # Background
                 unsub_spectrum = spectrum
                 spectrum = spectrum - bgs[check_if_region_is_southern(reg.meta['text'])]
+            normed_spectrum = spectrum.to_value() / np.nanmax(spectrum.to_value())
             line_name = cube_utils.cubenames[line_stub.replace("CONV", "")]
-            p = axes[reg_idx].plot(cube.data.spectral_axis.to_value(), spectrum.to_value(), label=f"{line_name}")
+            p = get_axis(reg_idx, norm=0).plot(cube.data.spectral_axis.to_value(), spectrum.to_value(), label=f"{line_name}")
+            get_axis(reg_idx, norm=1).plot(cube.data.spectral_axis.to_value(), normed_spectrum, alpha=(0.6 if 'cs' in line_stub.lower() else 1))
             if line_stub == 'cii':
-                # plot unsubtracted
-                axes[reg_idx].plot(cube.data.spectral_axis.to_value(), unsub_spectrum.to_value(), linestyle=':', color=p[0].get_c(), alpha=0.6)
-                # Also plot the name of the region (only needs to be done once per region)
-                axes[reg_idx].text(0.1, 0.9, reg.meta['text'], transform=axes[reg_idx].transAxes, fontsize=textsize, color='k', ha='left', va='center')
+                # plot unsubtracted (absolute (norm=0) only)
+                get_axis(reg_idx, norm=0).plot(cube.data.spectral_axis.to_value(), unsub_spectrum.to_value(), linestyle=':', color=p[0].get_c(), alpha=0.6)
+                # Also plot the name of the region (only needs to be done once per region); both norm and abs
+                for norm in (0, 1):
+                    ax = get_axis(reg_idx, norm=norm)
+                    ax.text(0.1, 0.9, reg.meta['text'], transform=ax.transAxes, fontsize=textsize, color='k', ha='left', va='center')
         # Done with reg loop
         if line_stub == 'cii':
             # clear the bgs dict, don't need it hanging around
@@ -3223,8 +3256,8 @@ def paper_oi_cii_spectra():
 
 
     # Use OI coords to make axis
-    img_gs = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs[np.unravel_index(0, grid_shape)], width_ratios=[10, 1])
-    img_ax = fig.add_subplot(img_gs[0, 0], projection=img_wcs)
+    img_gs = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs[np.unravel_index(img_ax_index, grid_shape)], width_ratios=[1, 10, 1])
+    img_ax = fig.add_subplot(img_gs[0, 1], projection=img_wcs)
     # reproject and plot moment image of CII
     mom0 = cii_cube.spectral_slab(*vel_lims).moment0()
     img_reproj = reproject_interp((mom0.to_value(), mom0.wcs), img_wcs, shape_out=oi_cube.shape[1:], return_footprint=False)
@@ -3262,38 +3295,47 @@ def paper_oi_cii_spectra():
     img_ax.set_ylabel("Declination", labelpad=0)
 
     # Plot one legend
-    axes[0].legend()
+    get_axis(0, norm=0).legend()
     # connection points on spectrum axes
     connection_points = [(0, 0.8), (0.23, 1), (0, 1)]
     connection_color = 'SlateGray'
 
     # Plot formatting for spectrum axes
-    for ax_idx, ax in enumerate(axes):
-        ss = ax.get_subplotspec()
-        ax.xaxis.set_ticks_position('both')
-        ax.yaxis.set_ticks_position('both')
-        ax.xaxis.set_tick_params(direction='in', which='both')
-        ax.yaxis.set_tick_params(direction='in', which='both')
-        # if ss.is_last_row() and ss.is_first_col():
-        #     ax.set_xlabel(f"LSR Velocity ({kms.to_string('latex_inline')})")
-        # else: # ax.set_xlabel(" ")
-        ax.set_xlabel(" ")
-        if ss.is_first_col():
-            ax.set_ylabel(f"Intensity ({u.K.to_string('latex_inline')})", fontsize=textsize)
-        else:
-            ax.set_ylabel(" ")
-        ax.set_xlim((15, 34))
-        ax.set_ylim((-5, 45))
-        for v in range(20, 28):
-            ax.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
-        ax.axhline(0, color='k', alpha=0.1)
-        # plot regions
-        pixreg = reg_list[ax_idx].to_pixel(img_wcs)
-        x, y = pixreg.center.xy
-        fig.add_artist(mpatches.ConnectionPatch(xyA=(x, y), coordsA=img_ax.transData, xyB=connection_points[ax_idx], coordsB=ax.transAxes, color=connection_color, linewidth=2))
-        img_ax.plot([x], [y], linestyle='None', marker='o', markersize=6, mfc=connection_color, mec='k')
+    for reg_idx in range(len(reg_list)):
+        for norm in (0, 1):
+            ax = get_axis(reg_idx, norm=norm)
+            ss = ax.get_subplotspec()
+            ax.xaxis.set_ticks_position('both')
+            ax.yaxis.set_ticks_position('both')
+            ax.xaxis.set_tick_params(direction='in', which='both')
+            ax.yaxis.set_tick_params(direction='in', which='both')
+            # if ss.is_last_row() and ss.is_first_col():
+            #     ax.set_xlabel(f"LSR Velocity ({kms.to_string('latex_inline')})")
+            # else: # ax.set_xlabel(" ")
+            ax.set_xlabel(" ")
+            if norm==0 and reg_idx==1: # accessing the raveled index 7, middle bottom
+                ax.set_ylabel(f"Intensity ({u.K.to_string('latex_inline')})", fontsize=textsize)
+            else:
+                ax.set_ylabel(" ")
+            ax.set_xlim((15, 34))
+            if norm == 0:
+                ax.set_ylim((-5, 45))
+            else:
+                # Normalized, so 0-1 limits and horizontal line at 0.5 to show FWHM
+                ax.set_ylim((-0.25, 1.04))
+                ax.axhline(0.5, color='k', alpha=0.5, linestyle='--')
+            for v in range(20, 28):
+                ax.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
+            ax.axhline(0, color='k', alpha=0.1)
+            # plot regions; do this only once
+            if norm == 0:
+                pixreg = reg_list[reg_idx].to_pixel(img_wcs)
+                x, y = pixreg.center.xy
+                fig.add_artist(mpatches.ConnectionPatch(xyA=(x, y), coordsA=img_ax.transData, xyB=connection_points[reg_idx], coordsB=ax.transAxes, color=connection_color, linewidth=2))
+                img_ax.plot([x], [y], linestyle='None', marker='o', markersize=6, mfc=connection_color, mec='k')
 
     fig.supxlabel(f"LSR Velocity ({kms.to_string('latex_inline')})", size=textsize)
+    fig.supylabel("Intensity (normalized)", size=textsize, y=0.66)
 
 
     conv_stub = '' if using_conv else '_unconv'
@@ -3440,9 +3482,9 @@ if __name__ == "__main__":
     # paper_channel_maps()
     # paper_pv_diagrams(choose_file=8) # choose_file=7 and 8
     # multi_panel_moment_images()
-    paper_spectra()
+    # paper_spectra()
     # background_samples_figure()
-    # paper_oi_cii_spectra()
+    paper_oi_cii_spectra()
     # paper_cii_mol_overlay()
 
 
