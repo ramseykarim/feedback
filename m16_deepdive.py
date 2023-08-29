@@ -4856,6 +4856,68 @@ def remake_leflochlazareff_Bfield_graph():
     plt.show()
 
 
+def estimate_distance_from_g0():
+    """
+    August 14, 2023
+    Compare stellar and dust G0 to estimate distances to pillar features
+
+    Use pillars_and_spire_box.reg as a cutout
+    """
+    dust_g0_fn = catalog.utils.search_for_file("herschel/uv_m16_repro_CII.fits")
+    box_reg_fn = catalog.utils.search_for_file("catalogs/pillars_and_spire_box.reg")
+    stars_g0_fn = catalog.utils.search_for_file("catalogs/g0_hillenbrand_stars_fuvgt4.5_ltxarcmin.fits")
+
+    dust_g0_raw, dust_g0_hdr = fits.getdata(dust_g0_fn, header=True)
+    dust_g0_raw = dust_g0_raw[0, 0, :, :]
+    for k in list(dust_g0_hdr.keys()):
+        if k[-1] in ['3', '4']:
+            del dust_g0_hdr[k]
+    dust_g0_hdr['NAXIS'] = 2
+    wcs_raw = WCS(dust_g0_hdr, naxis=2)
+
+    # dust_g0_cutout = misc_utils.cutout2d_from_region(dust_g0_raw, wcs_raw, box_reg_fn)
+    # del dust_g0_raw, dust_g0_hdr
+    # dust_g0 = dust_g0_cutout.data
+    # w = dust_g0_cutout.wcs
+    # shape_out = dust_g0_cutout.shape
+
+    dust_g0 = dust_g0_raw
+    w = wcs_raw
+    shape_out = dust_g0.shape
+
+
+    stars_g0_raw, stars_g0_hdr = fits.getdata(stars_g0_fn, header=True)
+
+    stars_g0 = reproject_interp((stars_g0_raw, stars_g0_hdr), w, shape_out=shape_out, return_footprint=False)
+
+    dust_g0[stars_g0>1e4] = np.nan
+    stars_g0[stars_g0>1e4] = np.nan
+
+    """
+    Formula from my notes (2023-08-14): sqrt(g_s / g_d - 1) * distance from cluster center = LOS distance
+    """
+
+    center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5')
+
+
+    # Plane of sky distances
+    pos_distance_grid = catalog.utils.distance_from_point_pixelgrid(center_coord, w, los_distance_M16)
+
+    # Line of sight distances
+    # dust_g0 -= 700 # background estimate
+    los_distance_grid = np.sqrt((stars_g0 / dust_g0) - 1) * pos_distance_grid
+    los_distance_grid = los_distance_grid.to(u.pc).to_value()
+
+    plt.subplot(111, projection=w)
+    plt.imshow(los_distance_grid, origin='lower', vmin=0, vmax=7, cmap='jet')
+    plt.colorbar()
+
+    plt.plot([center_coord.ra.deg], [center_coord.dec.deg], marker='x', color='r', transform=plt.gca().get_transform('world'))
+
+
+
+    plt.show()
+
 
 
 
@@ -4863,6 +4925,10 @@ def remake_leflochlazareff_Bfield_graph():
 if __name__ == "__main__":
 
     ...
+
+    estimate_distance_from_g0()
+
+
     # calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)
 
     # for line_stub in ['12co32', '12co10CONV']:
@@ -4927,8 +4993,8 @@ if __name__ == "__main__":
     """
     July 25, 2023 note: hcop: use version 2. cii: use version 1 (version just controls what models u load)
     """
-    for i in range(1, 5):
-        make_3d_fit_viz_in_2d(i, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
+    # for i in range(1, 5):
+    #     make_3d_fit_viz_in_2d(i, line='hcop', version=2) # working on this april 19, 2022, sept 1, 2022
 
     # correlations_between_carma_molecule_intensities('cs', 'n2hp') # working on this april 20, 2022
 
