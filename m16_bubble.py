@@ -645,9 +645,10 @@ class COColumnDensity:
         # Constants, in order:
         # B_0 (MHz), E_upper (K), mu (Debye), nu (GHz), J_upper
         # From the above, we construct g and S
+        # Looks like B_0 is constant to the molecule, and does not change with transtion
         _constants = {
             '13co10': (55101.01, 5.28880, 0.11046, 110.20135400, 1),
-            # '13co32': (),
+            '13co32': (55101.01, ), # see 2023-09-11 notes, still re-researching this
             # 'c18o10': (),
         }
         if optically_thin_line_stub not in '13co10':

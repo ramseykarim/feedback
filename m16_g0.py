@@ -6,6 +6,8 @@ If you're looking for where I load in the stars and make the lists and find G0,
 while you'd be correct in looking here first given the title, you want the
 queries.py file. I use a vizier query to load in the catalog.
 
+This is where I mess around with the Stoop catalog though.
+
 Created: June 16, 2022
 """
 __author__ = "Ramsey Karim"
@@ -56,6 +58,8 @@ from . import cube_pixel_spectra as cps1
 from . import cube_pixel_spectra_2 as cps2
 
 from . import vizier_queries_m16_g0 as vizier_queries
+
+from .g0_stars import print_val_err
 
 scoby_import_path = "/home/ramsey/Documents/Research/scoby-all/scoby"
 if os.path.isdir(scoby_import_path):
@@ -268,6 +272,12 @@ def poke_around_in_stoop_catalog():
         Let's use C2 since it's the "official" author-provided table value and not a Simbad-provided value.
         """
 
+    """
+    Assign coordinates using C2 (author provided)
+    """
+    df['SkyCoord'] = convert_df_cols_from_str_to_coord_with_units(df, *(df.columns[x] for x in [4, 5]), units=u_row)
+
+
     sptype_col = df['SpType']
 
     """
@@ -301,39 +311,134 @@ def poke_around_in_stoop_catalog():
     """
     ####
     #### Next, try to just parse the spectral types. might need to load in a function from the parser, because I want to do it without initializing the CatR object which needs all the tables
+
+    Put them back in the dataframe and get rid of unknown spectral type stars (more than half the catalog)
     """
 
-    # print(sptype_col)
-    j = 0
-    k = 0
-    for i in sptype_col.index:
-        s = sptype_col[i]
-        if s.strip():
-            print(i, s)
-            st = parse_spectral_type(s)
-            print(st)
-            k += len(st)
-            print()
-            j += 1
-    print("TOTAL", j)
-    print("TOTAL UNITS", k)
+    df['SpType'] = sptype_col
 
-    # s = sptype_col[6]
-    # print(s)
-    # st_binary_components = scoby.spectral.parse_sptype.st_parse_binary(s)
-    # print(st_binary_components)
-    # st_bc_possibilities_list = [scoby.spectral.parse_sptype.st_parse_slashdash(x) for x in st_binary_components]
-    # st_bc_possibilities_t_list = [[scoby.spectral.parse_sptype.st_parse_type(y) for y in x] for x in st_bc_possibilities_list]
-    # print(st_bc_possibilities_t_list)
-    # print(parse_spectral_type(s))
+
+    if False:
+        ### Counting stars and printing types
+        # print(sptype_col)
+        j = 0
+        k = 0
+        for i in df.index:
+            s = df['SpType'][i]
+            if s.strip():
+                print(i, s)
+                st = parse_spectral_type(s)
+                print(st)
+                k += len(st)
+                print()
+                j += 1
+        print("TOTAL SYSTEMS", j)
+        print("TOTAL MEMBERS", k)
+
+
+    # print(len(df))
+    ### Get rid of unknown spectral type stars
+    # print(df._is_copy)
+    df = df.loc[df['SpType'].apply(lambda x: bool(x.strip()))].copy() # copy() gets rid of a warning
+    # print(df._is_copy)
+    # print(len(df))
+    # print(df)
 
     """
     At this point, after making the edits to the 6 stars, the spectral types appear
     to parse without issue. There are 59 systems containing 67 stars (unpacking binaries/triples)
     """
 
+    """
+    Now, run scoby on them
+    """
+
+    ### helper function make_cat_resolver defined below this
+    catr = make_cat_resolver(df['SpType'])
+    # print(catr)
+
+
+    fuv_flux_array = u.Quantity([x[0] for x in catr.get_array_FUV_flux()])
+    fuv_flux_unit = fuv_flux_array.unit
+    df['log10FUV_flux_'+str(fuv_flux_unit).replace(' ', '')] = np.log10(fuv_flux_array.to_value())
+
+
+    """
+    Filter paragraph copied directly from vizier_queries_m16_g0
+
+    filter 4 is the category for the paper, and filter 0 is no filter
+    """
+    # make some filters for the catalog so we can try different G0 maps
+    filter = 4 # filter 4 (>4.5 and filter radius) is the pillar paper one
+    filter_stub = ""
+    if filter == 0:
+        # no filter
+        pass
+    if filter == 1 or filter == 4:
+        # filter log10FUV_flux_solLum > 4.5 (8 stars) or 5.0 (4 stars)
+        df = df[df['log10FUV_flux_solLum'] > 4.5]
+        filter_stub += "_fuvlt4.5"
+    if filter == 2 or filter == 4:
+        # filter < x arcmin from y
+        center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5')
+        filter_radius = 3.90751*u.arcmin
+        df = vizier_queries.filter_by_within_range(df, center_coord, radius_arcmin=filter_radius)
+        df = df[df['is_within_3.9_arcmin']]
+        filter_stub += "_ltxarcmin"
+    # if filter == 3:
+    #     # filter for just the 2 O5 stars
+    #     catalog_df_OB = catalog_df_OB.loc[[175, 205]]
+    #     filter_stub += "_O5s"
+    # if filter == 5:
+    #     # 175, 205, 222, 246
+    #     catalog_df_OB = catalog_df_OB.loc[[246]]
+    #     filter_stub += '_justone'
+
+    ### remake catr now that we have filtered
+    catr = make_cat_resolver(df['SpType'])
+    print(catr)
+
+    for s in catr.star_list:
+        print(s.spectral_types)
+
+    """
+    Print quantities
+    """
+    if False:
+        mdot_med, mdot_err = catr.get_mass_loss_rate()
+        mvflux_med, mvflux_err = catr.get_momentum_flux()
+        ke_med, ke_err = catr.get_mechanical_luminosity()
+        fuv_tot_med, fuv_tot_err = catr.get_FUV_flux()
+        ionizing_tot_med, ionizing_tot_err = catr.get_ionizing_flux()
+        print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
+        print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
+        print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.s))}")
+        print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
+        print(f"IONIZING PHOTON FLUX: {print_val_err(ionizing_tot_med, ionizing_tot_err)}") # units should be 1/time
+        mass_med, mass_err = catr.get_stellar_mass()
+        lum_med, lum_err = catr.get_bolometric_luminosity()
+        print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")
+        print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
+        print(f"MECH/FUV LUM: {(ke_med/fuv_tot_med).decompose():.1E}; MECH/total LUM: {(ke_med/lum_med).decompose():.1E}")
+
+
+    ke = u.Quantity([x[0] for x in catr.get_array_mechanical_luminosity()])
+    print(ke)
 
     return df
+
+
+def make_cat_resolver(spectral_types_column):
+    """
+    September 7, 2023
+    """
+    scoby.spectral.stresolver.UNCERTAINTY = False
+    powr_tables = {x: scoby.spectral.powr.PoWRGrid(x) for x in ('OB',)}
+    cal_tables = scoby.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
+    ltables = scoby.spectral.leitherer.LeithererTable()
+    catr = scoby.spectral.stresolver.CatalogResolver(spectral_types_column.values, calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
+    return catr
+
 
 if __name__ == "__main__":
     df = poke_around_in_stoop_catalog()

@@ -100,7 +100,7 @@ def m16_stars():
 
 
     # make some filters for the catalog so we can try different G0 maps
-    filter = 4
+    filter = 0 # filter 4 (>4.5 and filter radius) is the pillar paper one
     filter_stub = ""
     if filter == 0:
         # no filter

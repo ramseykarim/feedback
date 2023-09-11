@@ -1003,7 +1003,7 @@ def background_samples_figure():
     ax_spec.axhline(0, color='k', alpha=0.1)
     for v in range(20, 31):
         # Velocity gridlines around important velocities
-        ax_spec.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
+        ax_spec.axvline(v, color='k', alpha=0.15, linestyle=('-' if v%5==0 else ':'))
     ax_spec.legend()
 
     dpi = 300
@@ -3042,8 +3042,8 @@ def paper_spectra():
 
 
     """ Make 2 sets of spectra """
-    short_names = ['cii', '12co10', '12co32', 'co65', 'hcop', 'cs']; set_stub = ""; set_number = 1
-    # short_names = ['oi', '13co10', '13co32', 'hcn', 'n2hp']; set_stub = "set2"; set_number = 2
+    # short_names = ['cii', '12co10', '12co32', 'co65', 'hcop', 'cs']; set_stub = ""; set_number = 1
+    short_names = ['oi', '13co10', '13co32', 'hcn', 'n2hp']; set_stub = "set2"; set_number = 2
 
     using_conv = True # set to True to use CONV versions if applicable
     if using_conv:
@@ -3127,7 +3127,7 @@ def paper_spectra():
         ax.text(0.06, 0.94, reg_list[reg_idx].meta['text'].replace("Shelf", "Ridge"), transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(20, 29):
             # Some light velocity gridlines around the important velocities
-            ax.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
+            ax.axvline(v, color='k', alpha=0.15, linestyle=('-' if v%5==0 else ':'))
         ax.axhline(0, color='k', alpha=0.1)
         # Use this line to verify background subtractions done correctly
         # print(f"{reg_list[reg_idx].meta['text']} {check_if_region_is_southern(reg_list[reg_idx].meta['text'])}")
@@ -3184,7 +3184,7 @@ def paper_oi_cii_spectra():
 
     fig = plt.figure(figsize=(16.5, 15)) # 2x2: 11, 10
     grid_shape = (3, 3) # formerly 2x2
-    gs = fig.add_gridspec(*grid_shape, left=0.06, right=0.98, top=0.95, bottom=0.06, wspace=0.1, hspace=0.12)
+    gs = fig.add_gridspec(*grid_shape, left=0.06, right=0.95, top=0.95, bottom=0.06, wspace=0.07, hspace=0.12)
 
     # Axes list holds all the spectrum axes, not the image axis
     # Axes are organized as: absolute = index, normalized = index + len(reg_list)
@@ -3292,7 +3292,7 @@ def paper_oi_cii_spectra():
     img_ax.coords[1].set_ticklabel(rotation=0, rotation_mode='default', ha='center', va='center', fontsize=textsize-5, pad=0)
     img_ax.coords[0].set_ticklabel(fontsize=textsize-5)
     img_ax.set_xlabel("Right Ascension")
-    img_ax.set_ylabel("Declination", labelpad=0)
+    img_ax.set_ylabel("Declination", labelpad=-0.5)
 
     # Plot one legend
     get_axis(0, norm=0).legend()
@@ -3305,6 +3305,9 @@ def paper_oi_cii_spectra():
         for norm in (0, 1):
             ax = get_axis(reg_idx, norm=norm)
             ss = ax.get_subplotspec()
+            if (norm == 0 and reg_idx != 1) or (norm == 1 and reg_idx == 0):
+                # put the lower right plot ylabels on the right side
+                ax.yaxis.tick_right()
             ax.xaxis.set_ticks_position('both')
             ax.yaxis.set_ticks_position('both')
             ax.xaxis.set_tick_params(direction='in', which='both')
@@ -3313,8 +3316,9 @@ def paper_oi_cii_spectra():
             #     ax.set_xlabel(f"LSR Velocity ({kms.to_string('latex_inline')})")
             # else: # ax.set_xlabel(" ")
             ax.set_xlabel(" ")
-            if norm==0 and reg_idx==1: # accessing the raveled index 7, middle bottom
-                ax.set_ylabel(f"Intensity ({u.K.to_string('latex_inline')})", fontsize=textsize)
+            if norm==0 and reg_idx==2: # accessing the raveled index 7, middle bottom
+                ax.set_ylabel(f"Intensity ({u.K.to_string('latex_inline')})", fontsize=textsize, y=1.08, ha='center', labelpad=4)
+                ax.yaxis.set_label_position("right")
             else:
                 ax.set_ylabel(" ")
             ax.set_xlim((15, 34))
@@ -3325,7 +3329,7 @@ def paper_oi_cii_spectra():
                 ax.set_ylim((-0.25, 1.04))
                 ax.axhline(0.5, color='k', alpha=0.5, linestyle='--')
             for v in range(20, 28):
-                ax.axvline(v, color='k', alpha=0.07, linestyle=('-' if v%5==0 else ':'))
+                ax.axvline(v, color='k', alpha=0.15, linestyle=('-' if v%5==0 else ':'))
             ax.axhline(0, color='k', alpha=0.1)
             # plot regions; do this only once
             if norm == 0:
@@ -3335,7 +3339,7 @@ def paper_oi_cii_spectra():
                 img_ax.plot([x], [y], linestyle='None', marker='o', markersize=6, mfc=connection_color, mec='k')
 
     fig.supxlabel(f"LSR Velocity ({kms.to_string('latex_inline')})", size=textsize)
-    fig.supylabel("Intensity (normalized)", size=textsize, y=0.66)
+    fig.supylabel("Normalized intensity", size=textsize, y=0.66)
 
 
     conv_stub = '' if using_conv else '_unconv'
@@ -3482,9 +3486,9 @@ if __name__ == "__main__":
     # paper_channel_maps()
     # paper_pv_diagrams(choose_file=8) # choose_file=7 and 8
     # multi_panel_moment_images()
-    # paper_spectra()
+    paper_spectra()
     # background_samples_figure()
-    paper_oi_cii_spectra()
+    # paper_oi_cii_spectra()
     # paper_cii_mol_overlay()
 
 
