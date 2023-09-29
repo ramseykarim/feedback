@@ -61,6 +61,7 @@ Cutout2D = pvdiagrams.Cutout2D
 
 from . import cube_pixel_spectra as cps1
 from . import cube_pixel_spectra_2 as cps2
+from . import channel_maps as channel_maps_utils
 
 mpl_cm = pvdiagrams.mpl_cm
 mpl_colors = pvdiagrams.mpl_colors
@@ -103,13 +104,14 @@ Dictionaries/lists of constants/names and helper functions that use them.
 
 large_map_filenames = {
         'cii': "sofia/m16_CII_final_15_5_0p5_clean.fits",
+        'cii-30': "sofia/m16_CII_final_30_15_2_clean.fits", # larger beam and wider channel CII (lower noise)
         '12co10-pmo': "purplemountain/G17co12.fits", '13co10-pmo': "purplemountain/G17co13.fits",
         'c18o10-pmo': "purplemountain/G17c18o.fits",
         '12co10-nob': "nobeyama/FGN_01700+0000_2x2_12CO_v1.00_cube.fits", '13co10-nob': "nobeyama/FGN_01700+0000_2x2_13CO_v1.00_cube.fits",
         'c18o10-nob': "nobeyama/FGN_01700+0000_2x2_C18O_v1.00_cube.fits",
         'rrl': "thor_vla/RRL_stacked_L17.50_deg.m16cutout.fits",
 }
-observatory_names = {'pmo': "PMO", 'nob': "NRO"}
+descriptor_names = {'pmo': "PMO", 'nob': "NRO", '30': "30beam"}
 herschel_path = "herschel/anonymous1603389167/1342218995/level2_5"
 photometry_filenames = {
     '8um': "spitzer/SPITZER_I4_mosaic_ALIGNED.fits", '250um': "extdPSW/hspirepsw696_25pxmp_1823_m1335_1342218995_1342218996_1462565962570.fits.gz",
@@ -135,7 +137,13 @@ cutout_box_filenames = {
 }
 vlim_memo = { # hash things somehow and put them here
     '8um': (40, 320), 'irac4': (40, 320),
-    'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]), 'cii.generic': (0, 25), #65 is better for most, 14 good for some
+
+    # 'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]),
+    'cii.levels': np.concatenate([np.arange(1.5, 61, 3), np.arange(65, 126, 15)]),
+
+    'cii.generic': (0, 10), #25 some, 65 is better for most, 14 good for some
+    'cii-30.levels': np.arange(0.2, 10, 0.8), # this cii map is diluted, so lower emission,
+    'cii-30.generic': (0, 1), # 10 is generally good
     '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 25), # or 40
     '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 18),
     'rrl.levels': np.arange(3, 30, 6), # RRLs should be "sliced" into a 1 km/s channel
@@ -186,14 +194,15 @@ def get_vlim(key):
     Ignore 'APEX' or 'CONV' suffix; this rarely makes a difference.
     """
     key = key.replace('CONV', '').replace('APEX', '')
+    hyphen_exceptions = ['cii-30']
     if '-' in key:
-        # Get rid of the observatory tag
-        key = key.split('-')[0]
+        # Get rid of the observatory tag (without getting rid of "generic")
+        key = ".".join([(s.split('-')[0] if (i==0 and s not in hyphen_exceptions) else s) for i, s in enumerate(key.split('.'))])
     vlims = {}
     vlims_keys = ['vmin', 'vmax']
     if key in vlim_memo:
-        val = vlim_memo[key]
-        for k, v in zip(vlims_keys, val):
+        vlim_memo_value = vlim_memo[key]
+        for k, v in zip(vlims_keys, vlim_memo_value):
             if v is not None:
                 vlims[k] = v
     # special rule (can remove later): if no vmin but velocity specified (e.g. moment map), vmin=0
@@ -208,7 +217,9 @@ def get_levels(data_stub):
     Try to find memoized contour levels
     """
     data_stub = data_stub.replace('CONV', '').replace('APEX', '')
-    if '-' in data_stub:
+    # Specific carveout for cii-30 since it's diluted emission
+    hyphen_exceptions = ['cii-30']
+    if '-' in data_stub and data_stub not in hyphen_exceptions:
         # Get rid of the observatory tag
         data_stub = data_stub.split('-')[0]
     key = data_stub + ".levels"
@@ -262,7 +273,7 @@ def get_data_name(data_stub):
     if data_stub in cube_utils.cubenames:
         return cube_utils.cubenames[data_stub]
     elif '-' in data_stub and data_stub.split('-')[0] in cube_utils.cubenames:
-        return cube_utils.cubenames[data_stub.split('-')[0]] + " " + observatory_names[data_stub.split('-')[1]]
+        return cube_utils.cubenames[data_stub.split('-')[0]] + " " + descriptor_names[data_stub.split('-')[1]]
     elif data_stub[:4] == 'irac':
         if '-' in data_stub:
             data_stub = data_stub.split('-')[0]
@@ -1585,7 +1596,7 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, veloci
     # print("overlay hash", overlay_info['vlim_hash'])
 
     # Figure
-    figsizes = {'n19': (10, 10), 'med-large': (13, 9)}
+    figsizes = {'n19': (10, 10), 'med-large': (13, 9), 'med': (10, 9)}
     fig = plt.figure(figsize=figsizes.get(cutout_reg_stub, (10, 10)))
     ax = fig.add_subplot(111, projection=img_info['wcs'])
     # Plot image
@@ -1684,12 +1695,21 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, veloci
     # Some cleanup since things seem to pile up
     plt.close(fig)
 
-def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
+def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX'], velocity_limits=None, **kwargs):
     """
     May 5, 2023
     Re-create the PV diagrams from real_medium_spectra but without the other
     stuff on the plots.
     Formerly real_medium_pv, but planning to use it live so gave it a better name.
+
+    :param velocity_limits: tuple (Quantity, Quantity) in velocity units.
+        Limits of PV diagram. Defaults to (8 km/s, 35 km/s) if None.
+    :param vmax: (optional) dictionary with keys matching elements of line_stub_list
+        Dictionary values should be vmax value for the PV diagram of that line.
+        If that line is contoured in color, that will be vmax for contour colorscale.
+    :param levels: (optional) dictionary with keys matching elements of line_stub_list
+        Dictionary values should be a list-like of float values giving levels for
+        PV diagram of that line.
     """
     # Moved line_stub_list to argument
     # Use CII and either 12 or 13CO 3-2
@@ -1705,17 +1725,37 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     del star_df
 
 
-    pv_vmaxes = {'ciiAPEX': 20, '12co32': 30, '13co32': 15}
-    pv_levels = {'ciiAPEX': (3, 37, 4), '12co32': (5, 41, 5), '13co32': (1, 27, 2.5)}
+    # pv_vmaxes = {'ciiAPEX': 20, '12co32': 30, '13co32': 15}
+    # pv_levels = {'ciiAPEX': (3, 37, 4), '12co32': (5, 41, 5), '13co32': (1, 27, 2.5)}
     def _get_levels(line_stub):
         """
-        Get levels from the above dictionary. Return None if not present.
+        OLD <Get levels from the above dictionary. Return None if not present.>
+        NEW Get levels from the vlim memo functions
+            future: get levels from vlim memo only if not specified in function call
         """
-        if line_stub in pv_levels:
-            return np.arange(*pv_levels[line_stub])
+        kwarg_levels = kwargs.get("levels", {}).get(line_stub, None)
+        if kwarg_levels is not None:
+            return kwarg_levels
         else:
-            return None
-    velocity_limits = (8*kms, 35*kms)
+            return get_levels(line_stub)
+        # if line_stub in pv_levels:
+        #     return np.arange(*pv_levels[line_stub])
+        # else:
+        #     return None
+    def _get_pv_vmax(line_stub):
+        """
+        Get vmax from vlim memo functions
+            future: get from vlim memo only if not specified in function call
+        """
+        kwarg_vmax = kwargs.get("vmax", {}).get(line_stub, None)
+        if kwarg_vmax is not None:
+            return kwarg_vmax
+        else:
+            return get_generic_vlim(line_stub).get("vmax", None)
+
+
+    if velocity_limits is None:
+        velocity_limits = (8*kms, 35*kms)
     velocity_intervals = np.arange(20, 35, 2)
 
     # Most of these files have 3 points and a vector
@@ -1723,8 +1763,8 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     # If it doesn't have points, ignore the points and use the vector.
     pv_path, point_reg_list, reg_fn_stub = get_pv_and_regions(reg_filename_or_idx)
 
-    fig = plt.figure(figsize=(18, 6))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1, 5])
+    fig = plt.figure(figsize=(16, 9))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1, 5], hspace=0, wspace=0)
     ax_ref_img = fig.add_subplot(gs[0,0], projection=ref_wcs)
 
     # Plot reference image
@@ -1732,8 +1772,12 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
 
     pv_slices = []
     for line_stub in line_stub_list:
-        cube_filename_short = get_map_filename(line_stub)
-        cube = cube_utils.CubeData(cube_filename_short).convert_to_K()
+        if False and 'cii' in line_stub:
+            print("INTERCEPTING CII TO USE OLD SMALLER MAP FOR TESTING")
+            cube = cube_utils.CubeData(line_stub).convert_to_K()
+        else:
+            cube_filename_short = get_map_filename(line_stub)
+            cube = cube_utils.CubeData(cube_filename_short).convert_to_K()
         pv_slices.append(pvextractor.extract_pv_slice(cube.data.spectral_slab(*velocity_limits), pv_path))
 
     # Regrid [1] to [0]; clean up the headers to allow reprojection
@@ -1746,20 +1790,22 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     ax_pv = fig.add_subplot(gs[0, 1], projection=WCS(sl0.header))
     ls0, ls1 = line_stub_list
     # Background [0]; can either use Greys(_r) to match wtih plasma(_r) contours, or plasma to match with cool contours
-    im = ax_pv.imshow(sl0.data, origin='lower', cmap='plasma', vmin=0, vmax=pv_vmaxes.get(ls0, None), aspect=(sl0.data.shape[1]/(2.5*sl0.data.shape[0])))
+    im = ax_pv.imshow(sl0.data, origin='lower', cmap='plasma', vmin=0, vmax=_get_pv_vmax(ls0), aspect=(sl0.data.shape[1]/(1.*sl0.data.shape[0])))
     cs = ax_pv.contour(sl0.data, colors='k', linewidths=1, linestyles=':', levels=_get_levels(ls0))
     pv_cbar = fig.colorbar(im, ax=ax_pv, location='right', label=cube.data.unit.to_string('latex_inline'))
     for l in cs.levels:
         pv_cbar.ax.axhline(l, color='k')
     ax_pv.text(0.05, 0.95, "Image: "+get_data_name(ls0), fontsize=13, color=marcs_colors[1], va='top', ha='left', transform=ax_pv.transAxes)
     # Overlay [1]
-    cs = ax_pv.contour(sl1_reproj, cmap='cool', linewidths=1.5, levels=_get_levels(ls1), vmax=pv_vmaxes.get(ls1, None))
+    cs = ax_pv.contour(sl1_reproj, cmap='cool', linewidths=1.5, levels=_get_levels(ls1), vmax=_get_pv_vmax(ls1))
     for l in cs.levels:
         pv_cbar.ax.axhline(l, color='w', linewidth=2)
     ax_pv.text(0.05, 0.90, "Contour: "+get_data_name(ls1), fontsize=13, color='w', va='top', ha='left', transform=ax_pv.transAxes)
 
     # Plot velocity intervals
     x_length = pv_path._coords[0].separation(pv_path._coords[1]).deg
+    # Save xlims to reapply later, since the horizontal lines will stretch the limits
+    pv_xlim = ax_pv.get_xlim()
     for v in velocity_intervals:
         ax_pv.plot([0, x_length], [v*1e3]*2, color='grey', alpha=0.7, linestyle='--', transform=ax_pv.get_transform('world'))
     # Plot region positions, if there are point regions
@@ -1780,6 +1826,7 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX']):
     ax_ref_img.set_ylabel("Dec")
     ax_ref_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color=marcs_colors[1], linestyle='-', lw=1, transform=ax_ref_img.get_transform('world'))
     ax_ref_img.text(pv_path._coords[0].ra.deg, pv_path._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color=marcs_colors[1], fontsize=10, va='center', ha='right', transform=ax_ref_img.get_transform('world'))
+    ax_pv.set_xlim(pv_xlim)
 
     plt.tight_layout()
     # 2023-05-06,11, 06-30
@@ -2124,6 +2171,30 @@ def n19_shell_dust_mass():
     ...
 
 
+def cii_channel_maps():
+    """
+    September 27, 2023
+    Use the channel_maps.py functions to make channel map figures that look nice
+    """
+    fn = get_map_filename("cii-30")
+    cube = cube_utils.CubeData(fn)
+    channel_maps_utils.channel_maps_figure(
+        cube.data, name="cii-30", grid_shape=(5, 4), figsize=(12, 13),
+        velocity_limits=(5, 41), panel_offset=0, vmin=0, vmax=25,
+        text_y=0.92, text_x=0.05, ha='left', tick_labelrotation=40, tick_labelpad=20,
+        left=0.08, right=0.89, bottom=0.08, cmap="plasma",
+        figure_save_path=catalog.utils.todays_image_folder(),
+        metadata=catalog.utils.create_png_metadata(title="channel maps cii using channel_maps.py functions",
+            file=__file__, func="cii_channel_maps")
+    )
+
+def co_channel_maps():
+    """
+    Do this!! need to rebin the CO 3-2, so that'll take some time...
+    """
+
+
+
 if __name__ == "__main__":
     """
     Moment 0 examples
@@ -2141,6 +2212,26 @@ if __name__ == "__main__":
     # i = 22
     # vel_lims = (i*kms, (i+2)*kms)
     # overlay_moment(background='ciiAPEX', overlay='12co10-pmo', velocity_limits=(15*kms, 18*kms), velocity_limits2=(18*kms, 20*kms), cutout_reg_stub='med', plot_stars=False, reg_filename_or_idx="catalogs/N19_points_2.reg")
+    # overlay_moment(background='13co10-nob', overlay='90cm', cutout_reg_stub='med-large', velocity_limits=(0*kms, 40*kms), plot_stars=False, reg_filename_or_idx=None)
+    # vel_lims_list = [
+    #     (5*kms, 15*kms),
+    #     (5*kms, 40*kms),
+    #     (30*kms, 40*kms)
+    # ]
+    # for i in range(len(vel_lims_list)):
+    #     vel_lims = vel_lims_list[i]
+    #     overlay_moment(background='8um', overlay='cii-30', velocity_limits2=vel_lims, cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 6))
+
+    # overlay_moment(background='160um', overlay='cii-30', velocity_limits2=(-10*kms, 10*kms), cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0))
+
+    overlay_moment(background='160um', overlay='ciiAPEX', velocity_limits2=(15*kms, 20*kms), cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0))
+
+    # v_start, v_increment = 15, 5
+    # while v_start < 40:
+    #     vel_lims = (v_start*kms, (v_start + v_increment)*kms)
+    #     overlay_moment(background='ciiAPEX', overlay='160um', velocity_limits=vel_lims, velocity_limits2=(15*kms, 30*kms), cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0))
+    #     v_start += v_increment
+
     # vcii = (28*kms, 29*kms)
     # vco = (25*kms, 26*kms)
     # vcii = (28*kms, 29*kms)
@@ -2161,11 +2252,22 @@ if __name__ == "__main__":
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['13co32', '13co10-pmo'])
     # fast_pv(reg_filename_or_idx=0)
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
+    # fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0), line_stub_list=['cii-30', '12co32'])
+
+    ##### make all PVs from a given .reg file
     # error = False
     # i = 0
-    # while not error:
+    # while not error and i<10:
     #     try:
-    #         fast_pv(reg_filename_or_idx=("catalogs/N19_pv_paths_2.reg", i), line_stub_list=['12co32', 'ciiAPEX'])
+    #         fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", i), line_stub_list=['ciiAPEX', '12co32'],
+    #         # fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", i), line_stub_list=['cii-30', '12co10-nob'],
+    #             velocity_limits=(-35*kms, 101*kms),
+    #             levels={
+    #                 '12co10-pmo': np.concatenate([np.arange(0.75, 5, 1), np.arange(5.75, 26, 4)]),
+    #                 '12co10-nob': np.concatenate([np.arange(2, 5, 2), np.arange(6, 26, 6)]),
+    #                 '12co32': np.concatenate([np.arange(0.5, 5, 1.5)*2, np.arange(5, 51, 5)*2]),
+    #             }
+    #         )
     #         plt.close(plt.gcf())
     #         i += 1
     #     except:
@@ -2179,8 +2281,9 @@ if __name__ == "__main__":
     # find_co10_noise()
 
     """
-    Channel movies
+    Channel maps/movies
     """
+    # cii_channel_maps()
     # channel_movie('ciiAPEX', vel_lims=(0, 10))
 
     """
@@ -2191,5 +2294,5 @@ if __name__ == "__main__":
     #         if i == j == 1:
     #             continue
     #         print("Doing", i, j)
-    plot_spectra(reg_set_number=4, line_set_number=1, velocities_to_mark=(17.5, 19.5, 21.5))
-    plot_spectra(reg_set_number=4, line_set_number=2, velocities_to_mark=(17.5, 19.5, 21.5))
+    # plot_spectra(reg_set_number=4, line_set_number=1, velocities_to_mark=(17.5, 19.5, 21.5))
+    # plot_spectra(reg_set_number=4, line_set_number=2, velocities_to_mark=(17.5, 19.5, 21.5))
