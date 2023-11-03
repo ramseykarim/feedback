@@ -29,6 +29,7 @@ import datetime
 import time
 import warnings
 import math
+import itertools
 
 # from math import ceil
 # from scipy import signal
@@ -109,6 +110,7 @@ large_map_filenames = {
         'c18o10-pmo': "purplemountain/G17c18o.fits",
         '12co10-nob': "nobeyama/FGN_01700+0000_2x2_12CO_v1.00_cube.fits", '13co10-nob': "nobeyama/FGN_01700+0000_2x2_13CO_v1.00_cube.fits",
         'c18o10-nob': "nobeyama/FGN_01700+0000_2x2_C18O_v1.00_cube.fits",
+        '12co32-pmo': "apex/M16_12CO3-2_truncated.PMObeam.fits", '13co32-pmo': "apex/M16_13CO3-2_truncated.PMObeam.fits", # convolved APEX CO 3-2 to PMO 1-0 beam
         'rrl': "thor_vla/RRL_stacked_L17.50_deg.m16cutout.fits",
 }
 descriptor_names = {'pmo': "PMO", 'nob': "NRO", '30': "30beam"}
@@ -132,25 +134,32 @@ photometry_beams = {
 }
 cutout_box_filenames = {
     'N19': "N19_cutout_box.reg", # Small, only N19
+    'N19-small': "N19_cutout_box_small.reg", # even smaller, only the top part of the bubble, nothing to the south
+    'N19-med': "N19_cutout_box_med.reg", # smaller than "N19" but includes the south part of the bubble, so bigger than "N19-small"
+    'north-cloud': "northerncloud_cutout_box.reg", # the full northern cloud in CII between 10-21 km/s
     'med-large': "m16_cutout_box_medium-large.reg", # sort of like the Hill 2012 footprint, includes some of the filament. Goes well outside CII
     'med': "m16_cutout_box_medium.reg", # CII and CO (3-2) footprint, aligned in equatorial (so there will be NaN gaps)
+    'blueclump': 'm16_cutout_box_blueshifted_clump.reg', # The IRAC clump that shows up in CII from 6-11 km/s
 }
 vlim_memo = { # hash things somehow and put them here
     '8um': (40, 320), 'irac4': (40, 320),
 
-    # 'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 15)]),
+    # 'cii.levels': np.concatenate([np.arange(2.5, 61, 5), np.arange(65, 126, 20)]),
     'cii.levels': np.concatenate([np.arange(1.5, 61, 3), np.arange(65, 126, 15)]),
 
-    'cii.generic': (0, 10), #25 some, 65 is better for most, 14 good for some
-    'cii-30.levels': np.arange(0.2, 10, 0.8), # this cii map is diluted, so lower emission,
-    'cii-30.generic': (0, 1), # 10 is generally good
+    'cii.generic': (0, 25), #25 some, 65 is better for most, 14 or 10 good for some
+    # 'cii-30.levels': np.arange(0.2, 10, 0.8), # this cii map is diluted, so lower emission,
+    'cii-30.levels': np.arange(0.5, 20, 2), # for short intervals, high emission
+    'cii-30.generic': (0, 20), # 10 is generally good, 1 can be good for very low emission
     '12co32.levels': np.arange(2.5, 51, 5), '12co32.generic': (0, 25), # or 40
-    '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 18),
+    '13co32.levels': np.arange(1, 27, 2.5), '13co32.generic': (0, 7),
     'rrl.levels': np.arange(3, 30, 6), # RRLs should be "sliced" into a 1 km/s channel
     '90cm.levels': np.arange(0, 0.61, 0.06), '850um': (0, 0.5), '850um.levels': np.concatenate([np.arange(.15, 2.1, 0.3), np.arange(3, 6, 1)]), '850um.generic': (0.15, 2),
 
     # '13co10.levels': np.arange(0.25, 5, 0.5), '13co10.generic': (0, 4), # these are good for large velocity intervals
-    '13co10.levels': np.arange(1, 22, 2), '13co10.generic': (0, 20), # small velocity intervals (like 1 km/s)
+    '13co10.levels': np.arange(1, 22, 2),
+    # '13co10.levels': np.arange(2, 22, 4),
+    '13co10.generic': (0, 8), # small velocity intervals (like 1 km/s)
 
     '12co10.levels': np.arange(2.5, 26, 2.5), # 5,55,5 good for most
     '12co10.generic': (0, 20), # 0,40 good for most
@@ -163,7 +172,10 @@ default_reg_filename_list = [ # commonly used region filenames
     "catalogs/m16_across_pillars_points_along_path.reg", "catalogs/spire_up_points_along_path.reg",
     "catalogs/m16_across_points_along_path.reg",
 ]
-onesigmas = {'12co10-pmo': 0.415, '13co10-pmo': 0.200, 'c18o10-pmo': 0.202}
+onesigmas = {
+    '12co10-pmo': 0.415, '13co10-pmo': 0.200, 'c18o10-pmo': 0.202,
+    '12co32-pmo': 0.07, '13co32-pmo': 0.09, # checked 2023-10-19 by eye
+}
 
 def vlim_hash(data_stub, velocity_limits=None, generic=False):
     """
@@ -355,6 +367,10 @@ def get_2d_map(data_stub, velocity_limits=None, average_Tmb=False, data_memo=Non
             return img, info_dict
         # Not memoized, continue loading, need to make moment
         cube_obj = cube_utils.CubeData(data_filename).convert_to_K().convert_to_kms()
+        # Put filepath info in info_dict just in case
+        info_dict['original_cube_basename'] = cube_obj.basename
+        info_dict['original_cube_full_path'] = cube_obj.full_path
+        info_dict['original_cube_directory'] = cube_obj.directory
         if velocity_limits is not None:
             cube = cube_obj.data.spectral_slab(*velocity_limits)
         else:
@@ -390,6 +406,12 @@ def trim_values_to_vlims(data, vmin=None, vmax=None):
         data[data > vmax] = vmax
     return data
 
+def get_onesigma(data_stub):
+    if data_stub in onesigmas:
+        return onesigmas[data_stub]
+    else:
+        return cube_utils.onesigmas[data_stub]
+
 def get_cutout_box_filename(cutout_box_stub):
     """
     May 9, 2023
@@ -397,7 +419,6 @@ def get_cutout_box_filename(cutout_box_stub):
     Returns the absolute file path.
     """
     return catalog.utils.search_for_file("catalogs/" + cutout_box_filenames[cutout_box_stub])
-
 
 def get_pv_and_regions(reg_filename_or_idx):
     """
@@ -508,7 +529,7 @@ def find_co10_noise():
     plt.show()
 
 
-def co_column_manage_inputs():
+def co_column_manage_inputs(line='10', velocity_limits=None, cutout_reg_stub=None):
     """
     May 16, 2023
     Wrapper function for the more general function below.
@@ -519,21 +540,29 @@ def co_column_manage_inputs():
     The only user input is whether to use 1-0 or 3-2.
     Can consider adding C18O 1-0 later.
     And write in the capability (to be refined later) to use specific velocity limits.
+    :param line: str CO transition descriptor. Should be the two J levels, in
+        decreasing order. J=1-0 would be specified with the string "10",
+        J=3-2 with "32", and so on.
+        The transition must be supported by the COColumnDensity class.
+    :param velocity_limits: tuple(Quantity, Quantity) low, high velocity limits.
+        Quantities must be velocities, like km/s.
+    :param cutout_reg_stub: (optional) str label for a defined cutout box.
+        If given, a spatial cutout will be made of the integrated intensity
+        prior to calculation of the column density.
     """
-    line = '10'
     if line == '32':
-        thick_cube_stub = '12co32'
-        thin_cube_stub = '13co32'
-        thick_channel_uncertainty = cube_utils.onesigmas[thick_cube_stub] * u.K
-        thin_channel_uncertainty = cube_utils.onesigmas[thin_cube_stub] * u.K
+        thick_cube_stub = '12co32-pmo'
+        thin_cube_stub = '13co32-pmo'
+        thick_channel_uncertainty = get_onesigma(thick_cube_stub) * u.K
+        thin_channel_uncertainty = get_onesigma(thin_cube_stub) * u.K
     elif line == '10':
-        thick_cube_stub = '12co10'
-        thin_cube_stub = '13co10'
-        thick_channel_uncertainty = onesigmas[thick_cube_stub] * u.K
-        thin_channel_uncertainty = onesigmas[thin_cube_stub] * u.K
+        # Could add in support for Nobeyama data too, if we think it's useful
+        thick_cube_stub = '12co10-pmo'
+        thin_cube_stub = '13co10-pmo'
+        thick_channel_uncertainty = get_onesigma(thick_cube_stub) * u.K
+        thin_channel_uncertainty = get_onesigma(thin_cube_stub) * u.K
 
     # Placeholder for velocity limits argument
-    velocity_limits = None
     # Expose the if logic as the top layer, since we only need to check once!
     if velocity_limits is None:
         def _apply_velocity_limits(cube):
@@ -544,12 +573,19 @@ def co_column_manage_inputs():
 
     # Load 12 (optically thick) and 13 or 18 (optically thin) maps.
     # Get excitation temperature from optically thick cube
+    """
+    Potential edit: should we be applying the velocity interval to the thick cube? Kind of depends on whether we think excitation conditions are the same, or if the lines are separated and so forth.
+    """
     thick_cube_fn = get_map_filename(thick_cube_stub)
     thick_cube_obj = cube_utils.CubeData(thick_cube_fn)
     thick_cube = _apply_velocity_limits(thick_cube_obj.data)
+    thick_cube_wcs = thick_cube_obj.wcs_flat
     # Save this in final cube
     peak_temperature = thick_cube.max(axis=0).to(u.K)
     del thick_cube_obj, thick_cube
+
+    # Trim peak temperature to be >3 K, avoid no-emission regions
+    peak_temperature[peak_temperature < 6*u.K] = np.nan*peak_temperature.unit
 
     # Get integrated optically thin emission
     thin_cube_fn = get_map_filename(thin_cube_stub)
@@ -558,24 +594,41 @@ def co_column_manage_inputs():
     # Grab a couple other things from the CubeData object
     beam = thin_cube_obj.data.beam
     save_path = os.path.dirname(thin_cube_obj.full_path)
-    # Todo: make a cleaner moment image by trimming out the emission-free parts
-    # Save this in final cube
-    mom0 = thin_cube.moment0()
+    # Make a cleaner moment image by trimming out the emission-free parts
+    # Part 1: trim the full cube (full spectra)
+    thin_cube_trimmed = thin_cube.with_mask(thin_cube > (thin_channel_uncertainty*3))
+    mom0 = thin_cube_trimmed.moment0()
     # Noise
     cube_dv = np.abs(np.diff(thin_cube.spectral_axis[:2]))[0].to(kms)
     n_channels = thin_cube.shape[0]
     moment0_noise = thin_channel_uncertainty * cube_dv * np.sqrt(n_channels)
+    # Part 2: Trim moment 0 again, this time on the integrated intensity uncertainty
+    mom0[mom0 < 1*moment0_noise] = np.nan*moment0_noise.unit
+    # Save the moment 0 in final cube
     del thin_cube_obj, thin_cube
+    # Apply region cutout if necessary
+    if cutout_reg_stub is not None:
+        cutout = misc_utils.cutout2d_from_region(mom0.to(u.K*kms).to_value(), mom0.wcs, get_cutout_box_filename(cutout_reg_stub), align_with_frame='icrs')
+        thin_mom0 = cutout.data * u.K*kms
+        out_wcs = cutout.wcs
+    else:
+        thin_mom0 = mom0
+        out_wcs = mom0.wcs
 
     # plt.imshow(mom0.to(u.K*kms).to_value(), origin='lower')
     # plt.show()
 
     col_dens_calculator = COColumnDensity(thin_cube_stub)
-    col_dens_calculator.set_data(peak_temperature, mom0.to(u.K*kms))
+    col_dens_calculator.set_data((peak_temperature, thick_cube_wcs), (thin_mom0.to(u.K*kms), out_wcs))
+    if False:
+        ff = 0.5
+        col_dens_calculator.set_filling_factor(ff)
+    else:
+        ff = None
     col_dens_calculator.set_uncertainty(thick_channel_uncertainty, moment0_noise)
     col_dens_calculator.set_abundance_ratios(ratio_12co_to_13co, ratio_12co_to_H2)
     col_dens_calculator.calculate_column_density()
-    col_dens_calculator.calculate_mass_per_pixel(mom0.wcs, los_distance=los_distance_M16, e_los_distance=err_los_distance_M16, thin_line_beam=beam)
+    col_dens_calculator.calculate_mass_per_pixel(out_wcs, los_distance=los_distance_M16, e_los_distance=err_los_distance_M16, thin_line_beam=beam)
 
     # plt.subplot(121)
     # plt.imshow(col_dens_calculator.H2_column_density.to_value(), origin='lower')
@@ -584,13 +637,16 @@ def co_column_manage_inputs():
     # plt.show()
 
     """ Write results to FITS """
-    savename = os.path.join(save_path, f"column_density_{thin_cube_stub}.fits")
+    cutout_reg_filename_stub = "_"+cutout_reg_stub if cutout_reg_stub is not None else ""
+    velocity_stub = "_"+make_simple_vel_stub(velocity_limits) if velocity_limits is not None else ""
+    ff_stub = f"{ff:.1f}" if ff is not None else ""
+    savename = os.path.join(save_path, f"column_density_v3_ff{ff_stub}_{thin_cube_stub}{cutout_reg_filename_stub}{velocity_stub}.fits")
 
     header_pairs = col_dens_calculator.create_header_comments()
 
     def make_and_fill_header():
         # fill header with stuff, make it from WCS
-        hdr = mom0.wcs.to_header()
+        hdr = out_wcs.to_header()
         for k, v in header_pairs:
             hdr[k] = v
         return hdr
@@ -608,6 +664,8 @@ def co_column_manage_inputs():
         ('err_13COcoldens', col_dens_calculator.e_thin_line_column_density),
         ('mass', col_dens_calculator.mass_per_pixel, mass_msg),
         ('err_mass', col_dens_calculator.e_mass_per_pixel, mass_msg),
+        ('Tex', col_dens_calculator.Tex, f"Excitation temperature - err {thick_channel_uncertainty:.3f}"),
+        ('13COmom0', thin_mom0.to(u.K*kms), f"13CO Integrated intensity - err {moment0_noise:.3f}")
     ]
 
     # Going to try just copying the header, I think it's fine
@@ -659,10 +717,13 @@ class COColumnDensity:
         # Looks like B_0 is constant to the molecule, and does not change with transtion
         _constants = {
             '13co10': (55101.01, 5.28880, 0.11046, 110.20135400, 1),
-            '13co32': (55101.01, ), # see 2023-09-11 notes, still re-researching this
+            '13co32': (55101.01, 31.73179, 0.11046, 330.587965300, 3), # see 2023-09-11 notes, still re-researching this
             # 'c18o10': (),
         }
-        if optically_thin_line_stub not in '13co10':
+        # Take out anything on the other side of a hyphen and ignore it
+        if '-' in optically_thin_line_stub:
+            optically_thin_line_stub = optically_thin_line_stub.split('-')[0]
+        if optically_thin_line_stub not in _constants:
             raise RuntimeError(f"Line {optically_thin_line_stub} not supported.")
         B0, Eu, mu, nu, self.Ju = _constants[optically_thin_line_stub]
         self.B0 = B0 * u.MHz
@@ -670,8 +731,10 @@ class COColumnDensity:
         self.mu = mu * u.Debye
         # relying on the units to correct bugs from mixing up "mu" and "nu"
         self.nu = nu * u.GHz
+        # Default filling factor is 1.0
+        self.ff = 1.0 # can set a different one in .set_filling_factor()
 
-    def set_data(self, peak_temperature, integrated_intensity):
+    def set_data(self, peak_temperature, integrated_intensity, peak_thin_temperature=None):
         """
         Provide data to the COColumnDensity instance.
         Both inputs should be Quantity arrays of matching dimension and share
@@ -680,11 +743,63 @@ class COColumnDensity:
         just needs to be the same for both.
         :param peak_temperature: Quantity, peak temperature of optically thick
             line to be used as excitation temperature Tex
+            Can also be tuple(Quantity, WCS) where the WCS facilitates
+            reprojection if the peak_temperature grid does not align perfectly
+            with the integrated intensity grid. peak_temperature will be
+            reprojected to integrated intensity.
         :param integrated_intensity: Quantity, integrated intensity of optically
             thin line to be used for column density calculation
+            If WCS was given for peak_temperature, then this should also be a
+            tuple(Quantity, WCS). This integrated intensity WCS will be the
+            output map projection.
+        :param peak_thin_temperature: (optional) Quantity, peak temperature of
+            optically thin line to be used for calculating more precise
+            optical depth and excitation temperature
+            No WCS is necessary; WCS must be the same for integrated_intensity
+            since they are from the same line map
         """
-        self.peak_temperature = peak_temperature
-        self.integrated_intensity = integrated_intensity
+        if isinstance(peak_temperature, tuple):
+            # WCS given; check shape and reproject the maps onto each other
+            peak_T, peak_T_wcs = peak_temperature
+            int_intens, int_intens_wcs = integrated_intensity
+            # WCS set to the integrated intensity WCS
+            self.wcs = int_intens_wcs
+            # Check if reprojection needed; use shapes as a proxy, even though this isn't totally infallible (it's fine for these maps)
+            if peak_T.shape != int_intens.shape:
+                # Reproject peak_T to integrated intensity grid
+                peak_T_reproj, fp = reproject_interp((peak_T.to_value(), peak_T_wcs), int_intens_wcs, shape_out=int_intens.shape, return_footprint=True)
+                # Find anywhere where the footprint is 0, i.e. places where int_intens has coverage but peak_T doesn't
+                not_overlapping_pixels = fp==0
+                if np.any(not_overlapping_pixels):
+                    # Not perfect overlap
+                    # Just assign NaNs to the fp==0 stuff for now
+                    int_intens[not_overlapping_pixels] = np.nan
+                self.peak_temperature = peak_T_reproj * peak_T.unit
+                self.integrated_intensity = int_intens
+                assert hasattr(self.peak_temperature, "unit")
+                assert hasattr(self.integrated_intensity, "unit")
+            else:
+                # No reprojection
+                self.peak_temperature = peak_T
+                self.integrated_intensity = int_intens
+        else:
+            assert not isinstance(integrated_intensity, tuple)
+            self.wcs = None
+            self.peak_temperature = peak_temperature
+            self.integrated_intensity = integrated_intensity
+
+        self.peak_thin_temperature = peak_thin_temperature
+        if self.peak_thin_temperature is not None:
+            assert self.peak_thin_temperature.shape == self.integrated_intensity.shape
+            print("Warning: The optical depth estimate is not yet implemented. See some of the 2023-10-18 notes on root finders and other possible solutions.")
+
+    def set_filling_factor(self, ff):
+        """
+        Set a beam filling factor. Measured beam temperatures will be divided by
+        this.
+        """
+        assert 0 < ff <= 1
+        self.ff = ff
 
     def set_uncertainty(self, e_pt, e_ii):
         """
@@ -721,6 +836,22 @@ class COColumnDensity:
         self.ratio_thick_to_thin = thick_to_thin
         self.ratio_co_to_h2 = co_to_h2
 
+    def _calculate_Tex(self, t_b):
+        """
+        Calculate Tex from peak TB without the RJ approximation
+        RJ approximation h*nu << kT implies TB = Tex. Not applicable for
+        CO 3-2, and only somewhat for CO 1-0. Better to correct properly.
+        See the CO column density notes.
+
+        Equation to implement is the basic definition of brightness temperature
+        T_ex = (h*nu / k) * [ln{ h*nu/(k*TB) + 1 }]^-1
+
+        :param t_b: Quantity, measured brightness temperature T_B
+        :returns: Quantity excitation temperature T_ex
+        """
+        hnu_kB = const.h * self.nu / const.k_B
+        return (hnu_kB / np.log((hnu_kB/t_b) + 1)).to(u.K)
+
     def _calculate_thin_line_column_density(self):
         """
         Calculate the column densities and propagate uncertainty.
@@ -728,8 +859,8 @@ class COColumnDensity:
         """
         # Let Tex be equal to peak MB temperature in the opt. thick line.
         # This is an assumption, so I'll keep them as separate variables.
-        self.Tex = self.peak_temperature
-        self.e_Tex = self.e_pt
+        self.Tex = self._calculate_Tex(self.peak_temperature/self.ff)
+        self.e_Tex = self.e_pt # # TODO: need to error propagate this!! I'll leave it as it is now because it won't be a ton of error.
         # Rotational partition function Qrot
         Qrot = (const.k_B * self.Tex / (const.h * self.B0)).decompose() + (1./3)
         e_Qrot = (const.k_B * self.e_Tex / (const.h * self.B0)).decompose() # constant falls of in derivative
@@ -744,7 +875,7 @@ class COColumnDensity:
         prefactor_denominator = 2 * np.pi**2 * self.nu * S * self.mu**2
         prefactor = prefactor_numerator / prefactor_denominator
         # All together
-        self.thin_line_column_density = (prefactor * (Qrot/g) * exp_term * self.integrated_intensity).to(u.cm**-2)
+        self.thin_line_column_density = (prefactor * (Qrot/g) * exp_term * self.integrated_intensity/self.ff).to(u.cm**-2)
         # Uncertainty! d(cxyz) = cyz dx + cxz dy + cxy dz. But you gotta do quadrature sum instead of regular sum
         # Collected all constants (prefactor_numerator/prefactor_denominator and 1/g) at the end, outside the derivatives and quad sum
         helper_1 = (Qrot * exp_term * self.e_ii)**2
@@ -855,6 +986,375 @@ class COColumnDensity:
         header_kws = [('DATE', date_text), ('CREATOR', creator_text)]
         header_kws += [('HISTORY', phrase) for phrase in header_phrases]
         return header_kws
+
+
+def get_co_spectra_for_radex():
+    """
+    October 13, 2023 (Friday the 13th I just realized)
+    Grab some CO spectra for spectralradex (working in spectralradex_column_fit.py)
+    """
+    # selected_coord = SkyCoord("18:18:14.9371 -13:34:26.988", unit=(u.hourangle, u.deg), frame='fk5') # first test coord, sort of bright west side of N19
+    selected_coord = SkyCoord("18:18:44.6122 -13:33:40.152", unit=(u.hourangle, u.deg), frame='fk5') # second test coord, smooth part of east N19 where Tex is same for CO 1-0 and 3-2
+
+    line_stub = "13co32-pmo"
+    cube_co = cube_utils.CubeData(get_map_filename(line_stub)).convert_to_K().convert_to_kms()
+    x, y = cube_co.wcs_flat.world_to_pixel(selected_coord)
+    plt.subplot(121)
+    vel_lims = (11*kms, 21*kms)
+    plt.imshow(cube_co.data.spectral_slab(*vel_lims).moment0().to_value(), origin='lower')
+    plt.plot([x], [y], marker='o', color='red')
+    plt.title(make_vel_stub(vel_lims))
+    plt.subplot(122)
+    # print("CUBE SHAPE", cube_co.data.shape)
+    spectrum = cube_co.data[:, int(round(float(y))), int(round(float(x)))]
+    plt.plot(cube_co.data.spectral_axis.to_value(), spectrum.to_value())
+
+    # Use a few different methods of finding half-max of the line centered near 20 km/s
+    # Trim the spectrum at <21 (anything >21 is not N19; can see that in a 21-23 moment)
+    trim = cube_co.data.spectral_axis < 21*kms
+    trimmed_x_axis = cube_co.data.spectral_axis.to_value()[trim]
+    trimmed_spectrum = spectrum[trim]
+
+    # Check if increasing x axis (13CO sometimes is flipped)
+    # Flip if so; UnivariateSpline needs x axis increasing
+    if trimmed_x_axis[0] > trimmed_x_axis[-1]:
+        trimmed_x_axis = trimmed_x_axis[::-1]
+        trimmed_spectrum = trimmed_spectrum[::-1]
+
+    plt.axvline(21, color='k', linestyle='--', alpha=0.6)
+    plt.fill_between(trimmed_x_axis, trimmed_spectrum.to_value(), where=(trimmed_spectrum.to_value() > 0), alpha=0.3)
+
+    # Find half-max the simplest way: draw a line
+    T_R_max = np.nanmax(trimmed_spectrum.to(u.K).to_value())
+    peak_vel_max = trimmed_x_axis[trimmed_spectrum.argmax()]
+    plt.axhline(T_R_max/2)
+    # for the point at "18:18:14.9371 -13:34:26.988" in 12co32, half-max looks by-eye to be 18-21 so 3 kms
+    linewidth_eye = 3*kms
+
+    # print(type(spectrum)) ## doesn't seem to work like cube[:, y, x].linewidth_fwhm(), since OneDSpectrum doesn't have linewidth methods
+    linewidth_sc_fwhm = cube_co.data.spectral_slab(11*kms, 21*kms).linewidth_fwhm()[int(round(float(y))), int(round(float(x)))]
+    # linewidth_fwhm gives 2.7 km/s for that test point, pretty close to 3 by eye
+
+    # import down here since I don't need this for other functions (and I only run ~1 function per script execution with these files)
+    from scipy.interpolate import UnivariateSpline
+
+    spline_fit = UnivariateSpline(trimmed_x_axis, trimmed_spectrum.to_value() - T_R_max/2, s=trimmed_x_axis.size//2) # can try len or len//2, but 0 is probbaly not ideal
+    plt.plot(trimmed_x_axis, spline_fit(trimmed_x_axis) + T_R_max/2, linestyle=':', label='Spline')
+    # print(spline_fit.roots()) # if the spectrum doesn't actually hit half-max (like this one, background component), only 1 root; but, that root is right!
+
+    # Fit with astropy.modeling, which is already imported into cps2 (models and fitting)
+    gauss_0 = cps2.models.Gaussian1D(amplitude=T_R_max, mean=peak_vel_max, stddev=linewidth_sc_fwhm.to_value()/2.355,
+        bounds={'mean': (peak_vel_max-(linewidth_sc_fwhm.to_value()/2), peak_vel_max+(linewidth_sc_fwhm.to_value()/2)),
+                'amplitude': (T_R_max*0.6, T_R_max*1.1)})
+    fitter = cps2.fitting.LevMarLSQFitter()
+    gauss_fit = fitter(gauss_0, trimmed_x_axis, trimmed_spectrum.to_value())
+    analog_results = [peak_vel_max, T_R_max, linewidth_sc_fwhm.to_value()]
+    analog_colnames = ["Peak V", "Peak T", "FWHM sc"]
+    gauss_results = [gauss_fit.mean.value, gauss_fit.amplitude.value, gauss_fit.stddev.value*2.355]
+    gauss_colnames = ["Mean", "Amplitude", "FWHM G"]
+    results = list(itertools.chain.from_iterable(zip(analog_results, gauss_results)))
+    colnames = list(itertools.chain.from_iterable(zip(analog_colnames, gauss_colnames)))
+    # results = analog_results + gauss_results ## alternate column ordering
+
+    results_str = ["", line_stub] + [f"{x:.2f}" for x in results] + [""] # empty string elements so that .join() adds at beginning and end
+    colnames = ["", "Line Stub"] + colnames + [""]
+
+    print(" | ".join(colnames).strip())
+    print("|".join(("---" if s else s) for s in colnames))
+    print(" | ".join(results_str).strip())
+    # print("peak vel", peak_vel_max)
+    # print("peak T", T_R_max)
+    # print("SC FWHM", linewidth_sc_fwhm)
+    # print("A", gauss_fit.amplitude.value)
+    # print("M", gauss_fit.mean.value)
+    # print("FWHM", gauss_fit.stddev*2.355)
+
+    plt.plot(trimmed_x_axis, gauss_fit(trimmed_x_axis), linestyle=':', label='Gauss')
+
+    plt.legend()
+
+    plt.show()
+
+
+"""
+CII column density
+"""
+
+def calculate_cii_column_density(filling_factor=1.0, velocity_limits=None, cutout_reg_stub=None, mask_cutoff=6*u.K):
+    """
+    October 5, 2023
+    Copying things from m16_deepdive.calculate_cii_column_density
+    That function says "Following Okada 2015 Sec 3.3, pg 10
+    Several equations and some rules on how to assume Tex"
+    I will also include velocity and cutout region arguments
+    :param filling_factor: float (0-1] assumed beam filling factor of cii emission.
+        1.0 (default) is generally okay, implies fully-filled beam.
+    :param velocity_limits: tuple(Quantity, Quantity) low, high velocity limits.
+        Quantities must be velocities, like km/s.
+    :param cutout_reg_stub: (optional) str label for a defined cutout box.
+        If given, a spatial cutout will be made of the integrated intensity
+        prior to calculation of the column density.
+        !!!cutout_reg_stub not yet implemented!!!
+    :param mask_cutoff: float or Quantity (Kelvins), value below which CII
+        data should be masked out (set to 0 K).
+        A float value will be interpreted as a multiplier of the channel noise,
+        NOT as a value in K. A Quantity in K will be interpreted directly,
+        unrelated to the noise.
+        To avoid masking, set mask_cutoff=0
+        Default is 6 K
+    """
+    # Load in file
+    # Use the highest resolution full CII map by default. Probably no reason to go into the convolved maps for column density
+    cii_cube_fn = get_map_filename('cii')
+    # Grab the directory and basename from the CubeData object before trimming down to just SpectralCube
+    cii_cube = cube_utils.CubeData(cii_cube_fn)
+    savedir = cii_cube.directory
+    cii_cube_fn_basename = cii_cube.basename
+    cii_cube = cii_cube.data
+    # Apply velocity limits
+    if velocity_limits is not None:
+        cii_cube = cii_cube.spectral_slab(*velocity_limits)
+    # Apply region cutout; reuse the slices on the entire cube for efficiency
+    if cutout_reg_stub is not None:
+        cutout = misc_utils.cutout2d_from_region(cii_cube[0, :, :].to_value(), cii_cube[0, :, :].wcs, get_cutout_box_filename("N19-small"))
+        cii_cube = cii_cube[(slice(None), *cutout.slices_original)]
+        del cutout # finished with this now
+
+    # Get channel noise
+    channel_noise = cube_utils.onesigmas['cii'] * u.K
+    # Check mask_cutoff argument
+    if not hasattr(mask_cutoff, 'unit'):
+        # If no unit, must be a float or other numerical type. Assume multiplier of 1 sigma noise
+        mask_cutoff = mask_cutoff * channel_noise
+    # Apply mask using mask_cutoff
+    print(f"Masking below {mask_cutoff:.2f}")
+    cii_cube = cii_cube.with_mask(cii_cube > mask_cutoff).with_fill_value(0*u.K)
+    # Get spectral axis in THz units, since equations use frequency
+    rest_freq = cii_cube.header['RESTFREQ'] * u.Hz
+    freq_axis = cii_cube.spectral_axis.to(u.THz, equivalencies=cii_cube.velocity_convention(rest_freq))
+    # Set up some constants
+    hnu_kB = const.h * rest_freq / const.k_B
+    print(f"T_0 = E_u / k_B = {hnu_kB.decompose():.2f}")
+    g0, g1 = 2, 4 # lower, upper
+    A10 = 10**(-5.63437) / u.s # Einstein A
+
+    # peak T
+    peak_T_map = cii_cube.max(axis=0).quantity
+    """
+    See 2023-10-05 notes. tau <= 1.3 for Pillars, and turns out that the 13CII
+    detection towards the IRAS source in the Bright Northern Ridge (fka RCW 165)
+    also gives tau ~ 1.3, with 80 K 12CII and 2 K 13CII.
+    """
+    assumed_optical_depth = 1.3
+
+    # Now find excitation temperature
+    Tex_map = (hnu_kB / np.log((1 - np.exp(-assumed_optical_depth))*(filling_factor * hnu_kB / peak_T_map) + 1)).decompose()
+    original_Tex_map = Tex_map.copy()
+    # fixed_Tex_val = np.nanmax(Tex_map) # ~150 for entire map
+    # Tex_map[:] = fixed_Tex_val
+    """
+    The max Tex is like 150, towards fka RCW 165 (IRAS source) where brightest CII emission is.
+    I think this is a little too high for the general area, and I think it's likely that that
+    ring has special excitation conditions, namely a higher density given that CO column
+    densities are high there too.
+    I think I might pick a more moderate 120 K, which is a little higher than I
+    used in the last paper, but I'll have to have some caveat in the paper
+    that it's all guesswork and this is the best we can do without a widespread
+    13CII detection.
+
+    What I'll do exactly is make Tex[Tex < 120] = 120 and leave all other bits alone
+    so that they can vary
+    """
+    Tex_cutoff = 120*u.K
+    map_max_Tex = np.nanmax(Tex_map)
+    if map_max_Tex > Tex_cutoff:
+        print(f"Max Tex in map {map_max_Tex:.2f}, higher than {Tex_cutoff}. Using {Tex_cutoff}")
+        fixed_Tex_val = 120*u.K
+    else:
+        print(f"Max Tex in map {map_max_Tex:.2f}, using that.")
+        fixed_Tex_val = map_max_Tex
+    Tex_map[Tex_map < fixed_Tex_val] = fixed_Tex_val
+
+    # plt.subplot(121)
+    # plt.imshow(peak_T_map.to_value(), origin='lower')
+    # plt.subplot(122)
+    # plt.imshow(Tex_map.to_value(), origin='lower', vmin=120, vmax=160)
+    # print(fixed_Tex_val)
+    # plt.show()
+
+    """
+    Now solve! Copied directly from m16_deepdive.calculate_cii_column_density
+    """
+    # Error on Tex
+    # d/dx (a / log(b/x + 1)) = ab / (x(b+x)log*2((b+x)/x))
+    helper_a = hnu_kB
+    helper_b = (1 - np.exp(-assumed_optical_depth))*filling_factor*hnu_kB
+    err_Tex_map = (channel_noise * (helper_a * helper_b) / (Tex_map * (helper_b + Tex_map) * np.log((helper_b/Tex_map) + 1)**2)).decompose()
+
+    #########################
+    # dont need to change much below this
+    ####################
+
+    # This is how Tex will often be used, and it needs the extra spectral dimension at axis=0
+    hnukBTex = hnu_kB/Tex_map[np.newaxis, :]
+    err_hnukBTex = (err_Tex_map * hnu_kB / Tex_map**2)[np.newaxis, :]
+
+    exp_hnukBTex = np.exp(hnukBTex)
+    err_exp_hnukBTex = err_hnukBTex * exp_hnukBTex # d(e^(a/x)) = (a dx / x^2) e^(a/x)
+
+    # partition function?
+    Z = g0 + g1*np.exp(-hnukBTex) # hnu_kB = Eu/kB since ground is 0 energy (might also be ok if not, but it's definitely ok in this case)
+    err_Z = g1 * err_hnukBTex * np.exp(-hnukBTex)
+
+    # optical depth in a given channel
+    channel_tau = -1*np.log(1 - ((cii_cube.filled_data[:] / (filling_factor * hnu_kB)) * (exp_hnukBTex - 1))) # 3d cube
+    print(channel_tau.unit)
+
+    # Uncertainty on optical depth in channel
+    helper_a = (exp_hnukBTex - 1) / (filling_factor * hnu_kB)
+    err_channel_tau_from_Tb = channel_noise * helper_a / (1 - helper_a*cii_cube.filled_data[:])
+    del helper_a
+    # reset the definition of "a"! not the same!
+    helper_a = (cii_cube.filled_data[:] / (filling_factor * hnu_kB))
+    helper_numerator = helper_a * err_exp_hnukBTex
+    helper_denominator = 1. - helper_a*(exp_hnukBTex - 1)
+    err_channel_tau_from_Tex = helper_numerator / helper_denominator
+    # quick analysis shows approximately equal contributions from each source of uncertainty
+    err_channel_tau = np.sqrt(err_channel_tau_from_Tex**2 + err_channel_tau_from_Tb**2).decompose()
+    # relatively small percentage of channel_tau values
+
+
+    # Column density in a given channel
+    column_constants = (8*np.pi * (rest_freq / const.c)**2) / (g1*A10)
+    channel_column = (
+        column_constants * channel_tau * Z * (exp_hnukBTex / (1 - np.exp(-hnukBTex)))
+    ).decompose()
+
+    # Uncertainty on column density in channel
+    helper_1 = (err_channel_tau * Z * (exp_hnukBTex / (1 - np.exp(-hnukBTex))))**2
+    helper_2 = (channel_tau * err_Z * (exp_hnukBTex / (1 - np.exp(-hnukBTex))))**2
+    helper_3 = (channel_tau * Z * (err_exp_hnukBTex * exp_hnukBTex * (exp_hnukBTex - 2) / (exp_hnukBTex - 1)**2.))**2
+    # Quick analysis shows channel_tau error dominates: factor of 40 over Z err, but only factor of 4 over Tex err
+    err_channel_column = (np.sqrt(helper_1 + helper_2 + helper_3) * column_constants).decompose()
+
+
+    integrated_column_map = np.trapz(channel_column[::-1, :, :], x=freq_axis[::-1], axis=0).to(u.cm**-2)
+    # Let's just do quadrature sum * dnu for the integral uncertainty propagation
+    dnu = np.median(np.diff(freq_axis[::-1]))
+    err_integrated_column_map = (np.sqrt(np.sum(err_channel_column**2, axis=0))*dnu).to(u.cm**-2)
+    # looking like a 10% error
+
+
+    integrated_H_column_map = integrated_column_map / Cp_H_ratio
+    err_integrated_H_column_map = err_integrated_column_map / Cp_H_ratio
+
+    particle_mass = Hmass * mean_molecular_weight_neutral
+    integrated_mass_column_map = integrated_H_column_map * particle_mass
+    err_integrated_mass_column_map = err_integrated_H_column_map * particle_mass
+
+    pixel_scale = misc_utils.get_pixel_scale(cii_cube[0, :, :].wcs)
+    pixel_area = (pixel_scale * (los_distance_M16/u.radian))**2
+    err_pixel_area = 2 * (pixel_scale/u.radian)**2 * los_distance_M16 * err_los_distance_M16
+
+    integrated_mass_pixel_column_map = (integrated_mass_column_map * pixel_area).to(u.solMass)
+    # Include error from column density and from LOS distance
+    err_integrated_mass_pixel_column_map_raw = np.sqrt((err_integrated_mass_column_map * pixel_area)**2 + (integrated_mass_column_map * err_pixel_area)**2).to(u.solMass)
+    pixels_per_beam = (cii_cube.beam.sr / pixel_scale**2).decompose()
+    # sqrt(oversample_factor) to correct for correlated pixels
+    err_integrated_mass_pixel_column_map = np.sqrt(pixels_per_beam) * err_integrated_mass_pixel_column_map_raw
+
+
+    def make_and_fill_header():
+        # fill header with stuff, make it from WCS
+        hdr = wcs_flat.to_header()
+        hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        hdr['CREATOR'] = f"Ramsey, {__file__}"
+        hdr['HISTORY'] = "Using calculate_cii_column_density.py rewritten for large M16"
+        hdr['HISTORY'] = f"Original CII map {cii_cube_fn_basename}"
+        hdr['HISTORY'] = f"Fixed Tex {fixed_Tex_val:.2f} max Tex calculated using tau={assumed_optical_depth}"
+        hdr['HISTORY'] = "if Tex=120, left Tex>120 (up to 150) alone, only raised Tex>120 to 120"
+        hdr['HISTORY'] = f"C+/H = {Cp_H_ratio:.2E}"
+        hdr['HISTORY'] = f"Hmass = {Hmass:.3E}"
+        hdr['HISTORY'] = f"mean molecular weight = {mean_molecular_weight_neutral:.2f}"
+        hdr['HISTORY'] = f"adopted particle mass = {particle_mass:.2E}"
+        hdr['HISTORY'] = f"pixel scale = {pixel_scale.to(u.arcsec):.3E}"
+        hdr['HISTORY'] = f"pixel area = {pixel_area.to(u.pc**2):.3E}"
+        hdr['HISTORY'] = f"sqrt(pixels/beam) oversample = {np.sqrt(pixels_per_beam):.2f}"
+        hdr['HISTORY'] = f"filling factor = {filling_factor:.2f}"
+        hdr['HISTORY'] = f"Masked below {mask_cutoff:.2f}"
+        if velocity_limits is not None:
+            hdr['HISTORY'] = f"Integrated within {make_simple_vel_stub(velocity_limits)}"
+
+        return hdr
+
+    phdu = fits.PrimaryHDU()
+    wcs_flat = cii_cube[0, :, :].wcs
+
+    header1 = make_and_fill_header()
+    header1['EXTNAME'] = "C+coldens"
+    header1['BUNIT'] = str(integrated_column_map.unit)
+    hdu_NCp = fits.ImageHDU(data=integrated_column_map.to_value(), header=header1)
+
+    header2 = make_and_fill_header()
+    header2['EXTNAME'] = "mass"
+    header2['BUNIT'] = str(integrated_mass_pixel_column_map.unit)
+    header2['COMMENT'] = "mass is per pixel on this image"
+    hdu_mass = fits.ImageHDU(data=integrated_mass_pixel_column_map.to_value(), header=header2)
+
+    header3 = make_and_fill_header()
+    header3['EXTNAME'] = "varyingTex"
+    header3['BUNIT'] = str(original_Tex_map.unit)
+    header3['COMMENT'] = "This is !!NOT!! the Tex used to calculate column density"
+    header3['COMMENT'] = "The fixed Tex (see above) is the max of this image"
+    hdu_Tex = fits.ImageHDU(data=original_Tex_map.to(u.K).to_value(), header=header3)
+
+    header4 = make_and_fill_header()
+    header4['EXTNAME'] = "Hcoldens"
+    header4['BUNIT'] = str(integrated_H_column_map.unit)
+    header4['COMMENT'] = "mass is per pixel on this image"
+    hdu_NH = fits.ImageHDU(data=integrated_H_column_map.to_value(), header=header4)
+
+    pdrt_density = 2e4 * u.cm**-3
+    los_distance_image = (integrated_H_column_map / pdrt_density).to(u.pc)
+
+    header5 = make_and_fill_header()
+    header5['EXTNAME'] = "scale_distance"
+    header5['BUNIT'] = str(los_distance_image.unit)
+    header5['COMMENT'] = f"calculated using PDRT density {pdrt_density:.1E}"
+    hdu_distance = fits.ImageHDU(data=los_distance_image.to_value(), header=header5)
+
+
+    # error maps
+    header6 = make_and_fill_header()
+    header6['EXTNAME'] = "err_C+coldens"
+    header6['BUNIT'] = str(err_integrated_column_map.unit)
+    header6['COMMENT'] = "uncertainty propagated"
+    hdu_eNCp = fits.ImageHDU(data=err_integrated_column_map.to_value(), header=header6)
+
+    header7 = make_and_fill_header()
+    header7['EXTNAME'] = "err_mass"
+    header7['BUNIT'] = str(err_integrated_mass_pixel_column_map.unit)
+    header7['COMMENT'] = "uncertainty propagated"
+    hdu_emass = fits.ImageHDU(data=err_integrated_mass_pixel_column_map.to_value(), header=header7)
+
+    header8 = make_and_fill_header()
+    header8['EXTNAME'] = "err_Hcoldens"
+    header8['BUNIT'] = str(err_integrated_H_column_map.unit)
+    header8['COMMENT'] = "uncertainty propagated"
+    hdu_eNH = fits.ImageHDU(data=err_integrated_H_column_map.to_value(), header=header8)
+
+
+    hdul = fits.HDUList([phdu, hdu_NCp, hdu_NH, hdu_mass, hdu_distance, hdu_Tex,
+        hdu_eNCp, hdu_emass, hdu_eNH])
+
+    velocity_stub = "_"+make_simple_vel_stub(velocity_limits) if velocity_limits is not None else ""
+    cutout_stub = "_"+cutout_reg_stub if cutout_reg_stub is not None else ""
+    savename = cube_utils.os.path.join(savedir, f"Cp_largeM16_coldens_ff{filling_factor:.1f}{velocity_stub}{cutout_stub}.fits")
+    print(savename)
+    hdul.writeto(savename, overwrite=True)
+
+
+
 
 """
 Image creation functions below here
@@ -1268,6 +1768,35 @@ def convolve_cii_to_co32():
     convolved_cube.write(savename, format='fits')
     print("done")
 
+def convolve_32_to_10_pmo():
+    """
+    October 19, 2023
+    Quick convolve CO(3-2) to PMO CO(1-0) (Like 55 arcsec or something)
+    12 and 13 CO 1-0 by PMO reportedly have the exact same beam (unlike 12 and 13 CO 3-2)
+    """
+    reference_cube_fn = get_map_filename('12co10-pmo')
+    reference_cube = cube_utils.CubeData(reference_cube_fn).convert_to_K().data
+    reference_beam = reference_cube.beam
+    del reference_cube # save memory
+    print(f"Convolving to PMO CO 1-0 beam {reference_beam.major.to(u.arcsec):.2f} X {reference_beam.minor.to(u.arcsec):.2f}")
+    print("Confirmed that 13co10-pmo beam is the same.")
+
+    target_cube_fn = get_map_filename('13co32') # 12 and 13 co 32
+    target_cube = cube_utils.CubeData(target_cube_fn).convert_to_K()
+    savename = target_cube.full_path.replace('.fits', '.PMObeam.fits')
+    target_cube = target_cube.data
+    old_beam = target_cube.beam
+    print(f"original beam {old_beam.major.to(u.arcsec):.2f} X {old_beam.minor.to(u.arcsec):.2f}")
+    print("writing to ", savename)
+
+    print("convolving...")
+    convolved_cube = target_cube.convolve_to(reference_beam)
+    convolved_cube.write(savename, format='fits')
+    print("done")
+
+
+
+
 def real_medium_spectra(velocity_index=0):
     """
     May 2, 2023
@@ -1565,8 +2094,9 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, veloci
     # Load in background
     img, img_info = get_2d_map(background_stub, velocity_limits=velocity_limits, average_Tmb=True, data_memo=data_memo)
     # Cutout background (and update WCS)
+    # Set align_with_frame="icrs" so that all data is aligned with RA-Dec, including originally galactic data
     if cutout_reg_stub is not None:
-        img_info['cutout'] = misc_utils.cutout2d_from_region(img, img_info['wcs'], get_cutout_box_filename(cutout_reg_stub))
+        img_info['cutout'] = misc_utils.cutout2d_from_region(img, img_info['wcs'], get_cutout_box_filename(cutout_reg_stub), align_with_frame='icrs')
         img = img_info['cutout'].data
         img_info['wcs'] = img_info['cutout'].wcs
     # Memoize it if it's not already there
@@ -1695,6 +2225,203 @@ def overlay_moment(background='8um', overlay='cii', velocity_limits=None, veloci
     # Some cleanup since things seem to pile up
     plt.close(fig)
 
+def overlay_two_moments(background='8um', overlays=('cii', '12co32'), velocity_limits=None, cutout_reg_stub='N19', reg_filename_or_idx=None, plot_stars=False, **kwargs):
+    """
+    October 24, 2023
+    Mostly same as overlay_moment() but with two overlays.
+    The overlays will be in single colors, not in colormaps. Like my CS/CII/3um image from the pillar paper
+    I'll keep it simple at first so I can churn out an image, but can dress it up later.
+
+    :param background: data stub. If it is not 2D photometry, it must be one of
+        the overlays
+    :param overlays: 2-tuple of data stubs, cubes
+    :param velocity_limits: either a single tuple of (lo, hi) limits (velocity Quantity)
+        or two nested tuples as above; if two nested tuples, then the first applies
+        to the first overlay and so on. Nested tuples like ((lo, hi), (lo, hi))
+    :param cutout_reg_stub: same as usual, will cutout the background and reproject
+        the moment overlays to that.
+    :param kwargs: other kwargs:
+        'levels': a dictionary whose keys are the stubs in overlays and values are
+            arrays of contour levels. OK if not all keys are in this dict or if it contains other keys.
+        'vlims': a dictionary whose keys are background image stubs and values are
+            tuples (vmin, vmax). Either or both vmin, vmax can be None.
+    disabling the other inputs until later if I need them. I'll just copy them from overlay_moment
+    """
+    # Redefine the conveniently-named input keywords
+    background_stub = background
+    overlay_stubs = list(overlays) # must be mutable; edited during saving to add velocity stubs
+    del background, overlays # they will be reused, but I want to be clear here
+    # Parse velocity limits
+    if velocity_limits is None:
+        vel_lims_1 = vel_lims_2 = None
+    else:
+        assert isinstance(velocity_limits, tuple)
+        if isinstance(velocity_limits[0], tuple):
+            # two different limits
+            vel_lims_1, vel_lims_2 = velocity_limits
+        else:
+            # same limits
+            # make sure it's really limits
+            assert velocity_limits[0].to(kms) # will throw error if problem
+            vel_lims_1 = vel_lims_2 = velocity_limits
+    # Reuse argument name, now it will definitely be tuple of two limits
+    velocity_limits = (vel_lims_1, vel_lims_2)
+
+    # Some helper functions
+    def _load_overlay(i):
+        if overlay_stubs[i] is None:
+            # Short circuit if stub is None
+            return None, None
+        # Load
+        overlay, overlay_info = get_2d_map(overlay_stubs[i], velocity_limits=velocity_limits[i], average_Tmb=True)
+        # Reproject
+        try:
+            overlay_regrid = reproject_interp((overlay, overlay_info['wcs']), img_info['wcs'], shape_out=img.shape, return_footprint=False)
+        except Exception as e:
+            print(e)
+            raise RuntimeError("exiting manually, go add in the other debug lines")
+        del overlay
+        return overlay_regrid, overlay_info
+
+    def _get_levels(i):
+        """
+        Get levels from the kwargs, or something else if not specified
+        """
+        line_stub = overlay_stubs[i]
+        kwarg_levels = kwargs.get("levels", {}).get(line_stub, None)
+        if kwarg_levels is not None:
+            return kwarg_levels
+        else:
+            return None #get_levels(line_stub)
+
+    def _get_vlims():
+        """
+        Get image vlims from kwargs, or something else if not specified
+        """
+        kwarg_vlims = kwargs.get("vlims", {}).get(background_stub, None)
+        if kwarg_vlims is not None:
+            vlims = kwarg_vlims
+        else:
+            vlims = (None, None)
+
+        vlims_dict = {}
+        vlims_keys = ['vmin', 'vmax']
+        for vi, v in enumerate(vlims):
+            if v is not None:
+                vlims_dict[vlims_keys[vi]] = v
+        return vlims_dict
+
+
+    # Load in background
+    if background_stub in overlay_stubs:
+        # Background is one of the overlays; find out which
+        background_idx = overlay_stubs.index(background_stub)
+        # Load that one
+        print(velocity_limits[background_idx])
+        img, img_info = get_2d_map(overlay_stubs[background_idx], velocity_limits=velocity_limits[background_idx], average_Tmb=True)
+    else:
+        # 2D photometry background
+        img, img_info = get_2d_map(background_stub, average_Tmb=True)
+        background_idx = None
+    # Cutout background (and update WCS)
+    # Set align_with_frame="icrs" so that all data is aligned with RA-Dec, including originally galactic data
+    if cutout_reg_stub is not None:
+        img_info['cutout'] = misc_utils.cutout2d_from_region(img, img_info['wcs'], get_cutout_box_filename(cutout_reg_stub), align_with_frame='icrs')
+        img = img_info['cutout'].data
+        img_info['wcs'] = img_info['cutout'].wcs
+
+    # Figure
+    figsizes = {'n19': (10, 10), 'med-large': (13, 9), 'med': (10, 9)}
+    fig = plt.figure(figsize=figsizes.get(cutout_reg_stub, (10, 10)))
+    ax = fig.add_subplot(111, projection=img_info['wcs'])
+    # Plot image
+    # Use generic vlims as a backup for specific vlims
+    img_vlim = _get_vlims()
+    if not _get_vlims():
+        img_vlim.update(get_generic_vlim(background_stub))
+        img_vlim.update(get_vlim(img_info['vlim_hash']))
+    im = ax.imshow(img, origin='lower', **img_vlim, cmap='cividis')
+    # Plot contours
+    contour_colors = ('k', 'w')
+    contour_lws = (2, 1)
+    overlay_info_list = []
+    for i in range(2):
+        if background_idx is not None and background_idx==i:
+            # background is also overlay
+            overlay, overlay_info = img, img_info
+            # Don't add overlay_info to list
+        else:
+            overlay, overlay_info = _load_overlay(i)
+            if overlay is None:
+                continue
+            overlay_info_list.append(overlay_info)
+        cs = ax.contour(overlay, colors=contour_colors[i], linewidths=contour_lws[i], linestyles='-', levels=_get_levels(i))
+        print(overlay_stubs[i])
+        print(np.nanmin(overlay), np.nanmax(overlay))
+        print(cs.levels)
+
+    # Image colorbar (right)
+    cbar_ax = ax.inset_axes([1, 0, 0.05, 1])
+    cbar = fig.colorbar(im, cax=cbar_ax, label=f"{get_data_name(background_stub)} ({img_info['unit'].to_string('latex_inline')})")
+    # Beams
+    beam_patch_kwargs = dict(alpha=0.9, hatch='////')
+    beam_x, beam_y = 0.93, 0.1
+    beam_ecs = [['white', 'grey'], ['grey', 'k'], ['grey', 'white']]
+    for i, data_info_dict in enumerate([img_info] + overlay_info_list):
+        if 'beam' not in data_info_dict:
+            continue
+        # Beam is known, plot it
+        patch = data_info_dict['beam'].ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([beam_x, beam_y]), misc_utils.get_pixel_scale(img_info['wcs']))
+        patch.set(**beam_patch_kwargs, facecolor=beam_ecs[i][0], edgecolor=beam_ecs[i][1])
+        ax.add_artist(patch)
+        beam_x -= 0.03
+
+    # Save
+    overlay_stub_final = ""
+    for i in range(2):
+        if overlay_stubs[i] is not None:
+            if velocity_limits[i] is not None:
+                overlay_stubs[i] += "-" + make_simple_vel_stub(velocity_limits[i])
+            overlay_stub_final += overlay_stubs[i]
+    cutout_stub = "" if cutout_reg_stub is None else f"cutout {cutout_reg_stub} from {os.path.basename(get_cutout_box_filename(cutout_reg_stub))}"
+    savename = f"overlay2_{background_stub}_{overlay_stub_final}.png"
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
+        metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_two_moments"))
+    plt.close(fig)
+
+def save_moment0(line_stub='cii', velocity_limits=None, cutout_reg_stub='N19'):
+    """
+    October 26, 2023
+    Create a moment 0 within the velocity limits, optionally cutout, and save
+    to FITS
+    """
+    # Let it be real moment 0 units
+    img, img_info = get_2d_map(line_stub, velocity_limits=velocity_limits, average_Tmb=False)
+    if cutout_reg_stub is not None:
+        img_info['cutout'] = misc_utils.cutout2d_from_region(img, img_info['wcs'], get_cutout_box_filename(cutout_reg_stub), align_with_frame='icrs')
+        img = img_info['cutout'].data
+        img_info['wcs'] = img_info['cutout'].wcs
+
+    hdr = img_info['wcs'].to_header()
+    hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    hdr['CREATED'] = f"Ramsey, {__file__}"
+    hdr['BUNIT'] = str(img_info['unit'])
+    hdr.update(img_info['beam'].to_header_keywords())
+    hdr['HISTORY'] = f"From line {line_stub}"
+    hdr['HISTORY'] = img_info['original_cube_basename']
+    if cutout_reg_stub is not None:
+        hdr['HISTORY'] = f"Cutout {get_cutout_box_filename(cutout_reg_stub)}"
+    if velocity_limits is not None:
+        hdr['HISTORY'] = f"Integrated within {make_simple_vel_stub(velocity_limits)}"
+    phdu = fits.PrimaryHDU(data=img, header=hdr)
+    vel_stub = "" if velocity_limits is None else "_"+make_simple_vel_stub(velocity_limits)
+    cutout_stub = "" if cutout_reg_stub is None else "_"+cutout_reg_stub
+    savename = f"{line_stub}_mom0{vel_stub}{cutout_stub}.fits"
+    savename = os.path.join(img_info['original_cube_directory'], savename)
+    print("Writing to ", savename)
+    phdu.writeto(savename)
+
+
 def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX'], velocity_limits=None, **kwargs):
     """
     May 5, 2023
@@ -1710,6 +2437,10 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX'], velocit
     :param levels: (optional) dictionary with keys matching elements of line_stub_list
         Dictionary values should be a list-like of float values giving levels for
         PV diagram of that line.
+    :param velocity_intervals: (optional) iterable of float values (km/s implied)
+        where horizontal lines should be drawn across the PV diagram for reference.
+        If not given or None (default), lines will be drawn every 2 km/s between 20-34 km/s.
+        If set to False or an empty iterable, no lines will be drawn.
     """
     # Moved line_stub_list to argument
     # Use CII and either 12 or 13CO 3-2
@@ -1753,10 +2484,16 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX'], velocit
         else:
             return get_generic_vlim(line_stub).get("vmax", None)
 
-
+    # PV limits
     if velocity_limits is None:
         velocity_limits = (8*kms, 35*kms)
-    velocity_intervals = np.arange(20, 35, 2)
+
+    # Horizontal lines on PV diagram
+    velocity_intervals = kwargs.get("velocity_intervals", None)
+    if velocity_intervals is None:
+        velocity_intervals = np.arange(20, 35, 2)
+    elif velocity_intervals is False:
+        velocity_intervals = []
 
     # Most of these files have 3 points and a vector
     # In theory, it can have any number of points which will be handled correctly
@@ -1827,6 +2564,26 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX'], velocit
     ax_ref_img.plot([c.ra.deg for c in pv_path._coords], [c.dec.deg for c in pv_path._coords], color=marcs_colors[1], linestyle='-', lw=1, transform=ax_ref_img.get_transform('world'))
     ax_ref_img.text(pv_path._coords[0].ra.deg, pv_path._coords[0].dec.deg + 4*u.arcsec.to(u.deg), 'Offset = 0\"', color=marcs_colors[1], fontsize=10, va='center', ha='right', transform=ax_ref_img.get_transform('world'))
     ax_pv.set_xlim(pv_xlim)
+    # Fix PV ylim so that low velocity is always on the bottom
+    """
+    TODO: debug and finish this! I couldn't figure it out in time, need to meet with Marc soonish. Try combining with transData or transAxes to see if anything useful happens... or figure coords?
+    """
+    if False and False and False:
+        pv_ylim = ax_pv.get_ylim() # could theoretically do all this in one step safely, but for clarity's sake, splitting it into two lines
+        print(pv_ylim)
+        d2a = u.arcsec.to(u.deg)
+        print("d2a", d2a)
+        print(ax_pv.get_transform('world').transform([-1*d2a, -1]))
+        print(ax_pv.get_transform('world').transform([0*d2a, 0]))
+        print(ax_pv.get_transform('world').transform([1*d2a, 1]))
+        print(sl0.data.shape)
+        # print([ax_pv.get_transform('world').inverted().transform([0, x]) for x in pv_ylim])
+        print(sorted(pv_ylim))
+        return
+        ax_pv.set_ylim(sorted(pv_ylim)) # sorted() returns a new list, sorted
+    elif kwargs.get("invert", False):
+        print("INVERTING!"+"!"*20)
+        ax_pv.invert_yaxis()
 
     plt.tight_layout()
     # 2023-05-06,11, 06-30
@@ -1871,6 +2628,12 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
         reg_filename_short = "catalogs/m16_northridge_points.reg"
     elif reg_set_number == 4:
         reg_filename_short = "catalogs/N19_shell_edge.reg"
+    elif reg_set_number == 5:
+        reg_filename_short = "catalogs/m16_points_blueshifted_clump.reg"
+    elif reg_set_number == 6:
+        reg_filename_short = "catalogs/N19_points_all_across.reg"
+    elif reg_set_number == 7:
+        reg_filename_short = "catalogs/N19_points_all_across_2.reg"
     else:
         raise NotImplementedError(f"reg_set_number =/= {reg_set_number}")
 
@@ -1890,6 +2653,9 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
         short_names = ['cii', '12co10-pmo', '12co32',]; set_stub = "12"
     elif line_set_number == 2:
         short_names = ['cii', '13co10-pmo', '13co32',]; set_stub = "13"
+    elif line_set_number == 3:
+        # specifically for blueshifted clump, reg_set_number 5
+        short_names = ['cii']; set_stub = ""
     else:
         raise NotImplementedError(f"line_set_number =/= {line_set_number}")
 
@@ -1904,6 +2670,12 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
     elif reg_set_number in [4]:
         figsize = (16, 9)
         grid_shape = (2, 3)
+    elif reg_set_number == 5:
+        figsize = (10, 10)
+        grid_shape = (2, 2)
+    elif reg_set_number in (6, 7):
+        figsize = (10, 20)
+        grid_shape = (len(reg_list), 1)
     else:
         raise NotImplementedError
 
@@ -1948,13 +2720,22 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
         if not ss.is_first_col():
             # hide ticklabels except left column
             ax.tick_params(axis='y', labelleft=False)
+
         if reg_idx == len(reg_list)-1:
             ax.legend(loc='upper right', fontsize=13)
-        ax.set_xlim((5, 41))
+        if reg_set_number in range(5):
+            ax.set_xlim((5, 41))
+        elif reg_set_number == 5:
+            ax.set_xlim((-5, 46))
+        elif reg_set_number in (6, 7):
+            ax.set_xlim((0, 40))
+
         if line_set_number == 1:
             ax.set_ylim((-5, 27)) # or 46
         elif line_set_number == 2:
             ax.set_ylim((-3, 13)) # or 23
+        elif reg_set_number == 5:
+            ax.set_ylim((-3, 17))
 
         ax.text(0.06, 0.94, reg_list[reg_idx].meta['text'], transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(10, 31, 2):
@@ -2194,6 +2975,107 @@ def co_channel_maps():
     """
 
 
+def peak_T_velocity_map():
+    """
+    October 5, 2023
+    While making the CII column densities, I kinda liked the way that the peak T
+    map showed some of the features. I want to do an argmax of the peak T map
+    and see what the velocities look like. Maybe compare to moment 0 and 1, for
+    kicks.
+
+    This is a neat map!
+    Lots of interesting shapes appear. I don't have time in my thesis to go
+    deep on this stuff, but there's lots of little rings that someone can
+    find someday.
+
+    What this does show is that moment 1 and 2 maps make the northern cloud pop
+    really well, as it causes wide (composite) line profiles and lies at a much
+    lower velocity, near 16 km/s
+    """
+    mask_cutoff = 6*u.K
+    velocity_limits = None
+
+    cii_cube_fn = get_map_filename('cii')
+    cii_cube = cube_utils.CubeData(cii_cube_fn).convert_to_kms().data
+    # Apply velocity limits
+    if velocity_limits is not None:
+        cii_cube = cii_cube.spectral_slab(*velocity_limits)
+    print(f"Masking below {mask_cutoff:.2f}")
+    cii_cube = cii_cube.with_mask(cii_cube > mask_cutoff).with_fill_value(0*u.K)
+
+    peak_T_map = cii_cube.max(axis=0).quantity
+    plt.subplot(221)
+    plt.imshow(peak_T_map.to_value(), origin='lower')
+    amax = cii_cube.argmax(axis=0)
+    peak_velocity_map = cii_cube.spectral_axis[amax]
+    peak_velocity_map[amax==0] = np.nan
+    plt.subplot(222)
+    plt.imshow(peak_velocity_map.to_value(), origin='lower', vmin=20, vmax=30)
+
+    mom0 = cii_cube.moment0()
+    plt.subplot(223)
+    plt.imshow(mom0.to_value(), origin='lower')
+    # plt.imshow((mom0/peak_T_map).to_value(), origin='lower', vmin=0, vmax=15)
+    mom1 = cii_cube.moment1()
+    # mom2 = cii_cube.linewidth_fwhm()
+    plt.subplot(224)
+    plt.imshow(mom1.to_value(), origin='lower', vmin=20, vmax=30)
+    # plt.imshow(mom2.to_value(), origin='lower', vmin=0, vmax=15)
+
+    plt.show()
+
+def peak_T_and_moment_maps_CO(isotope='12', transition='32', velocity_limits=None):
+    """
+    In a similar vein to the peak_T_velocity_map for CII, I'm doing a check of
+    peak T vs moment 0 for 12 and 13 CO 3-2 and 1-0
+    For a given isotope and transition, produce a 3-extension FITS file, peak T,
+    moment 0, and peak T velocity (just for reference)
+    :param isotope: str, '12' or '13'
+    :param transition: str, '32' or '10' CO line transition
+    :param velocity_limits: (optional) tuple(Quantity low, Quantity high)
+        If given, should be a 2-tuple of velocity Quantities (low, high) limits.
+        If given, the peak temperature and moment 0 will both be calculated from
+        within these limits. If not given or None (default), the full velocity
+        range is used.
+    """
+    line_stub = isotope + "co" + transition
+    if transition == '10':
+        # Use Purple Mountain
+        line_stub += '-pmo'
+    cube_obj = cube_utils.CubeData(get_map_filename(line_stub))
+    cube = cube_obj.data.with_spectral_unit(kms)
+    if velocity_limits is not None:
+        cube = cube.spectral_slab(*velocity_limits)
+    mom0 = cube.moment0().to(u.K * kms)
+    peak_T_argmax = cube.argmax(axis=0)
+    peak_T_velocity = cube.spectral_axis[peak_T_argmax]
+    # peak_T_velocity[peak_T_argmax==0] = np.nan # get rid of junk
+    peak_T = cube.max(axis=0).quantity
+    header_template = mom0.wcs.to_header()
+    header_template.update(cube.beam.to_header_keywords())
+    header_template['COMMENT'] = f"{line_stub} CO data from file"
+    header_template['COMMENT'] = f"{cube_obj.basename}"
+    if velocity_limits is not None:
+        header_template['COMMENT'] = f"Between velocities {make_vel_stub(velocity_limits)}"
+        velocity_stub = "_" + make_simple_vel_stub(velocity_limits)
+    else:
+        header_template['COMMENT'] = "Full velocity range of data"
+        velocity_stub = ""
+    def make_and_fill_hdu(extname, data, bunit):
+        header = header_template.copy()
+        header['EXTNAME'] = extname
+        header['BUNIT'] = str(bunit)
+        hdu = fits.ImageHDU(data=data, header=header)
+        return hdu
+    hdul = fits.HDUList([fits.PrimaryHDU(),
+        make_and_fill_hdu("moment_0", mom0.to_value(), mom0.unit),
+        make_and_fill_hdu("peak_T", peak_T.to_value(), peak_T.unit),
+        make_and_fill_hdu("peak_velocity", peak_T_velocity.to_value(), peak_T_velocity.unit),
+    ])
+    savename = os.path.join(cube_obj.directory, f"{line_stub}_mom0_peakT_peakvel{velocity_stub}.fits")
+    print("Done, writing to "+savename)
+    hdul.writeto(savename)
+
 
 if __name__ == "__main__":
     """
@@ -2222,14 +3104,42 @@ if __name__ == "__main__":
     #     vel_lims = vel_lims_list[i]
     #     overlay_moment(background='8um', overlay='cii-30', velocity_limits2=vel_lims, cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 6))
 
-    # overlay_moment(background='160um', overlay='cii-30', velocity_limits2=(-10*kms, 10*kms), cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0))
+    # overlay_moment(background='8um', overlay='cii', velocity_limits2=(7*kms, 10*kms), cutout_reg_stub='blueclump', plot_stars=False, reg_filename_or_idx=("catalogs/m16_points_blueshifted_clump.reg"))
+    # v = 24
+    # dv = 1
+    # while v < 29:
+    #     vel_lims = (v*kms, (v+dv)*kms)
+    #     overlay_moment(background='cii', overlay='cii', velocity_limits2=(17*kms, 20*kms),
+    #         velocity_limits=vel_lims, cutout_reg_stub='N19', plot_stars=False, reg_filename_or_idx=("catalogs/N19_shell_edge.reg"))
+    #     v += dv
 
-    overlay_moment(background='160um', overlay='ciiAPEX', velocity_limits2=(15*kms, 20*kms), cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0))
+    # for c in ['cii']:
+    #     overlay_moment(background=c, overlay=c, velocity_limits=(13*kms, 17*kms),
+    #         velocity_limits2=(17*kms, 20*kms), cutout_reg_stub='N19', plot_stars=False, reg_filename_or_idx=("catalogs/N19_points_all_across_2.reg"))
 
-    # v_start, v_increment = 15, 5
-    # while v_start < 40:
+    # cii = 'ciiAPEX'
+    # co = '12co32'
+    # bgs = ['8um'] #[str(x)+"um" for x in (70, 160, 250, 350)]
+    # for bg in bgs:
+    #     overlay_two_moments(background=bg, overlays=(cii, co), velocity_limits=((17*kms, 21*kms), (18*kms, 21*kms)),
+    #         vlims={'ciiAPEX': (-1.5, 14.5), '70um': (0, 1), '160um': (0, 0.8), '250um': (500, 2500), '350um': (240, 1000), '500um': (100, 350),
+    #                 '8um': (45, 200)},
+    #         levels={'ciiAPEX': np.arange(-2.5, 16, 2.5)})
+
+    # overlay_moment(background='12co10-nob', overlay='ciiAPEX', velocity_limits=(18*kms, 24*kms), velocity_limits2=(14*kms, 21*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/SE_bubbles_cii_pvs_2.reg", 1))
+    # overlay_moment(background='13co32', overlay='ciiAPEX', velocity_limits2=(15*kms, 16*kms), velocity_limits=(18*kms, 19*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs.reg", 5))
+    # overlay_moment(background='13co32', overlay='ciiAPEX', velocity_limits2=(16*kms, 17*kms), velocity_limits=(19*kms, 20*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs.reg", 5))
+    # overlay_moment(background='13co32', overlay='ciiAPEX', velocity_limits2=(17*kms, 18*kms), velocity_limits=(20*kms, 21*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs.reg", 5))
+    # overlay_moment(background='13co32', overlay='ciiAPEX', velocity_limits2=(18*kms, 19*kms), velocity_limits=(21*kms, 22*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs.reg", 5))
+    # overlay_moment(background='13co32', overlay='ciiAPEX', velocity_limits2=(19*kms, 20*kms), velocity_limits=(22*kms, 23*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs.reg", 5))
+    # overlay_moment(background='13co32', overlay='ciiAPEX', velocity_limits2=(20*kms, 21*kms), velocity_limits=(23*kms, 24*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs.reg", 5))
+    # overlay_moment(background='13co32', overlay='ciiAPEX', velocity_limits2=(21*kms, 22*kms), velocity_limits=(24*kms, 25*kms), cutout_reg_stub='med-large', plot_stars=False, reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs.reg", 5))
+
+    # v_start, v_increment = 14, 2
+    # while v_start < 20:
     #     vel_lims = (v_start*kms, (v_start + v_increment)*kms)
-    #     overlay_moment(background='ciiAPEX', overlay='160um', velocity_limits=vel_lims, velocity_limits2=(15*kms, 30*kms), cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0))
+    #     overlay_moment(background='ciiAPEX', overlay='160um', velocity_limits=vel_lims, cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/SE_bubbles_cii_pvs_2.reg", 1))
+    # #     overlay_moment(background='ciiAPEX', overlay='160um', velocity_limits=vel_lims, velocity_limits2=(15*kms, 30*kms), cutout_reg_stub='med', plot_stars=True, reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0))
     #     v_start += v_increment
 
     # vcii = (28*kms, 29*kms)
@@ -2246,6 +3156,12 @@ if __name__ == "__main__":
     # for i in range(5):
     #     compare_8micron_and_cii_intensities((20*kms, 21*kms), i)
 
+    ####
+    ## Save moment 0 to FITS
+    ####
+    # save_moment0(line_stub='12co32', velocity_limits=(18*kms, 21*kms), cutout_reg_stub='N19')
+
+
     """
     PV examples
     """
@@ -2257,14 +3173,27 @@ if __name__ == "__main__":
     ##### make all PVs from a given .reg file
     # error = False
     # i = 0
-    # while not error and i<10:
+    # while not error and i<6:
     #     try:
-    #         fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", i), line_stub_list=['ciiAPEX', '12co32'],
     #         # fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", i), line_stub_list=['cii-30', '12co10-nob'],
-    #             velocity_limits=(-35*kms, 101*kms),
+    #
+    #         # fast_pv(reg_filename_or_idx=("catalogs/N19_and_E-bubble_GMF_pvs.reg", i), line_stub_list=['13co10-pmo', '13co32'],
+    #             # vmax={'13co10-pmo': 8, '12co10-pmo': 35},
+    #         # fast_pv(reg_filename_or_idx=("catalogs/N19_and_E-bubble_GMF_pvs.reg", i), line_stub_list=['12co10-pmo', '13co10-pmo'],
+    #             # vmax={'13co10-pmo': 8, '12co10-pmo': 20},
+    #         # fast_pv(reg_filename_or_idx=("catalogs/N19_and_E-bubble_full_pvs_2.reg", i), line_stub_list=['13co10-nob', 'ciiAPEX'],
+    #         #     vmax={'13co10-pmo': 8, '12co10-pmo': 35, '13co10-nob': 10},
+    #         fast_pv(reg_filename_or_idx=("catalogs/m16_pv_vectors_4.reg", i), line_stub_list=['ciiAPEX', '13co32'],
+    #             vmax={'13co10-pmo': 8, '12co10-pmo': 35, '13co10-nob': 10, '13co32': 15},
+    #             velocity_limits=(5*kms, 45*kms),
+    #             velocity_intervals=np.arange(10, 23, 2), # horizontal lines on PV
     #             levels={
-    #                 '12co10-pmo': np.concatenate([np.arange(0.75, 5, 1), np.arange(5.75, 26, 4)]),
-    #                 '12co10-nob': np.concatenate([np.arange(2, 5, 2), np.arange(6, 26, 6)]),
+    #                 # 'ciiAPEX': np.concatenate([np.arange(2, 61, 3), np.arange(65, 126, 20)]),
+    #                 # 'ciiAPEX': np.concatenate([np.arange(2, 15, 5), np.arange(17, 126, 15)]),
+    #                 # '12co10-pmo': np.concatenate([np.arange(0.75, 5, 1), np.arange(5.75, 26, 4)]),
+    #                 # '12co10-pmo': np.arange(5, 55, 5),
+    #                 # '12co10-nob': np.concatenate([np.arange(2, 5, 2), np.arange(6, 26, 6)]),
+    #                 # '12co10-nob': np.arange(5, 55, 5),
     #                 '12co32': np.concatenate([np.arange(0.5, 5, 1.5)*2, np.arange(5, 51, 5)*2]),
     #             }
     #         )
@@ -2279,6 +3208,15 @@ if __name__ == "__main__":
     CO column
     """
     # find_co10_noise()
+    # velocity_limits = {
+    #     'redshifted_1': (29*kms, 45*kms), 'blueshifted_1': (0*kms, 13*kms),
+    #     'north_cloud_1': (13*kms, 20*kms), '25kms_1': (20*kms, 29*kms),
+    #     'north_cloud_2': (11*kms, 21*kms), 'co32_red': (23.3*kms, 28*kms),
+    # }
+    # co_column_manage_inputs(line='32', velocity_limits=None, cutout_reg_stub=None)
+    # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
+    # get_co_spectra_for_radex()
+
 
     """
     Channel maps/movies
@@ -2296,3 +3234,18 @@ if __name__ == "__main__":
     #         print("Doing", i, j)
     # plot_spectra(reg_set_number=4, line_set_number=1, velocities_to_mark=(17.5, 19.5, 21.5))
     # plot_spectra(reg_set_number=4, line_set_number=2, velocities_to_mark=(17.5, 19.5, 21.5))
+
+    # blueshifted clump
+    # plot_spectra(reg_set_number=5, line_set_number=3, velocities_to_mark=(8,))
+
+    # N19 shell stuff; N19_points_all_across and _2; reg sets 6 and 7
+    for i in (6,7):
+        plot_spectra(reg_set_number=i, line_set_number=2, velocities_to_mark=(17, 18, 19, 20, 21))
+
+    """
+    Misc
+    """
+    # Peak temperature map and velocity map
+    # peak_T_velocity_map()
+    # peak_T_and_moment_maps_CO(isotope='13', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
+    # peak_T_and_moment_maps_CO(isotope='12', transition='10', velocity_limits=velocity_limits['north_cloud_2'])

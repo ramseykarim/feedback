@@ -4,7 +4,13 @@ import numpy as np
 
 from astropy import units as u
 from astropy.nddata.utils import Cutout2D
+from astropy.io import fits
+from astropy.wcs import WCS
 import regions
+
+from reproject import reproject_interp
+
+from math import ceil
 
 """
 General use utilitues for working with images or spectra
@@ -239,7 +245,7 @@ def identify_longest_run(bool_array, xaxis=None, return_mask=False):
         return start, end
 
 
-def cutout2d_from_region(data, wcs_obj, reg_filename, reg_index=0):
+def cutout2d_from_region(data, wcs_obj, reg_filename, reg_index=0, align_with_frame=None):
     """
     May 4, 2023
     Apply Cutout2D based on a DS9 box region in a .reg file.
@@ -254,11 +260,70 @@ def cutout2d_from_region(data, wcs_obj, reg_filename, reg_index=0):
         Index of the box in the .reg file. Default is 0, which is acceptable
         for single-region files as well as multi-region. Index must point to
         a box region (e.g. Rectangle region in astropy regions).
+    :param align_with_frame: (optional) str coordinate frame, any of the ones
+        accepted by Astropy (such as FK5, ICRS, Galactic).
+        If this optional kwarg is False or None (default), no action is taken.
+        If it is set to a valid frame, then the cutout will be made to align
+        with that frame (regardless of the cutout region's rotation in the .reg
+        file!), and the image will be reprojected into that aligned cutout.
     :returns: Cutout2D created from data using the WCS and size info from the
         supplied box region.
     """
     box_skyreg = regions.Regions.read(reg_filename)[reg_index]
     # Using sky coordinates to specify Cutout2D
-    # center specified as SkyCoord. size given as (ny, nx) = (height, width)
-    cutout = Cutout2D(data, box_skyreg.center, (box_skyreg.height, box_skyreg.width), wcs=wcs_obj, mode='partial')
+    # center specified as SkyCoord. size given as (ny, nx) = (height, width) in angular units
+    if not align_with_frame:
+        cutout = Cutout2D(data, box_skyreg.center, (box_skyreg.height, box_skyreg.width), wcs=wcs_obj, mode='partial')
+    else:
+        # Make a new WCS object to project into
+        # Find out what this frame calls "lon" and "lat"
+        def _find_frame_component_name(coord, component_name):
+            # Find out what the coord's frame calls this component
+            # argument component_name should be "lat" or "lon"
+            return [x for x in coord.representation_component_names if coord.representation_component_names[x]==component_name].pop()
+        def _get_coord_component(coord, component_name):
+            # After digging around and finding this https://docs.astropy.org/en/stable/coordinates/skycoord.html#digging-deeper
+            return getattr(coord, _find_frame_component_name(coord, component_name))
+        # Convert center coord to the desired frame
+        center_coord = box_skyreg.center.transform_to(align_with_frame)
+        # Get pixel scale of image
+        pixel_scale = get_pixel_scale(wcs_obj)
+        # Use pixel scale to find correct shape
+        lon_size_pixels = ceil((box_skyreg.width / pixel_scale).decompose().to_value())
+        lat_size_pixels = ceil((box_skyreg.height / pixel_scale).decompose().to_value())
+        # Use the name of longitude to find out what the WCS-appropriate name is. Let all projections be TAN
+        lon_name = _find_frame_component_name(center_coord, 'lon')
+        if lon_name == 'ra':
+            full_component_names = ('RA---TAN', 'DEC--TAN')
+        elif lon_name == 'l':
+            full_component_names = ('GLON-TAN', 'GLAT-TAN')
+
+        # Compile keywords for the header
+        kws = {
+            'NAXIS': (2, "Number of axes"),
+            'NAXIS1': (lon_size_pixels, "X/j axis length"),
+            'NAXIS2': (lat_size_pixels, "Y/i axis length"),
+            'CRVAL1': (_get_coord_component(center_coord, 'lon').deg, f"[deg] {_find_frame_component_name(center_coord, 'lon').upper()} of reference point"),
+            'CRVAL2': (_get_coord_component(center_coord, 'lat').deg, f"[deg] {_find_frame_component_name(center_coord, 'lat').upper()} of reference point"),
+            # Add 1 to CRPIX because 1-indexed
+            'CRPIX1': (lon_size_pixels/2 + 1, "[pix] Image reference point"),
+            'CRPIX2': (lat_size_pixels/2 + 1, "[pix] Image reference point"),
+            'CTYPE1': (full_component_names[0], f"{_find_frame_component_name(center_coord, 'lon').upper()} projection type"),
+            'CTYPE2': (full_component_names[1], f"{_find_frame_component_name(center_coord, 'lat').upper()} projection type"),
+            'CDELT1': -1 * pixel_scale.to(u.deg).to_value(), # RA increasing to the left side
+            'CDELT2': pixel_scale.to(u.deg).to_value(),
+            'PA': (0., "[deg] Position angle of axis 2 (E of N)"),
+            'EQUINOX': (2000., "[yr] Equatorial coordinates definition"),
+        }
+        if lon_name == 'ra':
+            kws['RADESYS'] = center_coord.frame.name.upper()
+
+        out_projection_header = fits.Header()
+        # I wrote a while back that the constructor didn't seem to like being fed a dictionary, so this is better
+        out_projection_header.update(kws)
+
+        # Reproject data into new WCS
+        reprojected_data = reproject_interp((data, wcs_obj), out_projection_header, return_footprint=False)
+        # Make a redundant cutout of the projected data just so that the returned value has all expected attributes
+        cutout = Cutout2D(reprojected_data, box_skyreg.center, (box_skyreg.height, box_skyreg.width), wcs=WCS(out_projection_header), mode='partial')
     return cutout

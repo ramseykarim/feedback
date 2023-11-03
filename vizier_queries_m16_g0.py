@@ -33,7 +33,7 @@ this month.
 # This was for RCW 49
 # catalog_data = Catalogs.query_object("10:24:17.509 -57:45:29.28", radius="0.0122628 deg", catalog="HSC")
 
-def m16_stars():
+def m16_stars(return_df_early=False, filter=None):
     """
     (Retroactive guess at creation date): August 4 and October 17 2020
     This is to query Hillenbrand 1993 for M16 stars
@@ -100,15 +100,17 @@ def m16_stars():
 
 
     # make some filters for the catalog so we can try different G0 maps
-    filter = 0 # filter 4 (>4.5 and filter radius) is the pillar paper one
+    if filter is None:
+        filter = 0 # filter 4 (>4.5 and filter radius) is the pillar paper one
     filter_stub = ""
     if filter == 0:
         # no filter
         pass
     if filter == 1 or filter == 4:
         # filter log10FUV_flux_solLum > 4.5 (8 stars) or 5.0 (4 stars)
-        catalog_df_OB = catalog_df_OB[catalog_df_OB['log10FUV_flux_solLum'] > 4.5]
-        filter_stub += "_fuvlt4.5"
+        fuv_cutoff = 4.5
+        catalog_df_OB = catalog_df_OB[catalog_df_OB['log10FUV_flux_solLum'] > fuv_cutoff]
+        filter_stub += f"_fuvgt{fuv_cutoff:.1f}"
     if filter == 2 or filter == 4:
         # filter < x arcmin from y
         center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5')
@@ -124,6 +126,13 @@ def m16_stars():
         # 175, 205, 222, 246
         catalog_df_OB = catalog_df_OB.loc[[246]]
         filter_stub += '_justone'
+
+    if return_df_early: # set in function argument
+        print("Returning early and saving the Hillenbrand catalog DataFrame!!!")
+        savename = catalog.utils.m16_data_path + f"catalogs/hillenbrand_stars{filter_stub}.pkl"
+        print(f"Writing to {savename}")
+        catalog_df_OB.to_pickle(savename)
+        return
 
     print(catalog_df_OB)
     catr = catalog.spectral.stresolver.CatalogResolver(catalog_df_OB['SpType'].values,

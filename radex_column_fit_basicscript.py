@@ -3,6 +3,18 @@
 import math
 import os
 import sys
+
+
+"""
+(Commentary from October 13, 2023)
+Revisiting this as I am now looking to fit column densities with Radex.
+This is a lightly edited version of the python script supplied by the Radex
+authors. I will probably use the spectralradex package instead.
+I'll leave this here for posterity and have renamed it today
+from radex_column_fit.py to radex_column_fit_basicscript.py
+"""
+
+
 #
 # Run a series of Radex models to retrieve the column density
 #

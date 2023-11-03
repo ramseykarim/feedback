@@ -2,9 +2,9 @@
 For exploring the stars and radiation field of M16 / NGC 6611
 
 
-If you're looking for where I load in the stars and make the lists and find G0,
+If you're looking for where I load in the Hillenbrand stars and make the lists and find G0,
 while you'd be correct in looking here first given the title, you want the
-queries.py file. I use a vizier query to load in the catalog.
+queries.py (vizier_queries_m16_g0.py now) file. I use a vizier query to load in the catalog.
 
 This is where I mess around with the Stoop catalog though.
 
@@ -245,13 +245,16 @@ def convert_df_cols_to_skycoord_array(df, colname_ra, colname_dec, units=None, e
     return c
 
 
-def poke_around_in_stoop_catalog():
+def poke_around_in_stoop_catalog(return_df_early=False, filter=None):
     """
     August 3, 2023
     Check out the Stoop catalog. catalogs/Stoop2023_tablec1.tsv
     """
+    scoby.config.PRINT_WARNINGS = True
     df = pd.read_csv(catalog.utils.search_for_file("catalogs/Stoop2023_tablec1.tsv"), delimiter=';', comment='#', skiprows=[51]) # line 52 (or 51, for 0 indexed) is just hyphens
+    # Get the units row; each column has units
     u_row = df.iloc[0]
+    # Delete the unit row from the dataframe so that the rows are just stars
     df.drop(index=0, inplace=True)
     # print(df)
     # for i,x in enumerate(df.columns):
@@ -369,7 +372,8 @@ def poke_around_in_stoop_catalog():
     filter 4 is the category for the paper, and filter 0 is no filter
     """
     # make some filters for the catalog so we can try different G0 maps
-    filter = 4 # filter 4 (>4.5 and filter radius) is the pillar paper one
+    if filter is None:
+        filter = 4 # filter 4 (>4.5 and filter radius) is the pillar paper one
     filter_stub = ""
     if filter == 0:
         # no filter
@@ -381,7 +385,7 @@ def poke_around_in_stoop_catalog():
     if filter == 2 or filter == 4:
         # filter < x arcmin from y
         center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5')
-        filter_radius = 3.90751*u.arcmin
+        filter_radius = 3.90751*u.arcmin # my original number was like 3.90751*u.arcmin; I don't know why.. it's not even exactly 2 pc, though very close
         df = vizier_queries.filter_by_within_range(df, center_coord, radius_arcmin=filter_radius)
         df = df[df['is_within_3.9_arcmin']]
         filter_stub += "_ltxarcmin"
@@ -393,6 +397,12 @@ def poke_around_in_stoop_catalog():
     #     # 175, 205, 222, 246
     #     catalog_df_OB = catalog_df_OB.loc[[246]]
     #     filter_stub += '_justone'
+
+    if return_df_early:
+        savename = catalog.utils.m16_data_path + f"catalogs/stoop_stars{filter_stub}.pkl"
+        print(f"Returning early, saved Stoop DF {savename}")
+        df.to_pickle(savename)
+        return df
 
     ### remake catr now that we have filtered
     catr = make_cat_resolver(df['SpType'])
@@ -440,5 +450,269 @@ def make_cat_resolver(spectral_types_column):
     return catr
 
 
+def crossmatch_stoop_and_hillenbrand():
+    """
+    October 31, 2023. Happy Halloween!
+    Finally doing the crossmatching. I am taking notes in today's notes,
+    and loosely following some crossmatching I did in catalogs/parse.py.
+    Key is to use SkyCoord.match_to_catalog_sky
+    """
+    # Hillenbrand
+    h_df_filename = "/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/hillenbrand_stars.pkl"
+    if not h_df_filename:
+        # Only need to run once, then saves
+        vizier_queries.m16_stars(return_df_early=True, filter=0)
+    else:
+        h_df = pd.read_pickle(h_df_filename)
+    print(h_df.columns)
+    # Get a SkyCoord array from Hillenbrand
+    h_sc = SkyCoord(h_df['SkyCoord'].values)
+    print(f"H cat has {h_sc.size} items")
+
+    # Stoop
+    s_df_filename = "/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/stoop_stars.pkl"
+    if not s_df_filename:
+        s_df = poke_around_in_stoop_catalog(return_df_early=True, filter=0)
+    else:
+        s_df = pd.read_pickle(s_df_filename)
+    print(s_df.columns)
+    s_sc = SkyCoord(s_df['SkyCoord'].values)
+    print(f"S cat has {s_sc.size} items")
+
+    h_idx_xmatch, h_to_s_sep, _ = s_sc.match_to_catalog_sky(h_sc)
+    s_idx_xmatch, s_to_h_sep, _ = h_sc.match_to_catalog_sky(s_sc)
+
+    # Bunch of testing; change to True to see the tests
+    if False:
+        # Get a large-scale view that shows that any seps > 1 arcsec are
+        # mostly also > 10 arcsec, clearly not matches
+        plt.hist(h_to_s_sep.arcsec, range=(0, 64), bins=64*2)
+        plt.hist(s_to_h_sep.arcsec, range=(0, 64), bins=64*2)
+        plt.show()
+    elif False:
+        # Small scale view that shows that seps < 1 arcsec are all < 0.25,
+        # so matches are good
+        plt.hist(h_to_s_sep.arcsec, range=(0, 2), bins=32)
+        plt.hist(s_to_h_sep.arcsec, range=(0, 2), bins=32)
+        plt.show()
+    elif False:
+        # Show the above more definitely
+        # min sep that is greater than 1 arcsec
+        h2s_min_sep_gt1 = np.min(h_to_s_sep.arcsec[h_to_s_sep.arcsec > 1])
+        s2h_min_sep_gt1 = np.min(s_to_h_sep.arcsec[s_to_h_sep.arcsec > 1])
+        print(f"Min gt 1 {h2s_min_sep_gt1} and {s2h_min_sep_gt1} arcsec")
+        # That shows that the min gt 1 is like 7 or 8 arcsec
+        h2s_max_sep_lt1 = np.max(h_to_s_sep.arcsec[h_to_s_sep.arcsec < 1])
+        s2h_max_sep_lt1 = np.max(s_to_h_sep.arcsec[s_to_h_sep.arcsec < 1])
+        print(f"Max lt 1 {h2s_max_sep_lt1} and {s2h_max_sep_lt1} arcsec")
+        # That shows that the max lt 1 is ~0.25
+
+    ## Just like we did for Wd2
+    def match_vetting(match1, sep1, match2, sep2,
+        cutoff_arcsec=0.25):
+        """
+        Oct 31, 2023
+        Not exactly like we did for Wd2 but pretty close.
+        Check that matches are mutual
+        """
+        # Just loop, it's easier to think about
+        count = 0
+        for i in range(len(match1)):
+            if sep1[i].arcsec > cutoff_arcsec:
+                continue
+            j = match1[i]
+            assert (i == match2[j])
+            count += 1
+        print(count, "matches")
+    if False:
+        match_set_1 = (h_idx_xmatch, h_to_s_sep)
+        match_set_2 = s_idx_xmatch, s_to_h_sep
+        match_vetting(*match_set_1, *match_set_2)
+        match_vetting(*match_set_2, *match_set_1)
+        # Those work!! no assert errors
+    """
+    All crossmatches between the full H and S catalogs are successfull if they
+    are < 0.25 arcsec. All "matches" above 0.25 arcsec are > 7 arcsec and are
+    unambiguously not matches. All matches are unambiguous!
+    41 matches between the 62 H stars and 59 S stars.
+    """
+    # Compile a super-catalog
+    # start from the Stoop catalog and add Hillenbrand to the relevant ones.
+    # reduce the columns in Stoop too, there are lots of unecessary ones.
+    #### we might consider adding in the extinction measurements to make a point...
+
+    if False:
+        ### Radial velocities
+        # print(s_df['RV'])
+        valid_numbers = s_df['RV'].apply(lambda x: bool(x.strip()))
+        o_stars = s_df['SpType'].apply(lambda x: 'O' in x)
+        # print(o_stars)
+        s_df_valid = s_df['RV'][valid_numbers].apply(float)
+        s_df_valid_o = s_df['RV'][valid_numbers & o_stars].apply(float)
+        # print(s_df_valid)
+        _, bins, _ = plt.hist(s_df_valid, bins=32, histtype='stepfilled')
+        plt.hist(s_df_valid_o, bins=bins, histtype='stepfilled')
+        plt.show()
+    s_cols_to_keep = ['SkyCoord', 'SpType', 'log10FUV_flux_solLum', 'RV', 'E(B-V)']
+    h_cols_to_keep = ['SkyCoord', 'SpType', 'log10FUV_flux_solLum']
+    super_cat_df = s_df[s_cols_to_keep]
+    super_cat_df = super_cat_df.rename({x: "s_"+x for x in s_cols_to_keep}, axis='columns').reset_index(names="Stoop_tC1_idx")
+    # Get the H stars now
+    h_df_renamed = h_df[h_cols_to_keep].rename({x: "h_"+x for x in h_cols_to_keep}, axis='columns').reset_index(names="Hillenbrand_t3A_idx")
+    # Get a True/False column for whether S stars matched an H star
+    s_matched_successfully = h_to_s_sep.arcsec < 1
+    # Use that to get the S-matched H indices (0-indexed out of 62, not the H table index)
+    h_idx_matched_successfully = h_idx_xmatch[s_matched_successfully]
+    # h_idx_matched_successfully is the list of 41 matched stars' indices out of 62 H stars. (not Hillenbrand index, just 0-61)
+    h_matched = h_df_renamed.loc[h_idx_matched_successfully].set_index(super_cat_df[s_matched_successfully].index)
+    super_cat_df = pd.concat([super_cat_df, h_matched], axis='columns')
+    # print(super_cat_df[['Stoop_tC1_idx', 'Hillenbrand_t3A_idx']])
+    # print(super_cat_df[super_cat_df['Hillenbrand_t3A_idx'].isin([161, 166, 175, 197, 205, 210, 222, 246])][['Stoop_tC1_idx', 'Hillenbrand_t3A_idx']])
+    # print(super_cat_df.columns)
+
+    # Grab the unique Hillenbrand items (not matched to S)
+    # h_idx_unique is the complement out of range(62)
+    h_idx_unique = [i for i in range(len(h_sc)) if i not in h_idx_matched_successfully]
+    h_unique = h_df_renamed.loc[h_idx_unique]
+    # print(h_unique[['h_SpType', 'h_log10FUV_flux_solLum']])
+    # print(super_cat_df)
+    super_cat_df = pd.concat([super_cat_df, h_unique], axis='index', ignore_index=True)
+    idx_col_names = ['Hillenbrand_t3A_idx', 'Stoop_tC1_idx']
+    # for colname in idx_col_names:
+    #     super_cat_df[colname] = super_cat_df[colname].astype(int)
+    # super_cat_df = super_cat_df.convert_dtypes()
+
+    ### Sort by Hillenbrand index first and then by Stoop where no H
+    super_cat_df = super_cat_df.sort_values(by=["Hillenbrand_t3A_idx", "Stoop_tC1_idx"])
+
+    # super_cat_df['SkyCoord'] = super_cat_df[]
+    super_cat_df['SkyCoord'] = super_cat_df['s_SkyCoord'].where(super_cat_df['s_SkyCoord'].notnull(), super_cat_df['h_SkyCoord']).apply(lambda x: x.icrs)
+    super_cat_df['RA'] = super_cat_df['SkyCoord'].apply(lambda x: x.icrs.ra.deg)
+    super_cat_df['DE'] = super_cat_df['SkyCoord'].apply(lambda x: x.icrs.dec.deg)
+    super_cat_df = super_cat_df.drop(columns=['s_SkyCoord', 'h_SkyCoord'])
+
+    """
+    Filter by both 5 and 20 arcsec. Gives us a bit of a spread of stars we're using, to see how things vary.
+    """
+    # center_coord = SkyCoord('18:18:35.9543 -13:45:20.364', unit=(u.hourangle, u.deg), frame='fk5') # My Paper 1 center
+    center_coord = SkyCoord(274.67, -13.78, unit=u.deg, frame='fk5') # Stoop center
+    # 274.67, -13.78 is the Stoop center coord
+    # filter_radius = 3.90751*u.arcmin # my original number was like 3.90751*u.arcmin; I don't know why.. it's not even exactly 2 pc, though very close
+    filter_radius_small = 5*u.arcmin
+    super_cat_df = vizier_queries.filter_by_within_range(super_cat_df, center_coord, radius_arcmin=filter_radius_small)
+    filter_radius_col_name_small = super_cat_df.columns[-1]
+    # df = df[df['is_within_3.9_arcmin']]
+    # filter_stub += "_ltxarcmin"
+    filter_radius_large = 20*u.arcmin
+    super_cat_df = vizier_queries.filter_by_within_range(super_cat_df, center_coord, radius_arcmin=filter_radius_large)
+    filter_radius_col_name_large = super_cat_df.columns[-1]
+    # print(super_cat_df.columns)
+    # print(filter_radius_col_name_small, filter_radius_col_name_large)
+
+    """
+    Throw out 24 stars which won't work with scoby in either H or S
+    i.e. they're too late-type in both / late in one and not catalogged in other
+    """
+    super_cat_df = super_cat_df.loc[(super_cat_df["h_"+"log10FUV_flux_solLum"] > 0) | (super_cat_df["s_"+"log10FUV_flux_solLum"] > 0)]
+
+
+    """
+    Throw out 3 stars outside 20 arcmin from cluster core
+    """
+    super_cat_df = super_cat_df.loc[super_cat_df[filter_radius_col_name_large]]
+
+    """
+    Reset the DataFrame index now, and sort by RA
+    """
+    super_cat_df = super_cat_df.sort_values(by=["RA"])
+    super_cat_df.index = list(range(1, len(super_cat_df)+1))
+
+    """
+    Throw out 17 stars outside 5 arcmin from cluster core
+    """
+    fuv_cutoff = 4.49
+    if True:
+        super_cat_df = super_cat_df.loc[super_cat_df[filter_radius_col_name_small]]
+
+        """
+        Under the 5 arcmin filter, filter also by 4.49 FUV.
+        Do this separately for H and S
+        """
+        select = 0 # 0 is no FUV filtering. 1 is H, 2 is S
+        if select == 1:
+            super_cat_df = super_cat_df.loc[(super_cat_df["h_"+"log10FUV_flux_solLum"] > fuv_cutoff)]
+        elif select == 2:
+            super_cat_df = super_cat_df.loc[(super_cat_df["s_"+"log10FUV_flux_solLum"] > fuv_cutoff)]
+
+
+    # print(super_cat_df[['Stoop_tC1_idx', 'Hillenbrand_t3A_idx']])
+    #### 80 unique stars between the two OB catalogs. Some of these don't have good types, like "Be" or other later Bs
+
+    # Checking how many O stars in each catalog and their crossover
+    if False:
+        s_type_O = super_cat_df['s_SpType'].apply(lambda x: 'O' in str(x))
+        h_type_O = super_cat_df['h_SpType'].apply(lambda x: 'O' in str(x))
+        super_cat_df = super_cat_df[s_type_O & ~h_type_O][['h_SpType', 's_SpType']]
+        print(super_cat_df)
+
+    fuv_cutoff_col_stub = f"FUVgt{fuv_cutoff:.2f}"
+    if True:
+        for prefix in ["h_", "s_"]:
+            super_cat_df[prefix+fuv_cutoff_col_stub] = ""
+            super_cat_df[prefix+fuv_cutoff_col_stub].mask(super_cat_df[prefix+"log10FUV_flux_solLum"] > fuv_cutoff, "X", inplace=True)
+        super_cat_df["is_within_small"] = ""
+        super_cat_df["is_within_small"].mask(super_cat_df[filter_radius_col_name_small], "X", inplace=True)
+        # super_cat_df["is_within_large"] = ""
+        # super_cat_df["is_within_large"].mask(super_cat_df[filter_radius_col_name_large], "X", inplace=True)
+
+        if False:
+            # Count the number of stars in each filter and each catalog
+            for prefix in ["h_", "s_"]:
+                for frcn in [filter_radius_col_name_small, filter_radius_col_name_large]:
+                    for whether_fuv_cutoff in range(3):
+                        whether_fuv_cutoff_str = ["", "has_fuv", fuv_cutoff_col_stub][whether_fuv_cutoff]
+                        catalog_stub = prefix[0].upper()
+                        if whether_fuv_cutoff == 0:
+                            count = sum(super_cat_df[frcn] & super_cat_df[prefix+"log10FUV_flux_solLum"].notnull())
+                        elif whether_fuv_cutoff == 1:
+                            count = sum(super_cat_df[frcn] & (super_cat_df[prefix+"log10FUV_flux_solLum"] > 0))
+                        else:
+                            count = sum(super_cat_df[frcn] & (super_cat_df[prefix+"log10FUV_flux_solLum"] > fuv_cutoff))
+                        stub = f"{catalog_stub} {frcn} {whether_fuv_cutoff_str}"
+                        print(f"{stub:<40} {count}")
+                print()
+
+        super_cat_df["DEBUG"] = ""
+        # condition = super_cat_df["Hillenbrand_t3A_idx"].notnull() & super_cat_df["Stoop_tC1_idx"].isnull() & super_cat_df["is_within_small"]
+        # condition = (super_cat_df["h_"+"log10FUV_flux_solLum"] > 0) | (super_cat_df["s_"+"log10FUV_flux_solLum"] > 0)
+        # condition = ~(super_cat_df["h_"+"log10FUV_flux_solLum"] > 0) & ~(super_cat_df["s_"+"log10FUV_flux_solLum"] > 0)
+        condition = (super_cat_df["h_"+"log10FUV_flux_solLum"] > 0) & (super_cat_df["s_"+"log10FUV_flux_solLum"] > 0)
+        print("cond", sum(condition))
+        print()
+        super_cat_df["DEBUG"].mask(condition, "X", inplace=True)
+
+        super_cat_df['IN_BOTH'] = ""
+        super_cat_df['IN_BOTH'].mask(super_cat_df["Hillenbrand_t3A_idx"].notnull() & super_cat_df["Stoop_tC1_idx"].notnull(), "X", inplace=True)
+        print("BOTH (intersection)", sum(super_cat_df["Hillenbrand_t3A_idx"].notnull() & super_cat_df["Stoop_tC1_idx"].notnull()))
+        print("ALL (union) (len(df))", len(super_cat_df))
+        print("IN S", sum(super_cat_df["Stoop_tC1_idx"].notnull()))
+        print("IN H", sum(super_cat_df["Hillenbrand_t3A_idx"].notnull()))
+
+        if False:
+            # Trim down to 5 arcmin and either S or H > fuv_cutoff
+            super_cat_df = super_cat_df.loc[super_cat_df[filter_radius_col_name_small] & ((super_cat_df["h_log10FUV_flux_solLum"] > fuv_cutoff) | (super_cat_df["s_log10FUV_flux_solLum"] > fuv_cutoff))]
+        elif False:
+            # Trim down to 5 arcmin
+            super_cat_df = super_cat_df.loc[super_cat_df[filter_radius_col_name_small]]
+
+        super_cat_df = super_cat_df[["RA", "DE", "Hillenbrand_t3A_idx", "Stoop_tC1_idx", "DEBUG", "h_log10FUV_flux_solLum", "s_log10FUV_flux_solLum", "h_SpType", "s_SpType", f"h_{fuv_cutoff_col_stub}", f"s_{fuv_cutoff_col_stub}", "is_within_small"]]
+        # super_cat_df
+        super_cat_df.drop(columns=[x for x in super_cat_df.columns if "SkyCoord" in x]).to_html("/home/ramsey/Downloads/hillenbrand_stoop.html", na_rep="")
+        # super_cat_df.to_csv(catalog.utils.m16_data_path + "catalogs/HS_super_catalog.csv", na_rep="")
+
+
 if __name__ == "__main__":
-    df = poke_around_in_stoop_catalog()
+    # df = poke_around_in_stoop_catalog()
+
+    ## Crossmatching!
+    crossmatch_stoop_and_hillenbrand()
