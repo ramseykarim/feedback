@@ -111,9 +111,10 @@ large_map_filenames = {
         '12co10-nob': "nobeyama/FGN_01700+0000_2x2_12CO_v1.00_cube.fits", '13co10-nob': "nobeyama/FGN_01700+0000_2x2_13CO_v1.00_cube.fits",
         'c18o10-nob': "nobeyama/FGN_01700+0000_2x2_C18O_v1.00_cube.fits",
         '12co32-pmo': "apex/M16_12CO3-2_truncated.PMObeam.fits", '13co32-pmo': "apex/M16_13CO3-2_truncated.PMObeam.fits", # convolved APEX CO 3-2 to PMO 1-0 beam
+        '12co32-2kms': "apex/M16_12CO3-2_truncated.rebin2kms.fits", # 2kms rebin for channel maps
         'rrl': "thor_vla/RRL_stacked_L17.50_deg.m16cutout.fits",
 }
-descriptor_names = {'pmo': "PMO", 'nob': "NRO", '30': "30beam"}
+descriptor_names = {'pmo': "PMO", 'nob': "NRO", '30': "30beam", '2kms': "2km/s rebin"}
 herschel_path = "herschel/anonymous1603389167/1342218995/level2_5"
 photometry_filenames = {
     '8um': "spitzer/SPITZER_I4_mosaic_ALIGNED.fits", '250um': "extdPSW/hspirepsw696_25pxmp_1823_m1335_1342218995_1342218996_1462565962570.fits.gz",
@@ -1353,6 +1354,45 @@ def calculate_cii_column_density(filling_factor=1.0, velocity_limits=None, cutou
     print(savename)
     hdul.writeto(savename, overwrite=True)
 
+
+def calculate_cii_column_density_detection_threshold():
+    """
+    November 7, 2023
+    Make very simple assumptions and find the column density of a 3 km/s wide line with 1 K peak temperature.
+    """
+    # Velocity array
+    v_arr = np.arange(-10, 10.1, 0.5) * kms
+    # linewidth
+    fwhm = 3 * kms
+    # Gaussian model
+    g = cps2.models.Gaussian1D(amplitude=1, mean=0, stddev=(fwhm.to_value() / 2.355))
+    t_arr = g(v_arr.to_value()) * u.K
+
+    if False:
+        plt.plot(v_arr.to_value(), t_arr.to_value())
+        plt.show()
+
+    rest_freq = 0.1900536900000e13 * u.Hz # right out of the header
+    freq_axis = v_arr.to(u.Hz, equivalencies=u.doppler_radio(rest_freq))
+    hnu_kB = const.h * rest_freq / const.k_B
+    g0, g1 = 2, 4 # lower, upper
+    A10 = 10**(-5.63437) / u.s # Einstein A
+    filling_factor = 1.0
+    # Let Tex be 100 (but change it and check)
+    Tex = 70 * u.K
+
+    hnukBTex = hnu_kB/Tex
+    Z = g0 + g1*np.exp(-hnukBTex) # hnu_kB = Eu/kB since ground is 0 energy (might also be ok if not, but it's definitely ok in this case)
+    exp_hnukBTex = np.exp(hnukBTex)
+    channel_tau = -1*np.log(1 - ((t_arr / (filling_factor * hnu_kB)) * (exp_hnukBTex - 1))) # 3d cube
+    column_constants = (8*np.pi * (rest_freq / const.c)**2) / (g1*A10)
+    channel_column = (
+        column_constants * channel_tau * Z * (exp_hnukBTex / (1 - np.exp(-hnukBTex)))
+    ).decompose()
+    integrated_column = np.trapz(channel_column[::-1], x=freq_axis[::-1], axis=0).to(u.cm**-2)
+    integrated_H_column = integrated_column / Cp_H_ratio
+
+    print(integrated_H_column)
 
 
 
@@ -2972,7 +3012,34 @@ def cii_channel_maps():
 def co_channel_maps():
     """
     Do this!! need to rebin the CO 3-2, so that'll take some time...
+
+    November 17, 2023
+    Only now getting around to this, this function name has been a placeholder since the cii_channel_maps()
+    one was written, end of September...
+
+    Rebin the 12co32 spectra to 2 km/s. Use the same cii-30 limits, so 5 to 41 (inclusive) in steps of 2 (odd numbers).
     """
+    # Rebin
+    if False:
+        fn = get_map_filename("12co32")
+        cube = cube_utils.CubeData(fn)
+        full_path = cube.full_path
+        cube = cube.data.spectral_slab(3*kms, 43*kms)
+        channel_maps_utils.rebin_spectra(cube, velocity_limits=(5, 41, 2), name="12co32", data_filename=full_path)
+        print("done")
+    fn = get_map_filename("12co32-2kms")
+    cube = cube_utils.CubeData(fn)
+    channel_maps_utils.channel_maps_figure(
+        cube.data, name="12co32-2kms", grid_shape=(5, 4), figsize=(12, 13),
+        velocity_limits=(5, 41), panel_offset=0, vmin=0, vmax=25,
+        text_y=0.92, text_x=0.05, ha='left', tick_labelrotation=40, tick_labelpad=20,
+        left=0.08, right=0.89, bottom=0.08, cmap='plasma',
+        figure_save_path=catalog.utils.todays_image_folder(),
+        metadata=catalog.utils.create_png_metadata(title="channel maps 12co32-2kms rebin; channel_maps.py functions",
+            file=__file__, func="co_channel_maps")
+    )
+    print("done")
+
 
 
 def peak_T_velocity_map():
@@ -3159,7 +3226,10 @@ if __name__ == "__main__":
     ####
     ## Save moment 0 to FITS
     ####
-    # save_moment0(line_stub='12co32', velocity_limits=(18*kms, 21*kms), cutout_reg_stub='N19')
+    # save_moment0(line_stub='12co32', velocity_limits=(23*kms, 27*kms), cutout_reg_stub=None)
+    # line = '12co10-nob'
+    # save_moment0(line_stub=line, velocity_limits=(21*kms, 27*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='12co10-nob', velocity_limits=(23*kms, 27*kms), cutout_reg_stub='med-large')
 
 
     """
@@ -3205,7 +3275,7 @@ if __name__ == "__main__":
     # pv_slice_series_overlay()
 
     """
-    CO column
+    CO/CII column
     """
     # find_co10_noise()
     # velocity_limits = {
@@ -3217,12 +3287,14 @@ if __name__ == "__main__":
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
 
+    # calculate_cii_column_density_detection_threshold()
 
     """
     Channel maps/movies
     """
     # cii_channel_maps()
     # channel_movie('ciiAPEX', vel_lims=(0, 10))
+    co_channel_maps()
 
     """
     Spectra
@@ -3239,8 +3311,8 @@ if __name__ == "__main__":
     # plot_spectra(reg_set_number=5, line_set_number=3, velocities_to_mark=(8,))
 
     # N19 shell stuff; N19_points_all_across and _2; reg sets 6 and 7
-    for i in (6,7):
-        plot_spectra(reg_set_number=i, line_set_number=2, velocities_to_mark=(17, 18, 19, 20, 21))
+    # for i in (6,7):
+    #     plot_spectra(reg_set_number=i, line_set_number=2, velocities_to_mark=(17, 18, 19, 20, 21))
 
     """
     Misc

@@ -438,19 +438,24 @@ def poke_around_in_stoop_catalog(return_df_early=False, filter=None):
     return df
 
 
-def make_cat_resolver(spectral_types_column):
+def make_cat_resolver(spectral_types_column, is_list=False):
     """
     September 7, 2023
+    Set is_list=True if spectral_types_column is iterable on its own and doesn't have a ".values" attribute
     """
     scoby.spectral.stresolver.UNCERTAINTY = False
     powr_tables = {x: scoby.spectral.powr.PoWRGrid(x) for x in ('OB',)}
     cal_tables = scoby.spectral.sttable.STTable(*catalog.spectral.martins.load_tables_df())
     ltables = scoby.spectral.leitherer.LeithererTable()
-    catr = scoby.spectral.stresolver.CatalogResolver(spectral_types_column.values, calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
+    if is_list:
+        sptypes = spectral_types_column
+    else:
+        sptypes = spectral_types_column.values
+    catr = scoby.spectral.stresolver.CatalogResolver(sptypes, calibration_table=cal_tables, leitherer_table=ltables, powr_dict=powr_tables)
     return catr
 
 
-def crossmatch_stoop_and_hillenbrand():
+def crossmatch_stoop_and_hillenbrand(**kwargs):
     """
     October 31, 2023. Happy Halloween!
     Finally doing the crossmatching. I am taking notes in today's notes,
@@ -464,10 +469,10 @@ def crossmatch_stoop_and_hillenbrand():
         vizier_queries.m16_stars(return_df_early=True, filter=0)
     else:
         h_df = pd.read_pickle(h_df_filename)
-    print(h_df.columns)
+    # print(h_df.columns)
     # Get a SkyCoord array from Hillenbrand
     h_sc = SkyCoord(h_df['SkyCoord'].values)
-    print(f"H cat has {h_sc.size} items")
+    # print(f"H cat has {h_sc.size} items")
 
     # Stoop
     s_df_filename = "/home/ramsey/Documents/Research/Feedback/m16_data/catalogs/stoop_stars.pkl"
@@ -475,9 +480,9 @@ def crossmatch_stoop_and_hillenbrand():
         s_df = poke_around_in_stoop_catalog(return_df_early=True, filter=0)
     else:
         s_df = pd.read_pickle(s_df_filename)
-    print(s_df.columns)
+    # print(s_df.columns)
     s_sc = SkyCoord(s_df['SkyCoord'].values)
-    print(f"S cat has {s_sc.size} items")
+    # print(f"S cat has {s_sc.size} items")
 
     h_idx_xmatch, h_to_s_sep, _ = s_sc.match_to_catalog_sky(h_sc)
     s_idx_xmatch, s_to_h_sep, _ = h_sc.match_to_catalog_sky(s_sc)
@@ -627,22 +632,43 @@ def crossmatch_stoop_and_hillenbrand():
     super_cat_df = super_cat_df.sort_values(by=["RA"])
     super_cat_df.index = list(range(1, len(super_cat_df)+1))
 
+
+    # Do N19 here and return
+    if kwargs.get("n19", None):
+        print("Doing N19 and exiting")
+        n19_star_scoby(super_cat_df)
+        return
+
+
     """
     Throw out 17 stars outside 5 arcmin from cluster core
     """
     fuv_cutoff = 4.49
-    if True:
+
+    if kwargs.get("filter_select", None) is not None:
+        print("Using kwargs filter_select", kwargs.get("filter_select"))
+        filter_select = kwargs.get("filter_select")
+    else:
+        # Manually select 0 filter
+        print("Manually setting filter_select", filter_select)
+        filter_select = 0 # 0 is 20 arcmin, 1 is 5 arcmin no FUV filtering, 2 is 5 arcmin > fuv_cutoff
+
+    if kwargs.get("catalog_select", None) is not None:
+        print("Using kwargs catalog_select", kwargs.get("catalog_select"))
+        catalog_select = kwargs.get("catalog_select")
+    else:
+        # Manually select H catalog
+        print("Manually setting catalog_select", catalog_select)
+        catalog_select = "H" # S or H
+    if filter_select > 0:
         super_cat_df = super_cat_df.loc[super_cat_df[filter_radius_col_name_small]]
 
         """
         Under the 5 arcmin filter, filter also by 4.49 FUV.
         Do this separately for H and S
         """
-        select = 0 # 0 is no FUV filtering. 1 is H, 2 is S
-        if select == 1:
-            super_cat_df = super_cat_df.loc[(super_cat_df["h_"+"log10FUV_flux_solLum"] > fuv_cutoff)]
-        elif select == 2:
-            super_cat_df = super_cat_df.loc[(super_cat_df["s_"+"log10FUV_flux_solLum"] > fuv_cutoff)]
+        if filter_select == 2:
+            super_cat_df = super_cat_df.loc[(super_cat_df[catalog_select.lower()+"_log10FUV_flux_solLum"] > fuv_cutoff)]
 
 
     # print(super_cat_df[['Stoop_tC1_idx', 'Hillenbrand_t3A_idx']])
@@ -655,6 +681,7 @@ def crossmatch_stoop_and_hillenbrand():
         super_cat_df = super_cat_df[s_type_O & ~h_type_O][['h_SpType', 's_SpType']]
         print(super_cat_df)
 
+    # Mark the filter criteria for visualization
     fuv_cutoff_col_stub = f"FUVgt{fuv_cutoff:.2f}"
     if True:
         for prefix in ["h_", "s_"]:
@@ -665,6 +692,8 @@ def crossmatch_stoop_and_hillenbrand():
         # super_cat_df["is_within_large"] = ""
         # super_cat_df["is_within_large"].mask(super_cat_df[filter_radius_col_name_large], "X", inplace=True)
 
+    # Other debugging
+    if False:
         if False:
             # Count the number of stars in each filter and each catalog
             for prefix in ["h_", "s_"]:
@@ -705,14 +734,136 @@ def crossmatch_stoop_and_hillenbrand():
             # Trim down to 5 arcmin
             super_cat_df = super_cat_df.loc[super_cat_df[filter_radius_col_name_small]]
 
-        super_cat_df = super_cat_df[["RA", "DE", "Hillenbrand_t3A_idx", "Stoop_tC1_idx", "DEBUG", "h_log10FUV_flux_solLum", "s_log10FUV_flux_solLum", "h_SpType", "s_SpType", f"h_{fuv_cutoff_col_stub}", f"s_{fuv_cutoff_col_stub}", "is_within_small"]]
+
+    """
+    Run scoby's CatalogResolver
+    First just to add to the table, each star individually
+    """
+    if False:
+        for catalog_select in ("S", "H"):
+            # Use each catalog's spectral types to generate star properties for each system
+            this_catalog_stars_idxs = (super_cat_df[catalog_select.lower()+"_log10FUV_flux_solLum"] > 0)
+            catr = make_cat_resolver(super_cat_df.loc[this_catalog_stars_idxs, catalog_select.lower()+"_SpType"])
+            fuv_flux_array = u.Quantity([x[0] for x in catr.get_array_FUV_flux()])
+            # super_cat_df["DEBUG"] = np.log10(fuv_flux_array.to_value()) / super_cat_df["h_log10FUV_flux_solLum"]
+            mech_lum_array = u.Quantity([x[0] for x in catr.get_array_mechanical_luminosity()]).to(u.erg/u.Myr)
+            super_cat_df.loc[this_catalog_stars_idxs, catalog_select.lower()+"_"+'log10_mech_lum_'+str(mech_lum_array.unit).replace(' ', '')] = np.log10(mech_lum_array.to_value())
+        print(super_cat_df.columns)
+
+    """
+    Now run scoby on the entire selected catalog
+    """
+    if True:
+        """
+        Trim the catalog so that only the members valid under the *selected* catalog are present
+        i.e. if we are doing the S catalog, get rid of any members whose S types won't work with scoby
+        This can be done with FUV > 0. The types that don't work have FUV = -inf
+        For these particular catalogs and filters, this gets rid of 1 S star which has valid H type but later S type
+        """
+        super_cat_df = super_cat_df.loc[(super_cat_df[catalog_select.lower()+"_log10FUV_flux_solLum"] > 0)]
+        super_cat_df["cat"] = catalog_select
+
+        # Print even more different stuff
+        if True:
+            print("Catalog / Filter:", catalog_select, "/", filter_select)
+            print("Total catalog size", len(super_cat_df))
+            ebv = super_cat_df['s_E(B-V)'].mask(super_cat_df['s_E(B-V)'].apply(lambda x: not str(x).strip()), float('NaN')).astype(float)
+            Rv = 3.56 # 3.56 is what Stoop used
+            av = ebv*Rv
+            nh_av = 1.9
+            nh = av * nh_av
+            print(f"E(B-V) mean median std {np.nanmean(ebv):.2f}, {np.nanmedian(ebv):.2f}, {np.nanstd(ebv):.2f}")
+            print(f"Av (Rv = {Rv}) mean median std {np.nanmean(av):.2f}, {np.nanmedian(av):.2f}, {np.nanstd(av):.2f}")
+            print(f"N_H (Rv = {Rv}, N_H/Av = 1.9e21) mean median std {np.nanmean(nh):.2f}, {np.nanmedian(nh):.2f}, {np.nanstd(nh):.2f}")
+            return
+
+
+
+        # CatalogResolver
+        catr = make_cat_resolver(super_cat_df[catalog_select.lower()+"_SpType"])
+
+        # Print bunch of stuff
+        if False:
+            for s in catr.star_list:
+                print(s.spectral_types)
+
+            print("Catalog / Filter:", catalog_select, "/", filter_select)
+            print("Total catalog size", len(super_cat_df), "scoby size", len(catr.star_list))
+
+            mdot_med, mdot_err = catr.get_mass_loss_rate()
+            mvflux_med, mvflux_err = catr.get_momentum_flux()
+            ke_med, ke_err = catr.get_mechanical_luminosity()
+            fuv_tot_med, fuv_tot_err = catr.get_FUV_flux()
+            ionizing_tot_med, ionizing_tot_err = catr.get_ionizing_flux()
+            print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
+            print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
+            print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.Myr))}")
+            print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
+            print(f"IONIZING PHOTON FLUX: {print_val_err(ionizing_tot_med, ionizing_tot_err)}") # units should be 1/time
+            mass_med, mass_err = catr.get_stellar_mass()
+            lum_med, lum_err = catr.get_bolometric_luminosity()
+            print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")
+            print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
+            print(f"MECH/FUV LUM: {(ke_med/fuv_tot_med).decompose():.1E}; MECH/total LUM: {(ke_med/lum_med).decompose():.1E}")
+        # print different stuff
+        if True:
+            print(f"| {catalog_select} | {filter_select} | ", end="")
+            fuv_tot_med, _ = catr.get_FUV_flux()
+            ke_med, _  = catr.get_mechanical_luminosity()
+            mdot_med, _ = catr.get_mass_loss_rate()
+            ionizing_tot_med, _ = catr.get_ionizing_flux()
+            mass_med, _ = catr.get_stellar_mass()
+            print(f"{fuv_tot_med.to_value():.1e} | {ke_med.to(u.erg/u.Myr).to_value():.1e} | ", end="")
+            print(f"{mdot_med.to(u.solMass/u.Myr).to_value():.1f} | ", end="")
+            print(f"{ionizing_tot_med.to_value():.1e} | {int(round(mass_med.to_value()))} | {len(super_cat_df)} |")
+
+
+    if False:
+        """ Save """
+        super_cat_df = super_cat_df[["Hillenbrand_t3A_idx", "Stoop_tC1_idx", "h_log10FUV_flux_solLum", "s_log10FUV_flux_solLum", "h_log10_mech_lum_erg/Myr", "s_log10_mech_lum_erg/Myr", "h_SpType", "s_SpType", f"h_{fuv_cutoff_col_stub}", f"s_{fuv_cutoff_col_stub}", "is_within_small"]]
         # super_cat_df
+        print("Final df length", len(super_cat_df))
         super_cat_df.drop(columns=[x for x in super_cat_df.columns if "SkyCoord" in x]).to_html("/home/ramsey/Downloads/hillenbrand_stoop.html", na_rep="")
         # super_cat_df.to_csv(catalog.utils.m16_data_path + "catalogs/HS_super_catalog.csv", na_rep="")
+
+
+def n19_star_scoby(df):
+    """
+    Run scoby on the single N19 star
+    This function is meant to be called inside crossmatch_stoop_and_hillenbrand()
+    The argument should be the complete catalog DataFrame; index should have already been reset
+
+    N19 is powered (probably) by H 584 / S 22, an O9 V in both. That's #4 in my catalog
+    """
+    ebv = df['s_E(B-V)'].mask(df['s_E(B-V)'].apply(lambda x: not str(x).strip()), float('NaN')).astype(float)
+    print(ebv*3.1)
+    n19_row = df.loc[4]
+    catr = make_cat_resolver([n19_row['s_SpType']], is_list=True)
+    print(catr.star_list)
+    mdot_med, mdot_err = catr.get_mass_loss_rate()
+    mvflux_med, mvflux_err = catr.get_momentum_flux()
+    ke_med, ke_err = catr.get_mechanical_luminosity()
+    fuv_tot_med, fuv_tot_err = catr.get_FUV_flux()
+    ionizing_tot_med, ionizing_tot_err = catr.get_ionizing_flux()
+    print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
+    print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
+    print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.Myr))}")
+    print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
+    print(f"IONIZING PHOTON FLUX: {print_val_err(ionizing_tot_med, ionizing_tot_err)}") # units should be 1/time
+    mass_med, mass_err = catr.get_stellar_mass()
+    lum_med, lum_err = catr.get_bolometric_luminosity()
+    print(f"STELLAR MASS: {print_val_err(mass_med, mass_err)}")
+    print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
+    print(f"MECH/FUV LUM: {(ke_med/fuv_tot_med).decompose():.1E}; MECH/total LUM: {(ke_med/lum_med).decompose():.1E}")
+    # print(n19_row)
 
 
 if __name__ == "__main__":
     # df = poke_around_in_stoop_catalog()
 
     ## Crossmatching!
-    crossmatch_stoop_and_hillenbrand()
+    # for sh in "HS":
+    #     for i in range(3):
+    #         crossmatch_stoop_and_hillenbrand(catalog_select=sh, filter_select=i)
+
+    crossmatch_stoop_and_hillenbrand(catalog_select="S", filter_select=1)

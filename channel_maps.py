@@ -21,7 +21,7 @@ default_data_file_directory = "/home/ramsey/Downloads"
 # Wherever the figures go
 default_figure_save_path = "/home/ramsey/Downloads" # 2023-08-10
 
-data_filepaths = { # Original data
+default_data_filepaths = { # Original data
     'rcw120': os.path.join(default_data_file_directory, "rcw120-cii-20arcsec-0-5kms.fits"),
     'rcw49': os.path.join(default_data_file_directory, "rcw49-cii-25arcsec-1kms.fits"),
     'ngc1977': os.path.join(default_data_file_directory, "ngc1977-data.fits"),
@@ -71,7 +71,7 @@ bottom=(0.08 if source=='rcw49' else 0.06)
 """
 
 
-def rebin_spectra(source):
+def rebin_spectra(source, **kwargs):
     """
     August 10, 2023
     Smooth and rebin the spectra so that channels are sampled more coarsely.
@@ -80,12 +80,47 @@ def rebin_spectra(source):
     ** This needs debugging, as I've renamed a bunch of things to make this more general and useful in my own code **
 
     :param source: the string label of the region (e.g. 'ngc1977', etc)
+    :param kwargs: everything else
+
+    Some of the keyword arguments
+    :param velocity_limits: tuple of 3 floats (assumed km/s) for (low, high, step) channel descriptions.
+        The (low, high) limits are inclusive; this is not the range/arange call signature exactly.
+        The actual limits will be calcualted as np.arange(low, high+step, step).
     """
-    # Unpack arguments using the 'source' label; all are assumed to be in km/s
-    v_lo, v_hi, new_dv = default_velocity_ranges[source]
-    # Load data cube
-    data_filename = os.path.abspath(data_filepaths[source])
-    cube = SpectralCube.read(data_filename)
+    # Load data cube and parse arguments
+    if source in default_data_filepaths:
+        # Check defaults dict
+        data_filename = default_data_filepaths[source]
+        cube = SpectralCube.read(data_filename)
+        # Unpack arguments using the 'source' label; all are assumed to be in km/s
+        v_lo, v_hi, new_dv = default_velocity_ranges[source]
+    else:
+        # Not in defaults dict. Must have a velocity_limits argument then
+        if "velocity_limits" not in kwargs:
+            raise RuntimeError("Need to give \'velocity_limits\' kwarg. (start, stop (inclusive), step) float tuple, assumed km/s.")
+        else:
+            assert len(kwargs["velocity_limits"]) == 3 # start, stop, step (stop is inclusive). Float, assumed km/s
+            v_lo, v_hi, new_dv = kwargs["velocity_limits"]
+        # Check what the data source is, cube or filename
+        if isinstance(source, SpectralCube):
+            cube = source
+            if "name" not in kwargs:
+                raise RuntimeError("Need to give \'name\' kwarg if source is a SpectralCube object.")
+            source = kwargs["name"]
+            if "data_filename" not in kwargs:
+                raise RuntimeError("Need to give \'data_filename\' kwarg (absolute path) if source is a SpectralCube object.")
+            data_filename = kwargs['data_filename']
+        else:
+            try:
+                os.path.exists(source)
+                # Filepath
+                data_filename = source
+                cube = SpectralCube.read(data_filename)
+                if "name" not in kwargs:
+                    raise RuntimeError("Need to give \'name\' kwarg if source is a filepath.")
+                source = kwargs["name"]
+            except TypeError as e:
+                raise RuntimeError(f"Cannot find a source for data <{source}>") from e
     # Check units
     try:
         # See if the cube can be converted to Kelvins easily
