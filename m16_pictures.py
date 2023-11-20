@@ -3486,12 +3486,12 @@ if __name__ == "__main__":
     # paper_channel_maps()
     # paper_pv_diagrams(choose_file=8) # choose_file=7 and 8
     # multi_panel_moment_images()
-    paper_spectra()
+    # paper_spectra()
     # background_samples_figure()
     # paper_oi_cii_spectra()
     # paper_cii_mol_overlay()
 
 
-
+    print("Did you mean m16_pictures_2?")
 
     # irac8um_to_cii_figure_2p5beam()

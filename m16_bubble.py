@@ -1835,8 +1835,6 @@ def convolve_32_to_10_pmo():
     print("done")
 
 
-
-
 def real_medium_spectra(velocity_index=0):
     """
     May 2, 2023
