@@ -75,7 +75,7 @@ def big_average_spectrum_figure():
             im = ref_ax.imshow(ref_img.to_value(), origin='lower')
             fig.colorbar(im, ax=ref_ax, label=f"{get_data_name(line_stub)} {make_vel_stub(ref_vel_lims)} ({ref_img.unit.to_string('latex_inline')})", orientation='horizontal')
         else:
-            # TODO: reproject to ref wcs (which then needs to be saved) and plot footprint
+            # Reproject to ref wcs (which then needs to be saved) and plot footprint
             fp = np.isfinite(cube_obj.data[0, :, :].to_value()).astype(float)
             fp = reproject_interp((fp, cube_obj.wcs_flat), ref_wcs, shape_out=ref_shape, return_footprint=False)
             ref_ax.contour(fp, levels=[0.5], linestyles="--", colors='grey')
@@ -179,5 +179,66 @@ def full_picture_integrated_intensity():
     plt.show()
 
 
+def m16_expanding_shell_spectra():
+    """
+    November 28, 2023
+    Averaged spectra from the M16 west cavity to show blue (questionable) and red (definitely good) emission
+    Circles for regions in catalogs/m16_west_cavity_spec_regions.reg
+    Follow big_average_spectrum_figure() for reg extraction code.
+    """
+    reg_filename_short = "catalogs/m16_west_cavity_spec_regions.reg"
+    spec_labels = ("1", "2")
+    colors = marcs_colors[:2][::-1]
+    savename_stub = "west_cavity_3am_circles"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    # Fig
+    fig = plt.figure(figsize=(13, 6))
+    # Axes
+    gs = fig.add_gridspec(2, 3)
+    img_axes = []
+    # Load cube
+    line_stub = "cii"
+    fn = get_map_filename(line_stub)
+    cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
+    # Reference contour moment image
+    ref_vel_lims = (12*kms, 30*kms)
+    ref_mom0 = cube_obj.data.spectral_slab(*ref_vel_lims).moment0()
+    # Moment images
+    # velocity_intervals = [(2, 12), (35, 45)]
+    velocity_intervals = [(5, 15), (30, 40)]
+    for i, vel_lims in enumerate(velocity_intervals):
+        vel_lims = tuple(v*kms for v in vel_lims)
+        mom0 = cube_obj.data.spectral_slab(*vel_lims).moment0()
+        ax = fig.add_subplot(gs[i, 0], projection=cube_obj.wcs_flat)
+        im = ax.imshow(mom0.to_value(), origin='lower', vmin=-10, vmax=45, cmap='plasma')
+        fig.colorbar(im, ax=ax, label=f"{get_data_name(line_stub)} {make_vel_stub(vel_lims)} ({mom0.unit.to_string('latex_inline')})")
+        ax.contour(ref_mom0.to_value(), levels=np.arange(75, 400, 75), colors='k', linewidths=0.7)
+        # Plot circles
+        for j, reg in enumerate(reg_list):
+            reg.to_pixel(cube_obj.wcs_flat).plot(ax=ax, color=colors[j])
+        img_axes.append(ax)
+    # Spectra, both on same figure
+    spec_ax = fig.add_subplot(gs[:, 1:])
+    for j, reg in enumerate(reg_list):
+        subcube = cube_obj.data.subcube_from_regions([reg])
+        spectrum = subcube.mean(axis=(1, 2))
+        spec_ax.plot(subcube.spectral_axis.to_value(), spectrum.to_value(), color=colors[j], label=spec_labels[j])
+    # Mark moment velocities on spectrum plot
+    for vel_lims in velocity_intervals:
+        plt.axvspan(*vel_lims, color='grey', alpha=0.3)
+    # Extra plot dressing
+    spec_ax.axhline(0, color='grey', linestyle="--", alpha=0.2)
+    spec_ax.set_xlabel("V$_{\\rm LSR}$ " + f"({kms.to_string('latex_inline')})")
+    spec_ax.set_ylabel(f"{get_data_name(line_stub)} line intensity ({spectrum.unit.to_string('latex_inline')})")
+    plt.subplots_adjust(left=0.09, right=0.97, top=0.95, wspace=0.45, bottom=0.09)
+    vel_stub = "-and-".join([make_simple_vel_stub(tuple(v*kms for v in vel_lims)) for vel_lims in velocity_intervals])
+
+    savename = f"expanding_shell_spectra_{line_stub}_{vel_stub}.png"
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
+        metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short}",
+            file=__file__, func="m16_expanding_shell_spectra"))
+
+
+
 if __name__ == "__main__":
-    full_picture_integrated_intensity()
+    m16_expanding_shell_spectra()
