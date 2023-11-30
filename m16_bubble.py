@@ -22,6 +22,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.ticker as ticker
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
+import cmocean
 import sys
 import os
 import glob
@@ -141,6 +142,9 @@ cutout_box_filenames = {
     'med-large': "m16_cutout_box_medium-large.reg", # sort of like the Hill 2012 footprint, includes some of the filament. Goes well outside CII
     'med': "m16_cutout_box_medium.reg", # CII and CO (3-2) footprint, aligned in equatorial (so there will be NaN gaps)
     'blueclump': 'm16_cutout_box_blueshifted_clump.reg', # The IRAC clump that shows up in CII from 6-11 km/s
+    'blueclump-large': 'm16_cutout_box_blueshifted_clump_larger.reg', # Same clump, larger field
+    'blueclump-large2': 'm16_cutout_box_blueshifted_clump_larger2.reg', # Same clump, even larger field
+    'blueclump-zoom': 'm16_cutout_box_blueshifted_clump_zoom.reg', # Same clump, but zoomed in so clump fills image
 }
 vlim_memo = { # hash things somehow and put them here
     '8um': (40, 320), 'irac4': (40, 320),

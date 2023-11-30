@@ -239,6 +239,267 @@ def m16_expanding_shell_spectra():
             file=__file__, func="m16_expanding_shell_spectra"))
 
 
+def m16_blue_clump():
+    """
+    November 29, 2023
+    Highlight the blue clump to show that it is blueshifted and a clump
+    Use 8, 70 micron, and CII and CO spectra.
+
+    Going to implement some memoization to disk to make this routine faster?
+
+    This function uses dictionaries to save info for reuse.
+    """
+    # plot defaults
+    default_label_text_size = 12
+
+    # Select the blue clump field
+    cutout_reg_stub = "blueclump-large2"
+    def _load_helper(stub, reproject_wcs_shape=None):
+        """
+        Now with memoization! because this takes a long time to run if we keep loading the big files
+        """
+        # Check memoization
+        memo_name = f"misc_regrids/{stub}.{cutout_reg_stub}_regrid.fits"
+        try:
+            fn = catalog.utils.search_for_file(memo_name)
+            print(f"Found memoized data {stub} {cutout_reg_stub}")
+        except FileNotFoundError:
+            fn = None
+        # Use fn to tell if memo found or not
+        if fn is None:
+            # Memo not found, load normally
+            img, info = get_2d_map(stub)
+            if reproject_wcs_shape is None:
+                # Cutout using cutout_reg_stub
+                info['cutout'] = misc_utils.cutout2d_from_region(img, info['wcs'], get_cutout_box_filename(cutout_reg_stub), align_with_frame='icrs')
+                info['img'] = info['cutout'].data
+                info['wcs'] = info['cutout'].wcs
+            else:
+                # Reproject using the (wcs, shape) tuple
+                wcs_obj, shape_out = reproject_wcs_shape
+                info['img'] = reproject_interp((img, info['wcs']), wcs_obj, shape_out=shape_out, return_footprint=False)
+                info['wcs'] = wcs_obj
+            assert 'stub' not in info
+            info['stub'] = stub
+
+            # Save memo
+            memo_full_name = f"{catalog.utils.m16_data_path}{memo_name}"
+            hdr = info['wcs'].to_header()
+            hdr['BUNIT'] = str(info['unit'])
+            hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+            hdr['AUTHOR'] = "Ramsey Karim"
+            hdr['CREATOR'] = f"rkarim, via {__file__}.m16_blue_clump"
+            hdr['COMMENT'] = "reprojected to aligned cutout from"
+            hdr['COMMENT'] = cutout_reg_stub
+            hdu = fits.PrimaryHDU(data=info['img'], header=hdr)
+            print(f"Memoizing data for {stub} to {memo_full_name}")
+            hdu.writeto(memo_full_name)
+        else:
+            # Memo found, load memo
+            info = {}
+            data, hdr = fits.getdata(fn, header=True)
+            info['wcs'] = WCS(hdr)
+            info['img'] = data
+            info['unit'] = u.Unit(hdr['BUNIT'])
+        return info
+
+    # The info dicts will carry lots of info in this function. Keep them somewhere accessible
+    img_info_dicts = {}
+    # Load primary 8 micron and trim to blue clump field
+    ref_img_stub = "irac4-large"
+    img_info_dicts[ref_img_stub] = _load_helper(ref_img_stub)
+    # Load in secondary 70 micron image and reproject to primary
+    img2_stub = "160um"
+    img_info_dicts[img2_stub] = _load_helper(img2_stub)
+    # Figure, Axes
+    fig = plt.figure(figsize=(14, 6))
+    gs = fig.add_gridspec(6, 3)
+    def _make_fig_and_plot(stub, grid_loc, vlims=None, key_suffix=""):
+        """
+        Generalized helper for turning arrays into figures in this function.
+        :param key_suffix: string suffix to add to "wcs", "img", and "ax" for a zoomed or otherwise modified cutout
+        """
+        info = img_info_dicts[stub]
+        ax = fig.add_subplot(gs[grid_loc], projection=info['wcs'+key_suffix])
+        if vlims is None:
+            vlims_dict = {}
+        else:
+            vlims_dict = {k: v for k, v in zip(('vmin', 'vmax'), vlims)}
+        im = ax.imshow(info['img'+key_suffix], origin='lower', **vlims_dict, cmap=cmocean.cm.matter)
+        cbar = fig.colorbar(im, ax=ax)
+        info['ax'+key_suffix] = ax
+
+    _make_fig_and_plot(ref_img_stub, (slice(0, 3), 0), vlims=(25, 200))
+    _make_fig_and_plot(img2_stub, (slice(3, 6), 0), vlims=(-0.15, 0.8))  # (0, 2500) # (0, 0.8)
+
+    # Zoom in again with another cutout
+    cutout_reg_stub_zoom = "blueclump-zoom"
+    def _cutout_helper(stub):
+        info = img_info_dicts[stub]
+        img = info['img']
+        # no need to align again
+        info['cutout-zoom'] = misc_utils.cutout2d_from_region(img, info['wcs'], get_cutout_box_filename(cutout_reg_stub_zoom))
+        # don't write over the first cutout, use -zoom suffix to differentiate
+        info['img-zoom'] = info['cutout-zoom'].data
+        info['wcs-zoom'] = info['cutout-zoom'].wcs
+
+    _cutout_helper(ref_img_stub)
+    _cutout_helper(img2_stub)
+
+    _make_fig_and_plot(ref_img_stub, (slice(0, 3), 1), vlims=(40, 120), key_suffix="-zoom")
+    _make_fig_and_plot(img2_stub, (slice(3, 6), 1), vlims=(-0.025, 0.3), key_suffix="-zoom")
+
+    # Overlay regions on zoomed figure and also zoom boxes on larger figure
+    reg_color = "k"
+    reg_filename_short = "catalogs/m16_points_blueshifted_clump.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    box_reg_color = 'k'
+    box_reg = regions.Regions.read(get_cutout_box_filename(cutout_reg_stub_zoom))[0]
+
+    def _plot_reg(stub, reg, key_suffix="", color=None, label=False):
+        """
+        General region plot helper
+        :param label: plot reg.meta['text'] slightly offset from the center of the region
+        """
+        info = img_info_dicts[stub]
+        ax = info['ax'+key_suffix]
+        pixreg = reg.to_pixel(info['wcs'+key_suffix])
+        reg_patch = pixreg.as_artist()
+        # Gotta mess around with the lines vs other patches (from m16_bubble.overlay_moment)
+        if isinstance(reg_patch, Line2D):
+            # Point!!!
+            reg_patch.set(mec=color, marker='o')
+            ax.add_artist(reg_patch)
+        else:
+            # Anything besides Point
+            reg_patch.set(ec=color)
+            ax.add_patch(reg_patch)
+        if label:
+            center = reg.center
+            cra, cdec = center.ra.deg, center.dec.deg
+            dx = (20*u.arcsec).to(u.deg).to_value()
+            dy = (-10*u.arcsec).to(u.deg).to_value()
+            x, y = info['wcs'+key_suffix].world_to_pixel_values(cra + dx, cdec + dy)
+            ax.text(x, y, reg.meta['text'], ha='center', va='center', fontsize=default_label_text_size, color=color)
+
+    for stub in img_info_dicts.keys():
+        for reg in reg_list:
+            # spectrum samples
+            _plot_reg(stub, reg, key_suffix="-zoom", color=reg_color, label=True)
+        # zoom box
+        _plot_reg(stub, box_reg, color=box_reg_color)
+
+    """
+    Load lines and plot spectra
+
+    Using a series of functions to do this; with the right call order, I can
+    avoid loading 2 full cubes at once.
+    I can also plot 3 spectra and only 2 moments if i want
+    """
+
+
+    line_stub_list = ['ciiAPEX', '12co32', '12co10-nob']
+    line_plot_colors = marcs_colors[:3]
+    line_dict = {} # keys are line_stubs, values are dicts containing stuff for each line cube (including entire cube)
+    levels_string = "" # string for contour levels
+    def _load_cube(line_stub, plot_color=None):
+        """
+        :param plot_color: set the spectrum line plot color for this line
+        """
+        # Store cube stuff in a dict for convenient access later, similar to images
+        line_info = {}
+        fn = get_map_filename(line_stub)
+        cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
+        # save stuff to dict
+        line_info['CubeData'] = cube_obj
+        line_info["color"] = plot_color
+        line_dict[line_stub] = line_info
+
+    def _plot_contours(line_stub, img_stub, key_suffix="", velocity_limits=None, levels=None, color='white'):
+        """
+        :param img_stub: select the image to overplot contours on, along with key_suffix
+        :param velocity_limits: float tuple, km/s implied
+        :param color: contour color
+        """
+        line_info = line_dict[line_stub]
+        cube_obj = line_info['CubeData']
+        # Apply velocity limits, assuming float tuple implied km/s
+        if velocity_limits is not None:
+            vel_lims = tuple(v*kms for v in velocity_limits)
+            subcube = cube_obj.data.spectral_slab(*vel_lims)
+        else:
+            subcube = cube_obj.data
+        mom0 = subcube.moment0()
+        ax = img_info_dicts[img_stub]['ax'+key_suffix]
+        mom0_reproj = reproject_interp((mom0.to_value(), mom0.wcs), img_info_dicts[img_stub]['wcs'+key_suffix], shape_out=img_info_dicts[img_stub]['img'+key_suffix].shape, return_footprint=False)
+        cs = ax.contour(mom0_reproj, levels=levels, colors=color, linewidths=0.6, alpha=0.7)
+        # print(line_stub, cs.levels)
+        nonlocal levels_string # scope!!! we finally have to use this!
+        levels_string += line_stub + " " + str(cs.levels) + ". "
+        img_info_dicts[img_stub]['overlaystub'+key_suffix] = line_stub
+
+    spec_axes = {}
+    def _extract_and_plot_spectra(line_stub, reg, grid_loc=None):
+        """
+        Cube already loaded and line info dict exists
+        :param grid_loc: gridspec location for subplot creation
+            grid_loc can be None IFF Axes already exists;
+            will search spec_axes dict for existing Axes using reg.meta['text'] as key
+        """
+        line_info = line_dict[line_stub]
+        cube_obj = line_info['CubeData']
+        pixreg = reg.to_pixel(cube_obj.wcs_flat)
+        j, i = [int(round(c)) for c in pixreg.center.xy]
+        spectrum = cube_obj.data[:, i, j]
+        # Check spec_axes for existing axes, or make one
+        key = reg.meta['text']
+        if key not in spec_axes:
+            spec_axes[key] = fig.add_subplot(gs[grid_loc])
+        ax = spec_axes[key]
+        ax.plot(cube_obj.data.spectral_axis.to_value(), spectrum.to_value(), color=line_info['color'], label=get_data_name(line_stub))
+
+    contour_vel_lims = (7, 10)
+
+    for i, color, line_stub in zip(range(3), line_plot_colors, line_stub_list):
+        # load
+        _load_cube(line_stub, color)
+        # plot contours if not 12co10
+        if '10' not in line_stub:
+            img_stub_for_overlay = [ref_img_stub, img2_stub][i]
+            _plot_contours(line_stub, img_stub_for_overlay, key_suffix="-zoom", velocity_limits=contour_vel_lims, levels=5)
+        for j, reg in enumerate(reg_list):
+            _extract_and_plot_spectra(line_stub, reg, grid_loc=(slice(2*j, 2*(j+1)), 2))
+
+    # Mark up the spectrum plots
+    for i, key in enumerate(spec_axes):
+        ax = spec_axes[key]
+        ax.text(0.1, 0.9, key, color='k', transform=ax.transAxes, fontsize=default_label_text_size, ha='center', va='center')
+        ax.set_xlabel("V$_{\\rm LSR}$ " + f"({kms.to_string('latex_inline')})")
+        ax.set_ylabel(f"Line intensity ({u.K.to_string('latex_inline')})")
+        ax.axvspan(*contour_vel_lims, color='grey', alpha=0.3)
+        ax.axhline(0, color='grey', linestyle="--", alpha=0.2)
+        if i == 0:
+            ax.legend()
+        ax.set_xlim((-5, 30))
+        ax.set_ylim((-3, 15))
+
+    # Mark up the image plots
+    for stub in img_info_dicts.keys():
+        ax = img_info_dicts[stub]['ax']
+        ax.text(0.95, 0.9, get_data_name(stub), color='k', transform=ax.transAxes, fontsize=default_label_text_size, ha='right', va='center')
+        ax = img_info_dicts[stub]['ax-zoom']
+        line_stub = img_info_dicts[stub]['overlaystub-zoom']
+        ax.text(0.95, 0.9, get_data_name(line_stub), color='w', transform=ax.transAxes, fontsize=default_label_text_size-2, ha='right', va='center')
+
+    plt.tight_layout()
+    levels_string = levels_string.rstrip()
+    save_text = f"large:{cutout_reg_stub}. {levels_string}"
+    savename = f"spectra_{cutout_reg_stub_zoom}" + "-".join(line_stub_list) + ".png"
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
+        metadata=catalog.utils.create_png_metadata(title=save_text, file=__file__, func="m16_blue_clump"))
+
+    # plt.show()
+
 
 if __name__ == "__main__":
-    m16_expanding_shell_spectra()
+    m16_blue_clump()
