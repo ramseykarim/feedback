@@ -3242,6 +3242,9 @@ if __name__ == "__main__":
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
     # fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0), line_stub_list=['cii-30', '12co32'])
 
+    # blue clump large PV
+    fast_pv(reg_filename_or_idx=("catalogs/m16_pvs_blueshifted_clump.reg", 0), line_stub_list=['ciiAPEX', '12co32'], velocity_limits=(-5*kms, 50*kms))
+
     ##### make all PVs from a given .reg file
     # error = False
     # i = 0
@@ -3296,7 +3299,7 @@ if __name__ == "__main__":
     """
     # cii_channel_maps()
     # channel_movie('ciiAPEX', vel_lims=(0, 10))
-    co_channel_maps()
+    # co_channel_maps()
 
     """
     Spectra
