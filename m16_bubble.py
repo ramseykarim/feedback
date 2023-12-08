@@ -644,8 +644,8 @@ def co_column_manage_inputs(line='10', velocity_limits=None, cutout_reg_stub=Non
     """ Write results to FITS """
     cutout_reg_filename_stub = "_"+cutout_reg_stub if cutout_reg_stub is not None else ""
     velocity_stub = "_"+make_simple_vel_stub(velocity_limits) if velocity_limits is not None else ""
-    ff_stub = f"{ff:.1f}" if ff is not None else ""
-    savename = os.path.join(save_path, f"column_density_v3_ff{ff_stub}_{thin_cube_stub}{cutout_reg_filename_stub}{velocity_stub}.fits")
+    ff_stub = f"ff{ff:.1f}" if ff is not None else ""
+    savename = os.path.join(save_path, f"column_density_v3_{ff_stub}_{thin_cube_stub}{cutout_reg_filename_stub}{velocity_stub}.fits")
 
     header_pairs = col_dens_calculator.create_header_comments()
 
@@ -2542,7 +2542,7 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX'], velocit
     # If it doesn't have points, ignore the points and use the vector.
     pv_path, point_reg_list, reg_fn_stub = get_pv_and_regions(reg_filename_or_idx)
 
-    fig = plt.figure(figsize=(16, 9))
+    fig = plt.figure(figsize=kwargs.get('figsize', (16, 9)))
     gs = fig.add_gridspec(1, 2, width_ratios=[1, 5], hspace=0, wspace=0)
     ax_ref_img = fig.add_subplot(gs[0,0], projection=ref_wcs)
 
@@ -2569,7 +2569,11 @@ def fast_pv(reg_filename_or_idx=0, line_stub_list=['12co32', 'ciiAPEX'], velocit
     ax_pv = fig.add_subplot(gs[0, 1], projection=WCS(sl0.header))
     ls0, ls1 = line_stub_list
     # Background [0]; can either use Greys(_r) to match wtih plasma(_r) contours, or plasma to match with cool contours
-    im = ax_pv.imshow(sl0.data, origin='lower', cmap='plasma', vmin=0, vmax=_get_pv_vmax(ls0), aspect=(sl0.data.shape[1]/(1.*sl0.data.shape[0])))
+    aspect_ratio = (sl0.data.shape[1]/(1.*sl0.data.shape[0]))
+    print("default aspect", aspect_ratio)
+    if kwargs.get('aspect', None) is not None:
+        aspect_ratio = kwargs.get('aspect')
+    im = ax_pv.imshow(sl0.data, origin='lower', cmap='plasma', vmin=0, vmax=_get_pv_vmax(ls0), aspect=aspect_ratio)
     cs = ax_pv.contour(sl0.data, colors='k', linewidths=1, linestyles=':', levels=_get_levels(ls0))
     pv_cbar = fig.colorbar(im, ax=ax_pv, location='right', label=cube.data.unit.to_string('latex_inline'))
     for l in cs.levels:
@@ -3146,6 +3150,35 @@ def peak_T_and_moment_maps_CO(isotope='12', transition='32', velocity_limits=Non
     hdul.writeto(savename)
 
 
+def convert_pacs_tau_to_coldens():
+    """
+    December 7, 2023
+    Quick one-time use code to convert the tau160 from 70-160 to a column density N_H (total)
+    Use the Cext/H from the paper, 1.9e-25 cm2/H
+    N_H = tau / Cext/H
+    """
+    fn = "herschel/T-tau_colorsolution.fits"
+    full_fn = catalog.utils.search_for_file(fn)
+    cexth = 1.9e-25 * u.cm**2
+    with fits.open(full_fn) as hdul:
+        tau160 = hdul['tau']
+        nhtot = (tau160.data / cexth).to(u.cm**-2)
+        hdr = tau160.header.copy()
+    del hdr['EXTNAME']
+    hdr['BUNIT'] = str(nhtot.unit)
+    hdr['COMMENT'] = "value is total H column N_H"
+    hdr['HISTORY'] = f"tau160 converted to NHtot using Cext(160)/H 1.9e-25 cm2/H"
+    hdr['HISTORY'] = "written by m16_bubble.convert_pacs_tau_to_coldens"
+    hdr['HISTORY'] = f"using {fn}"
+    hdr['DATE'] = "December 7, 2023"
+    background = 1e22 * u.cm**-2
+    if background.to_value() != 0:
+        hdr['HISTORY'] = f"subtracted {background:.2E}"
+    new_hdu = fits.PrimaryHDU(data=(nhtot - background).to_value(), header=hdr)
+    savename = os.path.join(os.path.dirname(full_fn), "coldens_70-160_colorsolution-m1e22bg.fits")
+    new_hdu.writeto(savename)
+
+
 if __name__ == "__main__":
     """
     Moment 0 examples
@@ -3243,7 +3276,20 @@ if __name__ == "__main__":
     # fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0), line_stub_list=['cii-30', '12co32'])
 
     # blue clump large PV
-    fast_pv(reg_filename_or_idx=("catalogs/m16_pvs_blueshifted_clump.reg", 0), line_stub_list=['ciiAPEX', '12co32'], velocity_limits=(-5*kms, 50*kms))
+    # fast_pv(reg_filename_or_idx=("catalogs/m16_pvs_blueshifted_clump.reg", 0), line_stub_list=['ciiAPEX', '12co32'], velocity_limits=(-5*kms, 50*kms))
+
+    # blueshifted large-scale CO (in the Nobeyama data)
+    # error = False
+    # i = 2
+    # while not error and i < 3:
+    #     try:
+    #         fast_pv(reg_filename_or_idx=("catalogs/m16_across_large_galactic_co10-nob.reg", i), line_stub_list=['12co10-pmo', '13co10-pmo'], velocity_limits=(10*kms, 40*kms),
+    #             levels={'13co10-pmo': np.arange(2, 30, 3)}, figsize=(20, 9), aspect=0.5) # aspect = 7 for Nob, aspect = 0.5 for pmo
+    #         print(i, "done")
+    #     except:
+    #         error = True
+    #         print("exiting")
+    #     i += 1
 
     ##### make all PVs from a given .reg file
     # error = False
@@ -3287,12 +3333,15 @@ if __name__ == "__main__":
     #     'redshifted_1': (29*kms, 45*kms), 'blueshifted_1': (0*kms, 13*kms),
     #     'north_cloud_1': (13*kms, 20*kms), '25kms_1': (20*kms, 29*kms),
     #     'north_cloud_2': (11*kms, 21*kms), 'co32_red': (23.3*kms, 28*kms),
+    #     'big_molecular_cloud': (22*kms, 27*kms), # the greenish-red molecular cloud that crosses over M16 east of the pillars/spire
     # }
-    # co_column_manage_inputs(line='32', velocity_limits=None, cutout_reg_stub=None)
+    # co_column_manage_inputs(line='10', velocity_limits=velocity_limits['big_molecular_cloud'], cutout_reg_stub=None)
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
 
     # calculate_cii_column_density_detection_threshold()
+
+    convert_pacs_tau_to_coldens()
 
     """
     Channel maps/movies
