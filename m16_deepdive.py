@@ -4263,7 +4263,7 @@ def calculate_galactocentric_distance_and_12c13c_ratio():
     term_2 = R**2
     term_3 = -2 * R*d * np.cos(b) * np.cos(l)
     galactocentric_M16 = np.sqrt(term_1 + term_2 + term_3)
-    print(f"Galactocentric radius of M16: {galactocentric_M16.to(u.kpc):.2f}")
+    print(f"Galactocentric radius of M16: {galactocentric_M16.to(u.kpc):.2f} ({galactocentric_M16.to(u.kpc):.5f})")
 
     # 12 to 13 C ratio, Yan et al 2019
     ratio = 5.08*galactocentric_M16.to(u.kpc).to_value() + 11.86
@@ -4926,7 +4926,8 @@ if __name__ == "__main__":
 
     ...
 
-    estimate_distance_from_g0()
+    # estimate_distance_from_g0()
+    calculate_galactocentric_distance_and_12c13c_ratio()
 
 
     # calculate_dust_column_densities_and_masses_with_error(nsamples=50, debug=True)

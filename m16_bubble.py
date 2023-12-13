@@ -85,6 +85,7 @@ ratio_12co_to_H2 = 8.5e-5
 Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)->N(H) section
 
 ratio_12co_to_13co = 44.65 # call it 45 in paper, the difference will be miniscule
+ratio_12co_to_c18o = 417 # From Wilson and Rood 1994 using 6.46
 
 los_distance_M16 = 1740 * u.pc # Kuhn et al 2019
 err_los_distance_M16 = 130 * u.pc # Kuhn et al 2019; it was +130, -120, so for a symmetric error bar I'll take +/- 130
@@ -534,7 +535,7 @@ def find_co10_noise():
     plt.show()
 
 
-def co_column_manage_inputs(line='10', velocity_limits=None, cutout_reg_stub=None):
+def co_column_manage_inputs(line='10', isotope='13', velocity_limits=None, cutout_reg_stub=None):
     """
     May 16, 2023
     Wrapper function for the more general function below.
@@ -563,7 +564,10 @@ def co_column_manage_inputs(line='10', velocity_limits=None, cutout_reg_stub=Non
     elif line == '10':
         # Could add in support for Nobeyama data too, if we think it's useful
         thick_cube_stub = '12co10-pmo'
-        thin_cube_stub = '13co10-pmo'
+        if isotope == '13':
+            thin_cube_stub = '13co10-pmo'
+        elif isotope == '18':
+            thin_cube_stub = 'c18o10-pmo'
         thick_channel_uncertainty = get_onesigma(thick_cube_stub) * u.K
         thin_channel_uncertainty = get_onesigma(thin_cube_stub) * u.K
 
@@ -631,7 +635,10 @@ def co_column_manage_inputs(line='10', velocity_limits=None, cutout_reg_stub=Non
     else:
         ff = None
     col_dens_calculator.set_uncertainty(thick_channel_uncertainty, moment0_noise)
-    col_dens_calculator.set_abundance_ratios(ratio_12co_to_13co, ratio_12co_to_H2)
+    if isotope == '13':
+        col_dens_calculator.set_abundance_ratios(ratio_12co_to_13co, ratio_12co_to_H2)
+    elif isotope == '18':
+        col_dens_calculator.set_abundance_ratios(ratio_12co_to_c18o, ratio_12co_to_H2)
     col_dens_calculator.calculate_column_density()
     col_dens_calculator.calculate_mass_per_pixel(out_wcs, los_distance=los_distance_M16, e_los_distance=err_los_distance_M16, thin_line_beam=beam)
 
@@ -660,17 +667,22 @@ def co_column_manage_inputs(line='10', velocity_limits=None, cutout_reg_stub=Non
     h2_msg = "This is MOLECULAR hydrogen (H2)"
     mass_msg = "mass is per pixel on this image"
 
+    if isotope == '13':
+        thin_line_extname_stub = '13CO'
+    elif isotope == '18':
+        thin_line_extname_stub = 'C18O'
+
     extensions = [
         ('H2coldens', col_dens_calculator.H2_column_density, h2_msg),
         ('err_H2coldens', col_dens_calculator.e_H2_column_density, h2_msg),
         ('12COcoldens', col_dens_calculator.thick_line_column_density),
         ('err_12COcoldens', col_dens_calculator.e_thick_line_column_density),
-        ('13COcoldens', col_dens_calculator.thin_line_column_density),
-        ('err_13COcoldens', col_dens_calculator.e_thin_line_column_density),
+        (f'{thin_line_extname_stub}coldens', col_dens_calculator.thin_line_column_density),
+        (f'err_{thin_line_extname_stub}coldens', col_dens_calculator.e_thin_line_column_density),
         ('mass', col_dens_calculator.mass_per_pixel, mass_msg),
         ('err_mass', col_dens_calculator.e_mass_per_pixel, mass_msg),
         ('Tex', col_dens_calculator.Tex, f"Excitation temperature - err {thick_channel_uncertainty:.3f}"),
-        ('13COmom0', thin_mom0.to(u.K*kms), f"13CO Integrated intensity - err {moment0_noise:.3f}")
+        (f'{thin_line_extname_stub}mom0', thin_mom0.to(u.K*kms), f"{thin_line_extname_stub} Integrated intensity - err {moment0_noise:.3f}")
     ]
 
     # Going to try just copying the header, I think it's fine
@@ -723,7 +735,7 @@ class COColumnDensity:
         _constants = {
             '13co10': (55101.01, 5.28880, 0.11046, 110.20135400, 1),
             '13co32': (55101.01, 31.73179, 0.11046, 330.587965300, 3), # see 2023-09-11 notes, still re-researching this
-            # 'c18o10': (),
+            'c18o10': (55101.01, 5.26868, 0.11046, 109.78217340, 1),
         }
         # Take out anything on the other side of a hyphen and ignore it
         if '-' in optically_thin_line_stub:
@@ -1079,6 +1091,71 @@ def get_co_spectra_for_radex():
     plt.legend()
 
     plt.show()
+
+
+def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise_cutoff=None):
+    """
+    December 9, 2023
+    Use the CO 3-2 convolved to purple mountain.
+    Do 11-20 km/s and 21-27 km/s bins, take max of each 13CO line.
+    """
+    if velocity_limits is None:
+        if False:
+            velocity_limits = (11*kms, 21*kms)
+        else:
+            velocity_limits = (21*kms, 27*kms)
+    results = {}
+    savepath = None
+
+    if noise_cutoff is None:
+        noise_cutoff = 5
+
+    if isotope10 == '13':
+        stub10 = '13co10-pmo'
+    elif isotope10 == '18':
+        stub10 = 'c18o10-pmo'
+    for stub in ['13co32-pmo', stub10]:
+        fn = get_map_filename(stub)
+        cube = cube_utils.CubeData(fn).convert_to_K()
+        if stub == '13co32-pmo':
+            savepath = cube.directory
+        subcube = cube.data.spectral_slab(*velocity_limits)
+        peak_T_map = subcube.max(axis=0).to(u.K).to_value()
+        # Filter maps by a few times noise
+        peak_T_map[peak_T_map < (get_onesigma(stub) * noise_cutoff)] = np.nan
+        results[stub] = (peak_T_map, cube.wcs_flat)
+    peak_T_32, wcs_32 = results['13co32-pmo']
+    peak_T_10, wcs_10 = results[stub10]
+    peak_T_10 = reproject_interp((peak_T_10, wcs_10), wcs_32, shape_out=peak_T_32.shape, return_footprint=False)
+    ratio_32_10 = peak_T_32 / peak_T_10
+
+    data_list = [
+        (peak_T_10, "peak_10", 'K'),
+        (peak_T_32, "peak_32", 'K'),
+        (ratio_32_10, "ratio_32_to_10", 'dimensionless'),
+    ]
+    hdu_list = [fits.PrimaryHDU()]
+    header_template = wcs_32.to_header()
+    header_template['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    header_template['CREATOR'] = f"Ramsey, {__file__}.get_co32_to_10_ratio_for_density"
+    header_template['COMMENT'] = f"Using 13co32 (pmo resolution) and {stub10}"
+    header_template['HISTORY'] = f"Cutoff each peak T map by > {noise_cutoff} sigma"
+    for data, extname, unit_str in data_list:
+        hdr = header_template.copy()
+        hdr['EXTNAME'] = extname
+        hdr['BUNIT'] = unit_str
+        hdu = fits.ImageHDU(data=data, header=hdr)
+        hdu_list.append(hdu)
+    hdul = fits.HDUList(hdu_list)
+    if isotope10 == '13':
+        isotope_stub = ""
+    elif isotope10 == '18':
+        isotope_stub = "c18o_"
+    savename = os.path.join(savepath, f"ratio_v2_13co_32_to_{isotope_stub}10_pmo_{make_simple_vel_stub(velocity_limits)}.fits")
+    hdul.writeto(savename, overwrite=False)
+
+
+
 
 
 """
@@ -3157,7 +3234,7 @@ def convert_pacs_tau_to_coldens():
     Use the Cext/H from the paper, 1.9e-25 cm2/H
     N_H = tau / Cext/H
     """
-    fn = "herschel/T-tau_colorsolution.fits"
+    fn = "herschel/T-tau_colorsolution_70zeroedat160.fits"
     full_fn = catalog.utils.search_for_file(fn)
     cexth = 1.9e-25 * u.cm**2
     with fits.open(full_fn) as hdul:
@@ -3170,13 +3247,14 @@ def convert_pacs_tau_to_coldens():
     hdr['HISTORY'] = f"tau160 converted to NHtot using Cext(160)/H 1.9e-25 cm2/H"
     hdr['HISTORY'] = "written by m16_bubble.convert_pacs_tau_to_coldens"
     hdr['HISTORY'] = f"using {fn}"
-    hdr['DATE'] = "December 7, 2023"
-    background = 1e22 * u.cm**-2
+    hdr['DATE'] = "December 9, 2023"
+    # background = 1e22 * u.cm**-2
+    background = 0 * u.cm**-2
     if background.to_value() != 0:
         hdr['HISTORY'] = f"subtracted {background:.2E}"
     new_hdu = fits.PrimaryHDU(data=(nhtot - background).to_value(), header=hdr)
-    savename = os.path.join(os.path.dirname(full_fn), "coldens_70-160_colorsolution-m1e22bg.fits")
-    new_hdu.writeto(savename)
+    savename = os.path.join(os.path.dirname(full_fn), "coldens_70-160_colorsolution_70zeroedat160.fits")
+    new_hdu.writeto(savename, overwrite=True)
 
 
 if __name__ == "__main__":
@@ -3329,19 +3407,28 @@ if __name__ == "__main__":
     CO/CII column
     """
     # find_co10_noise()
-    # velocity_limits = {
-    #     'redshifted_1': (29*kms, 45*kms), 'blueshifted_1': (0*kms, 13*kms),
-    #     'north_cloud_1': (13*kms, 20*kms), '25kms_1': (20*kms, 29*kms),
-    #     'north_cloud_2': (11*kms, 21*kms), 'co32_red': (23.3*kms, 28*kms),
-    #     'big_molecular_cloud': (22*kms, 27*kms), # the greenish-red molecular cloud that crosses over M16 east of the pillars/spire
-    # }
-    # co_column_manage_inputs(line='10', velocity_limits=velocity_limits['big_molecular_cloud'], cutout_reg_stub=None)
+    velocity_limits = {
+        ## the experimental stuff
+        'redshifted_1': (29*kms, 45*kms), 'blueshifted_1': (0*kms, 13*kms),
+        'north_cloud_1': (13*kms, 20*kms), '25kms_1': (20*kms, 29*kms),
+        'co32_red': (23.3*kms, 28*kms),
+        'big_molecular_cloud': (22*kms, 27*kms), # the greenish-red molecular cloud that crosses over M16 east of the pillars/spire
+        'super-red-stuff': (27*kms, 30*kms), # probably not useful but CO 3-2 has the MYSO and then a small bright rim close to the cluster.
+        ### the good stuff
+        'north_cloud_2': (11*kms, 21*kms), 'redshifted_2': (21*kms, 27*kms), # the originals
+        'green-cloud': (21*kms, 23*kms), 'red-cloud': (23*kms, 27*kms), # the main green/red stuff, split more finely
+    }
+    # for s in ['green-cloud', 'red-cloud', 'redshifted_2', 'north_cloud_2']:
+    for s in ['redshifted_2',]:
+        co_column_manage_inputs(line='10', isotope='18', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
+        co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
+        # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
 
     # calculate_cii_column_density_detection_threshold()
 
-    convert_pacs_tau_to_coldens()
+    # convert_pacs_tau_to_coldens()
 
     """
     Channel maps/movies

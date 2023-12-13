@@ -294,14 +294,14 @@ def fir_intensity_2():
     # Jan 25, 2023: finalized method of passing flux uncertainties through this process.
     # Saving with the suffix _fluxbgsub_with_uncertainty
     if calculate_T_and_tau:
-        regular_background_correction = False
+        background_correction_select = 3
         corrections = {}
         err_corrections = {}
-        if regular_background_correction:
+        if background_correction_select == 0:
             # positive offsets from Planck
             corrections[70] = 268
             corrections[160] = 1055 # If i ever go back to these, I could do the same error thing. HELPSS talked about uncertanties on these
-        else:
+        elif background_correction_select == 1:
             # Negative offsets, subtracting local background near pillars
             # These are sampled from the "north" regions and do noth include the "south" sample
             corrections[70] = -2836.24 # +/- 417.06
@@ -309,6 +309,20 @@ def fir_intensity_2():
             # Error bars
             err_corrections[70] = 417.06
             err_corrections[160] = 229.34
+        elif background_correction_select == 2:
+            # dec 9, 2023
+            # Try 0 background, see what happens; the 0-contours in each flux map seem to contain just the filament; the answer should be at least sort of close to truth.
+            corrections[70] = 0
+            corrections[160] = 0
+            err_corrections[70] = 0
+            err_corrections[160] = 0
+        elif background_correction_select == 3:
+            # dec 9, 2023
+            # Try to zero out the 70 micron at the 160 micron zero contour
+            corrections[70] = -300 # subtract 300
+            corrections[160] = 0
+            err_corrections[70] = 150
+            err_corrections[160] = 0
 
 
         # Set up T vs 70/160 ratio spline model using the bandpass filters
@@ -353,7 +367,7 @@ def fir_intensity_2():
         Ignore the statistical uncertainty since it's small for the pillars
         """
         # Cutout params
-        use_cutout = True
+        use_cutout = False
         center = (2867, 1745-30)
         size = (1192//4, 873//4)
 
@@ -431,10 +445,14 @@ def fir_intensity_2():
         new_hdr['OBJECT'] = "M16"
         new_hdr['HISTORY'] = "Herschel PACS 70 and 160, obsID 1342218995, 160 grid and beam"
         new_hdr['HISTORY'] = f"Zero-point offsets: {corrections[70]}+/-{err_corrections[70]} (70), {corrections[160]}+/-{err_corrections[160]} (160)"
-        if regular_background_correction:
+        if background_correction_select == 0:
             new_hdr['HISTORY'] = "Zero-point offsets from fit_FIR.py, calculated long ago"
-        else:
+        elif background_correction_select == 1:
             new_hdr['HISTORY'] = "Flux background subtracted instead of zero-point correction"
+        elif background_correction_select == 2:
+            new_hdr['HISTORY'] = "No background added to the flux maps, let's just see what happens."
+        elif background_correction_select == 3:
+            new_hdr['HISTORY'] = "70 micron offsets chosen to zero out 70 at the 160 micron 0-contour"
         if use_cutout:
             new_hdr['HISTORY'] = f"Cutout center xy {center} size {size}"
         new_hdr['COMMENT'] = "T,tau calc'd using bandpasses; see color_temperature_comparison.ipynb"
@@ -499,7 +517,8 @@ def fir_intensity_2():
         hdul[13].header['COMMENT'] = f'Corrected flux > {flux_cutoff} x error in 160um'
 
         # appended _HIERR and _LOERR to savepath for error bars
-        savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution_fluxbgsub_with_uncertainty.fits")
+        # savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution_fluxbgsub_with_uncertainty.fits")
+        savepath = os.path.join("/home/ramsey/Documents/Research/Feedback/m16_data/herschel", "T-tau_colorsolution_70zeroedat160.fits")
         print("SAVING TO", savepath)
         hdul.writeto(savepath)
 
