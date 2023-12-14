@@ -1098,6 +1098,8 @@ def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise
     December 9, 2023
     Use the CO 3-2 convolved to purple mountain.
     Do 11-20 km/s and 21-27 km/s bins, take max of each 13CO line.
+
+    Dec 14: added in the uncertainty; ratios are easy using fractional uncertainty
     """
     if velocity_limits is None:
         if False:
@@ -1105,6 +1107,7 @@ def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise
         else:
             velocity_limits = (21*kms, 27*kms)
     results = {}
+    frac_errors = {}
     savepath = None
 
     if noise_cutoff is None:
@@ -1129,10 +1132,17 @@ def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise
     peak_T_10 = reproject_interp((peak_T_10, wcs_10), wcs_32, shape_out=peak_T_32.shape, return_footprint=False)
     ratio_32_10 = peak_T_32 / peak_T_10
 
+    # Calculate uncertainty outside of the loop since we had to reproject
+    frac_err_32 = get_onesigma('13co32-pmo') / peak_T_32
+    frac_err_10 = get_onesigma(stub10) / peak_T_10
+    ratio_err_frac = np.sqrt(frac_err_32**2 + frac_err_10**2)
+    ratio_err = ratio_32_10 * ratio_err_frac
+
     data_list = [
+        (ratio_32_10, "ratio_32_to_10", ''),
+        (ratio_err, "err_ratio_32_to_10", ''),
         (peak_T_10, "peak_10", 'K'),
         (peak_T_32, "peak_32", 'K'),
-        (ratio_32_10, "ratio_32_to_10", 'dimensionless'),
     ]
     hdu_list = [fits.PrimaryHDU()]
     header_template = wcs_32.to_header()
@@ -1140,6 +1150,7 @@ def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise
     header_template['CREATOR'] = f"Ramsey, {__file__}.get_co32_to_10_ratio_for_density"
     header_template['COMMENT'] = f"Using 13co32 (pmo resolution) and {stub10}"
     header_template['HISTORY'] = f"Cutoff each peak T map by > {noise_cutoff} sigma"
+    header_template['HISTORY'] = f"Error calculated using the flat RMS uncertainties for each cube."
     for data, extname, unit_str in data_list:
         hdr = header_template.copy()
         hdr['EXTNAME'] = extname
@@ -1152,7 +1163,67 @@ def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise
     elif isotope10 == '18':
         isotope_stub = "c18o_"
     savename = os.path.join(savepath, f"ratio_v2_13co_32_to_{isotope_stub}10_pmo_{make_simple_vel_stub(velocity_limits)}.fits")
-    hdul.writeto(savename, overwrite=False)
+    hdul.writeto(savename, overwrite=True)
+
+
+def get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=None):
+    """
+    December 14, 2023
+    Lee said this is a common diagnostic to find out if 13CO is optically thick.
+    Uses the same transition, in our case 1-0
+    """
+    if velocity_limits is None:
+        velocity_limits = (21*kms, 27*kms)
+    savepath = None
+    wcs_obj = None
+    results = {}
+    frac_errors = {}
+    for stub in ['13co10-pmo', 'c18o10-pmo']:
+        fn = get_map_filename(stub)
+        cube = cube_utils.CubeData(fn).convert_to_K()
+        # This runs twice but it doesn't matter, they are in the same directory
+        savepath = cube.directory
+        wcs_obj = cube.wcs_flat
+        subcube = cube.data.spectral_slab(*velocity_limits)
+        peak_T_map = subcube.max(axis=0).to(u.K).to_value()
+        # Skip filtering by noise, just leave it alone
+        results[stub] = peak_T_map
+        # Save the fractional error
+        frac_errors[stub] = get_onesigma(stub) / peak_T_map
+        if 'pmo' not in stub:
+            # PMO data are on the same exact grid, so no need to regrid; I checked Dec 14, 2023
+            raise RuntimeError("At least one of these isn't PMO; you should probably regrid or check and make the explicit exception.")
+    ratio_13_18 = results['13co10-pmo'] / results['c18o10-pmo']
+
+    # Calculate uncertainty
+    # Fractional uncertainty is fairly easy in this simple geometric function
+    # (sigma_f / f)^2 = (sigma_a / a)^2 + (sigma_b / b)^2
+    ratio_err_frac = np.sqrt(frac_errors['13co10-pmo']**2 + frac_errors['c18o10-pmo']**2)
+    # Get the absolute error on the ratio by multiplying the fractional error by the ratio
+    ratio_err = ratio_err_frac * ratio_13_18
+
+    data_list = [
+        (ratio_13_18, "ratio_13_to_18", ''),
+        (ratio_err, "err_ratio_13_to_18", ''),
+        (results['13co10-pmo'], "peak_13co10", 'K'),
+        (results['c18o10-pmo'], "peak_c18o10", 'K'),
+    ]
+    hdu_list = [fits.PrimaryHDU()]
+    header_template = wcs_obj.to_header()
+    header_template['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    header_template['CREATOR'] = f"Ramsey, {__file__}.get_13co10_to_c18o10_ratio_for_opticaldepth"
+    header_template['COMMENT'] = f"Using 13co10-pmo and c18o10-pmo"
+    header_template['HISTORY'] = f"Error calculated using the flat RMS uncertainties for each cube."
+    for data, extname, unit_str in data_list:
+        hdr = header_template.copy()
+        hdr['EXTNAME'] = extname
+        hdr['BUNIT'] = unit_str
+        hdu = fits.ImageHDU(data=data, header=hdr)
+        hdu_list.append(hdu)
+    hdul = fits.HDUList(hdu_list)
+    savename = os.path.join(savepath, f"ratio_13co_to_c18o_10_pmo_{make_simple_vel_stub(velocity_limits)}.fits")
+    hdul.writeto(savename, overwrite=True)
+
 
 
 
@@ -3419,10 +3490,11 @@ if __name__ == "__main__":
         'green-cloud': (21*kms, 23*kms), 'red-cloud': (23*kms, 27*kms), # the main green/red stuff, split more finely
     }
     # for s in ['green-cloud', 'red-cloud', 'redshifted_2', 'north_cloud_2']:
-    for s in ['redshifted_2',]:
-        co_column_manage_inputs(line='10', isotope='18', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
-        co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
-        # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
+    for s in ['redshifted_2', 'north_cloud_2']:
+        # co_column_manage_inputs(line='10', isotope='18', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
+        # co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
+        get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
+        get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
 
