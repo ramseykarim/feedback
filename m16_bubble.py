@@ -1225,6 +1225,88 @@ def get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=None):
     hdul.writeto(savename, overwrite=True)
 
 
+def sample_multiple_maps(velocity_limits=None):
+    """
+    December 15, 2023
+    Sample the column density and line ratio maps using a region file and print
+    out the results.
+
+    The first region file is m16_column_sample_points_21-27.reg
+    """
+    # Eventually this will be a selection of different reg files
+    reg_filename_short = "catalogs/m16_column_sample_points_21-27.reg"
+    # All the data sources we will use and keys to describe them
+    vel_stub_simple = make_simple_vel_stub(velocity_limits)
+    map_filenames = {
+        "column_70-160": "herschel/coldens_70-160_colorsolution_70zeroedat160.fits",
+        "column_160-500": "herschel/m16_coldens_high.fits",
+        "column_13co10": f"purplemountain/column_density_v3__13co10-pmo_{vel_stub_simple}.fits",
+        "column_c18o10": f"purplemountain/column_density_v3__c18o10-pmo_{vel_stub_simple}.fits",
+        "ratio_32_to_10": f"apex/ratio_v2_13co_32_to_10_pmo_{vel_stub_simple}.fits", # 13co32 to 13co10
+        "ratio_13_to_18": f"purplemountain/ratio_13co_to_c18o_10_pmo_{vel_stub_simple}.fits", # 13co10 to c18o10
+    }
+    # We will also get the peak 12CO 3-2 line. The peak 13CO 3-2 line is already in the ratio_32_to_10 map
+
+    # The values and errors are scattered throughout different extensions of these files, so we will have some functions to help
+    def _extract_values_from_image(data, wcs_obj, reg_list):
+        """
+        Given an array and WCS, grab values using the region list.
+        Return a list of values.
+        """
+        # Iterate regions and grab values at those pixels
+        values_list = []
+        for reg in reg_list:
+            j, i = [int(round(c)) for c in reg.to_pixel(wcs_obj).center.xy]
+            values_list.append(data[i, j])
+        return values_list
+
+    def _load_multi_extension_data(short_filename, extnames_to_extract, reg_list):
+        """
+        Load a multi-extension FITS file and extract values from several
+        extensions
+        :param short_filename: a relative path which can be solved with
+            catalog.utils.search_for_file
+        :param extnames_to_extract: should be a dict with "data names" as keys;
+            these should be short descriptive strings that will be attached to
+            the values after extraction.
+            The dict values should be the EXTNAME in the FITS file.
+        :returns: dict, the keys are the same as extnames_to_extract
+            and the values are lists of float values.
+        """
+        return_dict = {}
+        with fits.open(catalog.utils.search_for_file(short_filename)) as hdul:
+            for data_name in extnames_to_extract:
+                extname = extnames_to_extract[data_name]
+                values = _extract_values_from_image(hdul[extname].data, WCS(hdul[extname].header), reg_list)
+                return_dict[data_name] = values
+        return return_dict
+
+    def _load_single_extension_data(short_filename, data_name, reg_list):
+        """
+        Simpler than multi, somewhat. This time, pass the data name key as an
+        argument directly.
+        I want to use getdata for this because I don't want to guess if the
+        data extension is 0 or 1.
+        :returns: dict with only one entry. data_name as the key, the value list
+            as the value
+        """
+        data, header = fits.getdata(catalog.utils.search_for_file(short_filename), header=True)
+        values = _extract_values_from_image(data, WCS(header), reg_list)
+        return {data_name: values}
+
+    ...
+    """
+    ################################################################
+    ################################################################
+    ################################################################
+    ################################################################
+    ################ LEFT OFF HERE #################################
+    ################################################################
+    ################################################################
+    ################################################################
+    ################################################################
+    """
+    # Get all the extension names or numbers lined up with data name keys
 
 
 
