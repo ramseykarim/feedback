@@ -1100,6 +1100,9 @@ def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise
     Do 11-20 km/s and 21-27 km/s bins, take max of each 13CO line.
 
     Dec 14: added in the uncertainty; ratios are easy using fractional uncertainty
+
+    Dec 16: switched the order of the peak T frames so that they are saved with
+    numerator 3rd and denominator 4th/last. Matches the order of the 13CO / C18O ratio files
     """
     if velocity_limits is None:
         if False:
@@ -1139,10 +1142,10 @@ def get_co32_to_10_ratio_for_density(velocity_limits=None, isotope10='13', noise
     ratio_err = ratio_32_10 * ratio_err_frac
 
     data_list = [
-        (ratio_32_10, "ratio_32_to_10", ''),
-        (ratio_err, "err_ratio_32_to_10", ''),
-        (peak_T_10, "peak_10", 'K'),
-        (peak_T_32, "peak_32", 'K'),
+        (ratio_32_10, "ratio_32_to_10", ''), # ratio
+        (ratio_err, "err_ratio_32_to_10", ''), # error on ratio
+        (peak_T_32, "peak_32", 'K'), # numerator (used to be the last frame, moved on Dec 16 2023)
+        (peak_T_10, "peak_10", 'K'), # denominator
     ]
     hdu_list = [fits.PrimaryHDU()]
     header_template = wcs_32.to_header()
@@ -1203,10 +1206,10 @@ def get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=None):
     ratio_err = ratio_err_frac * ratio_13_18
 
     data_list = [
-        (ratio_13_18, "ratio_13_to_18", ''),
-        (ratio_err, "err_ratio_13_to_18", ''),
-        (results['13co10-pmo'], "peak_13co10", 'K'),
-        (results['c18o10-pmo'], "peak_c18o10", 'K'),
+        (ratio_13_18, "ratio_13_to_18", ''), # ratio
+        (ratio_err, "err_ratio_13_to_18", ''), # error on ratio
+        (results['13co10-pmo'], "peak_13co10", 'K'), # numerator
+        (results['c18o10-pmo'], "peak_c18o10", 'K'), # denominator
     ]
     hdu_list = [fits.PrimaryHDU()]
     header_template = wcs_obj.to_header()
@@ -1294,21 +1297,105 @@ def sample_multiple_maps(velocity_limits=None):
         values = _extract_values_from_image(data, WCS(header), reg_list)
         return {data_name: values}
 
-    ...
     """
-    ################################################################
-    ################################################################
-    ################################################################
-    ################################################################
-    ################ LEFT OFF HERE #################################
-    ################################################################
-    ################################################################
-    ################################################################
-    ################################################################
+    Get all the extension names or numbers lined up with data name keys
+
+    The ratios are organized the same way:
+    0: empty (primary)
+    1: ratio
+    2: error on ratio
+    3: numerator (peak T)
+    4: denominator (peak T)
+
+    I confirmed on Dec 16 23 that this is true for both sets of ratios.
+
+    The column density maps store column as follows:
+    H2coldens
+    err_H2coldens
+
+    The Herschel maps are both single-extension
+
+    And the 12 CO 3-2 peak line brightness has to be extracted from the cube
     """
-    # Get all the extension names or numbers lined up with data name keys
+
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    result_dict = {"reg_name": [reg.meta['text'] for reg in reg_list]}
+
+    # ratio 13co32 to 13co10
+    name_keys = {
+        "ratio_32_10": 1, "err_ratio_32_10": 2, "peak_13co32": 3,
+        "peak_13co10": 4,
+    }
+    result_dict.update(_load_multi_extension_data(
+        map_filenames["ratio_32_to_10"], name_keys, reg_list,
+    ))
+
+    # ratio 13co10 to c18o10
+    name_keys = {
+        "ratio_13_18": 1, "err_ratio_13_18": 2, "peak_13co10": 3,
+        "peak_c18o10": 4,
+    }
+    result_dict.update(_load_multi_extension_data(
+        map_filenames["ratio_13_to_18"], name_keys, reg_list,
+    ))
+
+    name_keys = {
+        "column_density_13co10": "H2coldens",
+        "err_column_density_13co10": "err_H2coldens",
+    }
+    result_dict.update(_load_multi_extension_data(
+        map_filenames["column_13co10"], name_keys, reg_list,
+    ))
+
+    name_keys = {
+        "column_density_c18o10": "H2coldens",
+        "err_column_density_c18o10": "err_H2coldens",
+    }
+    result_dict.update(_load_multi_extension_data(
+        map_filenames["column_c18o10"], name_keys, reg_list,
+    ))
+
+    name_key = "column_density_70-160"
+    result_dict.update(_load_single_extension_data(
+        map_filenames["column_70-160"], name_key, reg_list,
+    ))
+
+    name_key = "column_density_160-500"
+    result_dict.update(_load_single_extension_data(
+        map_filenames["column_160-500"], name_key, reg_list,
+    ))
 
 
+    """
+    Get the 12CO3-2 peak_T values
+    Use the PMO resolution for consistency with everything else
+    """
+    cube = cube_utils.CubeData(get_map_filename('12co32-pmo')).convert_to_K()
+    subcube = cube.data.spectral_slab(*velocity_limits)
+    peak_T_32 = subcube.max(axis=0).to(u.K).to_value()
+    result_dict.update({"peak_12co32-pmo": _extract_values_from_image(peak_T_32, cube.wcs_flat, reg_list)})
+
+    cube = cube_utils.CubeData(get_map_filename('12co32')).convert_to_K()
+    subcube = cube.data.spectral_slab(*velocity_limits)
+    peak_T_32 = subcube.max(axis=0).to(u.K).to_value()
+    result_dict.update({"peak_12co32": _extract_values_from_image(peak_T_32, cube.wcs_flat, reg_list)})
+
+
+    save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
+    assert os.path.exists(save_df_path)
+    save_df_name = f"sample_points_test_1_{vel_stub_simple}.csv"
+    save_df_full_path = os.path.join(save_df_path, save_df_name)
+
+    result_df = pd.DataFrame(result_dict)
+
+    """
+    Divide the Herschel 70-160 columns by 2 because they are N_H and everything
+    else is N(H2); N_H = N(H) + 2*N(H2) and N(H) is 0 by assumption.
+    """
+
+    result_df["column_density_70-160"] = result_df["column_density_70-160"] / 2
+
+    result_df.to_csv(save_df_full_path)
 
 
 """
@@ -3572,11 +3659,14 @@ if __name__ == "__main__":
         'green-cloud': (21*kms, 23*kms), 'red-cloud': (23*kms, 27*kms), # the main green/red stuff, split more finely
     }
     # for s in ['green-cloud', 'red-cloud', 'redshifted_2', 'north_cloud_2']:
-    for s in ['redshifted_2', 'north_cloud_2']:
+    # for s in ['redshifted_2', 'north_cloud_2']:
         # co_column_manage_inputs(line='10', isotope='18', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
-        get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
-        get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
+        # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
+        # get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
+
+    sample_multiple_maps(velocity_limits=velocity_limits['north_cloud_2'])
+
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
 
