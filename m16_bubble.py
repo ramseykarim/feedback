@@ -1228,6 +1228,213 @@ def get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=None):
     hdul.writeto(savename, overwrite=True)
 
 
+class COGridData:
+    """
+    December 19, 2023
+    Inspired by the code in sample_multiple_maps(), need a common format for
+    these multi-extension column density and ratio maps.
+    This class will hold a lookup dictionary for filenames and will also know
+    the extensions and data names.
+
+    I'll throw in the useful loading/sampling/unpacking functions into here too.
+    """
+
+    def __init__(self, velocity_limits):
+        # All the data sources we will use and keys to describe them
+        self.vel_stub_simple = make_simple_vel_stub(velocity_limits)
+        self._map_filenames = {
+            "column_70-160": "herschel/coldens_70-160_colorsolution_70zeroedat160.fits",
+            "column_160-500": "herschel/m16_coldens_high.fits",
+            "column_13co10": f"purplemountain/column_density_v3__13co10-pmo_{self.vel_stub_simple}.fits",
+            "column_c18o10": f"purplemountain/column_density_v3__c18o10-pmo_{self.vel_stub_simple}.fits",
+            "ratio_32_to_10": f"apex/ratio_v2_13co_32_to_10_pmo_{self.vel_stub_simple}.fits", # 13co32 to 13co10
+            "ratio_13_to_18": f"purplemountain/ratio_13co_to_c18o_10_pmo_{self.vel_stub_simple}.fits", # 13co10 to c18o10
+        }
+        # The extensions to each FITS file
+        # Top level keys match _map_filenames keys
+        # Top level values are tuples whose elements represent a single extension / map
+        # Tuple elements are 2-tuples which are [extname, data_name]
+        # data_name is the descriptive name of the extension that should be used in the DataFrame
+        # If the top level value is just a string, then it's a single extension. string is the descriptive name
+        self._key_lookup = {
+            "column_70-160": "column_density_70-160",
+            "column_160-500": "column_density_160-500",
+            "column_13co10": (("H2coldens", "column_density_13co10"), ("err_H2coldens", "err_column_density_13co10")),
+            "column_c18o10": (("H2coldens", "column_density_c18o10"), ("err_H2coldens", "err_column_density_c18o10")),
+            "ratio_32_to_10": ((1, "ratio_32_10"), (2, "err_ratio_32_10"), (3, "peak_13co32"), (4, "peak_13co10")),
+            "ratio_13_to_18": ((1, "ratio_13_18"), (2, "err_ratio_13_18"), (3, "peak_13co10"), (4, "peak_c18o10")),
+        }
+        self.sample_type_setting = None
+        self.sample_framework_setting = None
+        self.diagnostic_plot = False
+
+    def get_extname_dict(self, data_key):
+        """
+        Create an "extnames_to_extract" dict using the data_key
+        :returns: tuple, 2 elements
+            1) extnames_to_extract dict, which is keyed with data_names
+                and has extnames as values
+            2) bool, whether or not the data is multi-extension (True if multi)
+        """
+        # Check for some short-circuit cases
+        if data_key not in self._key_lookup:
+            raise RuntimeError(f"{data_key} not in {__class__} lookup tables")
+        extnames = self._key_lookup[data_key]
+        if isinstance(extnames, str):
+            return extnames, False
+        # Now do the actual work
+        extnames_to_extract = {}
+        for extname, data_name in extnames:
+            extnames_to_extract[data_name] = extname
+        return extnames_to_extract, True
+
+    def sample_data(self, data_key, sample_framework=None, sample_type=None):
+        """
+        Load either multi- or single-extension FITS data and return the result
+        of sampling it somehow.
+        sample_framework and sample_type can be None and will be passed through
+        so that defaults can be checked later.
+
+        This is a user-facing function.
+        """
+        extnames_to_extract, is_multi = self.get_extname_dict(data_key)
+        if is_multi:
+            return self.load_multi_extension_data(data_key, extnames_to_extract, sample_framework, sample_type)
+        else:
+            data_name = extnames_to_extract # single string
+            return self.load_single_extension_data(data_key, data_name, sample_framework, sample_type)
+
+
+    def load_multi_extension_data(self, data_key, extnames_to_extract, sample_framework, sample_type):
+        """
+        Load a multi-extension FITS file and extract values from several
+        extensions
+        :param data_key: a key to self._map_filenames
+        :param extnames_to_extract: should be a dict with "data names" as keys;
+            these should be short descriptive strings that will be attached to
+            the values after extraction.
+            The dict values should be the EXTNAME in the FITS file.
+        :returns: dict, the keys are the same as extnames_to_extract
+            and the values are lists of float values.
+
+        Historical
+        :param short_filename: a relative path which can be solved with
+            catalog.utils.search_for_file
+        """
+        short_filename = self._map_filenames[data_key]
+        return_dict = {}
+        with fits.open(catalog.utils.search_for_file(short_filename)) as hdul:
+            for data_name in extnames_to_extract:
+                extname = extnames_to_extract[data_name]
+                values = self.extract_values_from_image(hdul[extname].data, WCS(hdul[extname].header), sample_framework=sample_framework, sample_type=sample_type)
+                return_dict[data_name] = values
+        return return_dict
+
+    def load_single_extension_data(self, data_key, data_name, sample_framework, sample_type):
+        """
+        Simpler than multi, somewhat. This time, pass the data name as an
+        argument directly.
+        I want to use getdata for this because I don't want to guess if the
+        data extension is 0 or 1.
+        :returns: dict with only one entry. data_name as the key, the value list
+            as the value
+        """
+        short_filename = self._map_filenames[data_key]
+        data, header = fits.getdata(catalog.utils.search_for_file(short_filename), header=True)
+        values = self.extract_values_from_image(data, WCS(header), sample_framework=sample_framework, sample_type=sample_type)
+        return {data_name: values}
+
+    def extract_values_from_image(self, data, wcs_obj, sample_framework=None, sample_type=None):
+        """
+        Given an array and WCS, grab values in a way defied by the sample_type
+
+        This is a user-facing function
+
+        :param sample_framework: some information for sampling the data.
+            Maybe a region list, maybe a mask.
+        :param sample_framework: str, type of sample to take.
+            ["regions", "mask"] options supported at the moment.
+        """
+        # Load in sample information configuration if not set in function args
+        if sample_type is None:
+            sample_type = self.sample_type_setting
+        if sample_framework is None:
+            sample_framework = self.sample_framework_setting
+        # Sample
+        if sample_type == "regions":
+            return self.extract_values_from_image_regions(data, wcs_obj, sample_framework)
+        elif sample_type == "mask":
+            # sample_framework is tuple(mask, mask_wcs)
+            return self.extract_values_from_image_mask(data, wcs_obj, *sample_framework)
+        else:
+            raise RuntimeError(f"Sample type {sample_type} not supported.")
+
+    def extract_values_from_image_regions(self, data, wcs_obj, reg_list):
+        """
+        Grab values using the region list.
+        Return a list of values.
+        """
+        # Iterate regions and grab values at those pixels
+        values_list = []
+        for reg in reg_list:
+            j, i = [int(round(c)) for c in reg.to_pixel(wcs_obj).center.xy]
+            values_list.append(data[i, j])
+        return values_list
+
+    def extract_values_from_image_mask(self, data, wcs_obj, mask, mask_wcs):
+        """
+        Grab values using the mask.
+        Return a tuple (value, error) where error is the standard deviation
+        under the mask and value is the mean.
+        :param mask: bool array
+            Will be converted to array of float 0-1. 1 is True, 0 is False.
+            Float means that we can reproject it! Can't reproject bool array.
+            Will have to do (mask > 0.5) to make it a real bool array.
+        """
+        data_cut, wcs_cut, cutout = COGridData.cutout_to_footprint(data, wcs_obj, mask_wcs, mask.shape, return_cutout=True)
+        mask_reproj_float = reproject_interp((mask.astype(float), mask_wcs), wcs_cut, shape_out=data_cut.shape, return_footprint=False)
+        mask_reproj = mask_reproj_float > 0.5
+        values = data_cut[mask_reproj]
+        if self.diagnostic_plot:
+            data_copy = data_cut.copy()
+            data_copy[~mask_reproj] = np.nan
+            big_data_copy = data*0 + 1
+            big_data_copy[cutout.slices_original] = np.nan
+            plt.figure()
+            plt.subplot(231)
+            plt.imshow(mask, origin='lower')
+            plt.subplot(232)
+            plt.imshow(mask_reproj, origin='lower')
+            plt.subplot(233)
+            plt.imshow(data_copy, origin='lower')
+            plt.subplot(234)
+            plt.imshow(data, origin='lower')
+            plt.subplot(235)
+            plt.imshow(big_data_copy, origin='lower')
+
+    @staticmethod
+    def cutout_to_footprint(target_data, target_wcs, reference_wcs, reference_shape, return_cutout=False):
+        """
+        So that we don't have to reproject the tiny mask to the huge Herschel image
+        Target data, wcs is the stuff that should be cut down to size.
+        reference wcs, shape describes the smaller footprint which should define
+        the cutout.
+        """
+        reference_footprint = reference_wcs.calc_footprint(axes=reference_shape)
+        ra, de = reference_footprint[:, 0], reference_footprint[:, 1]
+        min_ra, max_ra = np.min(ra), np.max(ra)
+        min_de, max_de = np.min(de), np.max(de)
+        center_ra, center_de = (min_ra + max_ra)/2, (min_de + max_de)/2
+        size_ra, size_de = (max_ra - min_ra), (max_de - min_de)
+        # size will be flipped (y, x) = (de, ra) because that's Cutout2D's call signature
+        cutout = Cutout2D(target_data, SkyCoord(center_ra*u.deg, center_de*u.deg), wcs=target_wcs, size=(size_de*u.deg, size_ra*u.deg))
+        if return_cutout:
+            return cutout.data, cutout.wcs, cutout
+        else:
+            return cutout.data, cutout.wcs
+
+
+
 def sample_multiple_maps(velocity_limits=None):
     """
     December 15, 2023
@@ -1240,62 +1447,11 @@ def sample_multiple_maps(velocity_limits=None):
     reg_filename_short = "catalogs/m16_column_sample_points_21-27.reg"
     # All the data sources we will use and keys to describe them
     vel_stub_simple = make_simple_vel_stub(velocity_limits)
-    map_filenames = {
-        "column_70-160": "herschel/coldens_70-160_colorsolution_70zeroedat160.fits",
-        "column_160-500": "herschel/m16_coldens_high.fits",
-        "column_13co10": f"purplemountain/column_density_v3__13co10-pmo_{vel_stub_simple}.fits",
-        "column_c18o10": f"purplemountain/column_density_v3__c18o10-pmo_{vel_stub_simple}.fits",
-        "ratio_32_to_10": f"apex/ratio_v2_13co_32_to_10_pmo_{vel_stub_simple}.fits", # 13co32 to 13co10
-        "ratio_13_to_18": f"purplemountain/ratio_13co_to_c18o_10_pmo_{vel_stub_simple}.fits", # 13co10 to c18o10
-    }
+
     # We will also get the peak 12CO 3-2 line. The peak 13CO 3-2 line is already in the ratio_32_to_10 map
 
     # The values and errors are scattered throughout different extensions of these files, so we will have some functions to help
-    def _extract_values_from_image(data, wcs_obj, reg_list):
-        """
-        Given an array and WCS, grab values using the region list.
-        Return a list of values.
-        """
-        # Iterate regions and grab values at those pixels
-        values_list = []
-        for reg in reg_list:
-            j, i = [int(round(c)) for c in reg.to_pixel(wcs_obj).center.xy]
-            values_list.append(data[i, j])
-        return values_list
-
-    def _load_multi_extension_data(short_filename, extnames_to_extract, reg_list):
-        """
-        Load a multi-extension FITS file and extract values from several
-        extensions
-        :param short_filename: a relative path which can be solved with
-            catalog.utils.search_for_file
-        :param extnames_to_extract: should be a dict with "data names" as keys;
-            these should be short descriptive strings that will be attached to
-            the values after extraction.
-            The dict values should be the EXTNAME in the FITS file.
-        :returns: dict, the keys are the same as extnames_to_extract
-            and the values are lists of float values.
-        """
-        return_dict = {}
-        with fits.open(catalog.utils.search_for_file(short_filename)) as hdul:
-            for data_name in extnames_to_extract:
-                extname = extnames_to_extract[data_name]
-                values = _extract_values_from_image(hdul[extname].data, WCS(hdul[extname].header), reg_list)
-                return_dict[data_name] = values
-        return return_dict
-
-    def _load_single_extension_data(short_filename, data_name, reg_list):
-        """
-        Simpler than multi, somewhat. This time, pass the data name key as an
-        argument directly.
-        I want to use getdata for this because I don't want to guess if the
-        data extension is 0 or 1.
-        :returns: dict with only one entry. data_name as the key, the value list
-            as the value
-        """
-        data, header = fits.getdata(catalog.utils.search_for_file(short_filename), header=True)
-        values = _extract_values_from_image(data, WCS(header), reg_list)
-        return {data_name: values}
+    # Moved functions to COGridData
 
     """
     Get all the extension names or numbers lined up with data name keys
@@ -1320,51 +1476,18 @@ def sample_multiple_maps(velocity_limits=None):
 
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     result_dict = {"reg_name": [reg.meta['text'] for reg in reg_list]}
+    lookup_obj = COGridData(velocity_limits)
+    lookup_obj.sample_type_setting = "regions"
+    lookup_obj.sample_framework_setting = reg_list
 
     # ratio 13co32 to 13co10
-    name_keys = {
-        "ratio_32_10": 1, "err_ratio_32_10": 2, "peak_13co32": 3,
-        "peak_13co10": 4,
-    }
-    result_dict.update(_load_multi_extension_data(
-        map_filenames["ratio_32_to_10"], name_keys, reg_list,
-    ))
-
+    result_dict.update(lookup_obj.sample_data("ratio_32_to_10"))
     # ratio 13co10 to c18o10
-    name_keys = {
-        "ratio_13_18": 1, "err_ratio_13_18": 2, "peak_13co10": 3,
-        "peak_c18o10": 4,
-    }
-    result_dict.update(_load_multi_extension_data(
-        map_filenames["ratio_13_to_18"], name_keys, reg_list,
-    ))
-
-    name_keys = {
-        "column_density_13co10": "H2coldens",
-        "err_column_density_13co10": "err_H2coldens",
-    }
-    result_dict.update(_load_multi_extension_data(
-        map_filenames["column_13co10"], name_keys, reg_list,
-    ))
-
-    name_keys = {
-        "column_density_c18o10": "H2coldens",
-        "err_column_density_c18o10": "err_H2coldens",
-    }
-    result_dict.update(_load_multi_extension_data(
-        map_filenames["column_c18o10"], name_keys, reg_list,
-    ))
-
-    name_key = "column_density_70-160"
-    result_dict.update(_load_single_extension_data(
-        map_filenames["column_70-160"], name_key, reg_list,
-    ))
-
-    name_key = "column_density_160-500"
-    result_dict.update(_load_single_extension_data(
-        map_filenames["column_160-500"], name_key, reg_list,
-    ))
-
+    result_dict.update(lookup_obj.sample_data("ratio_13_to_18"))
+    result_dict.update(lookup_obj.sample_data("column_13co10"))
+    result_dict.update(lookup_obj.sample_data("column_c18o10"))
+    result_dict.update(lookup_obj.sample_data("column_70-160"))
+    result_dict.update(lookup_obj.sample_data("column_160-500"))
 
     """
     Get the 12CO3-2 peak_T values
@@ -1373,12 +1496,12 @@ def sample_multiple_maps(velocity_limits=None):
     cube = cube_utils.CubeData(get_map_filename('12co32-pmo')).convert_to_K()
     subcube = cube.data.spectral_slab(*velocity_limits)
     peak_T_32 = subcube.max(axis=0).to(u.K).to_value()
-    result_dict.update({"peak_12co32-pmo": _extract_values_from_image(peak_T_32, cube.wcs_flat, reg_list)})
+    result_dict.update({"peak_12co32-pmo": lookup_obj.extract_values_from_image(peak_T_32, cube.wcs_flat)})
 
     cube = cube_utils.CubeData(get_map_filename('12co32')).convert_to_K()
     subcube = cube.data.spectral_slab(*velocity_limits)
     peak_T_32 = subcube.max(axis=0).to(u.K).to_value()
-    result_dict.update({"peak_12co32": _extract_values_from_image(peak_T_32, cube.wcs_flat, reg_list)})
+    result_dict.update({"peak_12co32": lookup_obj.extract_values_from_image(peak_T_32, cube.wcs_flat)})
 
 
     save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
@@ -1394,8 +1517,93 @@ def sample_multiple_maps(velocity_limits=None):
     """
 
     result_df["column_density_70-160"] = result_df["column_density_70-160"] / 2
+    print(result_df)
 
-    result_df.to_csv(save_df_full_path)
+    # result_df.to_csv(save_df_full_path)
+
+
+def sample_masked_map():
+    """
+    December 17, 2023
+    Try using a mask-based approach to sampling. Take averages of each quantity
+    and output just one value + error per velocity interval / area
+
+    First mask will be N19 molecular shell
+    """
+    # Construct and test the  mask
+    mask_data_stub = "12co32-pmo"
+    cube = cube_utils.CubeData(get_map_filename(mask_data_stub)).convert_to_K().convert_to_kms()
+    mask_velocity_limits = (15*kms, 21*kms)
+    mom0 = cube.data.spectral_slab(*mask_velocity_limits).moment0()
+    mask_base = mom0.to_value()
+    mask = mask_base > 40
+    # Blank out a square around the long-tail CO source at the MYSO
+    islice = slice(106, 130)
+    jslice = slice(161, 193)
+    mask[islice, jslice] = False
+    # Blank out the other emission, the sort of part-ring around NGC 6611
+    islice = slice(112, 143)
+    jslice = slice(89, 134)
+    mask[islice, jslice] = False
+    if False:
+        test_img = mask_base.copy()
+        test_img[~mask] = np.nan
+        plt.imshow(test_img, origin='lower')
+        plt.colorbar()
+        plt.show()
+    # Done with this mask!
+    # Convert to float so it can be reprojected
+    # mask_float = mask.astype(float)
+    mask_wcs = cube.wcs_flat
+
+
+    # Try reprojecting it to some sample data
+    fn = "herschel/coldens_70-160_colorsolution_70zeroedat160.fits"
+    data, header = fits.getdata(catalog.utils.search_for_file(fn), header=True)
+    velocity_limits = (11*kms, 21*kms)
+    lookup_obj = COGridData(velocity_limits)
+    lookup_obj.sample_type_setting = "mask"
+    lookup_obj.sample_framework_setting = (mask, mask_wcs)
+    lookup_obj.diagnostic_plot = True
+
+    # lookup_obj.sample_data("column_70-160")
+    lookup_obj.sample_data("column_13co10")
+    plt.show()
+    # data, w = _cutout_to_footprint(data, WCS(header), mask_footprint)
+    # del header
+    # print(data.shape)
+    #
+    # mask_reproj = reproject_interp((mask_float, mask_wcs), w, data.shape, return_footprint=False) > 0.5
+    # test_img = data.copy()
+    # test_img[~mask_reproj] = np.nan
+    # plt.imshow(test_img, origin='lower', vmin=0, vmax=1e23)
+    # plt.show()
+
+    def _mask_image_and_return_average(img, wcs):
+        """
+        Dec 19, 2023
+        Does not use _cutout_to_footprint internally, so if you want that done
+        you have to do it yourself before this function.
+
+        At some point need to add error to this function, though the large avg
+        over pixels will probably render a pre-existing pixel error uselessly
+        small. The stddev error under the mask is probably more useful.
+        Although... some of the PACS, SPIRE errors are absolute, not just
+        statistical/relative. Like the background error. So that's probably
+        worth dealing with in a smarter way.
+        See 2023-12-19 notes for more info on how to do this
+
+        :param img: array
+        :param wcs: WCS
+        """
+        mask_reproj = reproject_interp((mask_float, mask_wcs), wcs, shape_out=img.shape, return_footprint=False) > 0.5
+        values_under_mask = img[mask_reproj].ravel()
+        mean = np.nanmean(values_under_mask)
+        # median = np.nanmedian(values_under_mask)
+        stddev = np.std(values_under_mask)
+        return mean, median
+
+
 
 
 """
@@ -3665,7 +3873,8 @@ if __name__ == "__main__":
         # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
         # get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
 
-    sample_multiple_maps(velocity_limits=velocity_limits['north_cloud_2'])
+    # sample_multiple_maps(velocity_limits=velocity_limits['north_cloud_2'])
+    sample_masked_map()
 
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
