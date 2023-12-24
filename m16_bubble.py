@@ -49,6 +49,9 @@ from reproject import reproject_adaptive
 import pandas as pd
 # from io import StringIO
 
+from spectralradex import radex
+from multiprocessing import Pool
+
 # Lord forgive me
 from . import crosscut
 pvdiagrams = crosscut.pvdiagrams
@@ -81,7 +84,7 @@ kms = u.km/u.s
 marcs_colors = ['#377eb8', '#ff7f00','#4daf4a', '#f781bf', '#a65628', '#984ea3', '#999999', '#e41a1c', '#dede00']
 
 
-ratio_12co_to_H2 = 8.5e-5
+ratio_12co_to_H2 = 8.5e-5 # Tielens book number
 Cp_H_ratio = 1.6e-4 # Sofia et al 2004, what Tiwari et al 2021 used in the N(C+)->N(H) section
 
 ratio_12co_to_13co = 44.65 # call it 45 in paper, the difference will be miniscule
@@ -1228,13 +1231,15 @@ def get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=None):
     hdul.writeto(savename, overwrite=True)
 
 
-class COGridData:
+class COData:
     """
     December 19, 2023
     Inspired by the code in sample_multiple_maps(), need a common format for
     these multi-extension column density and ratio maps.
     This class will hold a lookup dictionary for filenames and will also know
     the extensions and data names.
+
+    This class deals with observed data.
 
     I'll throw in the useful loading/sampling/unpacking functions into here too.
     """
@@ -1287,6 +1292,18 @@ class COGridData:
         for extname, data_name in extnames:
             extnames_to_extract[data_name] = extname
         return extnames_to_extract, True
+
+    def sample_all_data(self):
+        """
+        December 20, 2023
+        Convenience function for looping self.sample_data() through all keys
+        in self._key_lookup
+        Builds a single dictionary and returns it.
+        """
+        return_dict = {}
+        for k in self._key_lookup:
+            return_dict.update(self.sample_data(k))
+        return return_dict
 
     def sample_data(self, data_key, sample_framework=None, sample_type=None):
         """
@@ -1390,11 +1407,19 @@ class COGridData:
             Will be converted to array of float 0-1. 1 is True, 0 is False.
             Float means that we can reproject it! Can't reproject bool array.
             Will have to do (mask > 0.5) to make it a real bool array.
+
+        At some point need to add error to this function, though the large avg
+        over pixels will probably render a pre-existing pixel error uselessly
+        small. The stddev error under the mask is probably more useful.
+        Although... some of the PACS, SPIRE errors are absolute, not just
+        statistical/relative. Like the background error. So that's probably
+        worth dealing with in a smarter way.
+        See 2023-12-19 notes for more info on how to do this
         """
-        data_cut, wcs_cut, cutout = COGridData.cutout_to_footprint(data, wcs_obj, mask_wcs, mask.shape, return_cutout=True)
+        data_cut, wcs_cut, cutout = COData.cutout_to_footprint(data, wcs_obj, mask_wcs, mask.shape, return_cutout=True)
         mask_reproj_float = reproject_interp((mask.astype(float), mask_wcs), wcs_cut, shape_out=data_cut.shape, return_footprint=False)
         mask_reproj = mask_reproj_float > 0.5
-        values = data_cut[mask_reproj]
+        values_under_mask = data_cut[mask_reproj]
         if self.diagnostic_plot:
             data_copy = data_cut.copy()
             data_copy[~mask_reproj] = np.nan
@@ -1411,6 +1436,23 @@ class COGridData:
             plt.imshow(data, origin='lower')
             plt.subplot(235)
             plt.imshow(big_data_copy, origin='lower')
+        # Return mean, stddev
+        clean_values = values_under_mask[np.isfinite(values_under_mask) & (values_under_mask > 0)]
+        normalized = False
+        norm_val = 1e19
+        if np.any(clean_values > norm_val):
+            # Some issues with very large numbers in the np.std() function; this addresses them.
+            clean_values = clean_values / norm_val
+            normalized = True
+        mean = np.mean(clean_values)
+        stddev = np.std(clean_values)
+        lo, hi = misc_utils.flquantiles(clean_values, 6) # 6 approximates 16, 84 %iles for -?+ 1sigma
+        if normalized:
+            mean = mean * norm_val
+            stddev = stddev * norm_val
+            lo = lo * norm_val
+            hi = hi * norm_val
+        return {'value': mean, 'lo': lo, 'hi': hi, 'stddev': stddev}
 
     @staticmethod
     def cutout_to_footprint(target_data, target_wcs, reference_wcs, reference_shape, return_cutout=False):
@@ -1435,23 +1477,29 @@ class COGridData:
 
 
 
-def sample_multiple_maps(velocity_limits=None):
+def sample_multiple_maps_regions(velocity_limits=None):
     """
     December 15, 2023
     Sample the column density and line ratio maps using a region file and print
     out the results.
 
     The first region file is m16_column_sample_points_21-27.reg
+    the second one is 11-21
     """
     # Eventually this will be a selection of different reg files
-    reg_filename_short = "catalogs/m16_column_sample_points_21-27.reg"
+    if velocity_limits[0] == 21*kms:
+        reg_filename_short = "catalogs/m16_column_sample_points_21-27.reg"
+    elif velocity_limits[0] == 11*kms:
+        reg_filename_short = "catalogs/m16_column_sample_points_11-21.reg"
+    else:
+        raise RuntimeError
     # All the data sources we will use and keys to describe them
     vel_stub_simple = make_simple_vel_stub(velocity_limits)
 
     # We will also get the peak 12CO 3-2 line. The peak 13CO 3-2 line is already in the ratio_32_to_10 map
 
     # The values and errors are scattered throughout different extensions of these files, so we will have some functions to help
-    # Moved functions to COGridData
+    # Moved functions to COData
 
     """
     Get all the extension names or numbers lined up with data name keys
@@ -1476,7 +1524,7 @@ def sample_multiple_maps(velocity_limits=None):
 
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     result_dict = {"reg_name": [reg.meta['text'] for reg in reg_list]}
-    lookup_obj = COGridData(velocity_limits)
+    lookup_obj = COData(velocity_limits)
     lookup_obj.sample_type_setting = "regions"
     lookup_obj.sample_framework_setting = reg_list
 
@@ -1519,7 +1567,7 @@ def sample_multiple_maps(velocity_limits=None):
     result_df["column_density_70-160"] = result_df["column_density_70-160"] / 2
     print(result_df)
 
-    # result_df.to_csv(save_df_full_path)
+    result_df.to_csv(save_df_full_path)
 
 
 def sample_masked_map():
@@ -1558,51 +1606,442 @@ def sample_masked_map():
 
 
     # Try reprojecting it to some sample data
-    fn = "herschel/coldens_70-160_colorsolution_70zeroedat160.fits"
-    data, header = fits.getdata(catalog.utils.search_for_file(fn), header=True)
     velocity_limits = (11*kms, 21*kms)
-    lookup_obj = COGridData(velocity_limits)
+    vel_stub_simple = make_simple_vel_stub(velocity_limits)
+    lookup_obj = COData(velocity_limits)
     lookup_obj.sample_type_setting = "mask"
     lookup_obj.sample_framework_setting = (mask, mask_wcs)
-    lookup_obj.diagnostic_plot = True
+    lookup_obj.diagnostic_plot = False
 
-    # lookup_obj.sample_data("column_70-160")
-    lookup_obj.sample_data("column_13co10")
-    plt.show()
-    # data, w = _cutout_to_footprint(data, WCS(header), mask_footprint)
-    # del header
-    # print(data.shape)
-    #
-    # mask_reproj = reproject_interp((mask_float, mask_wcs), w, data.shape, return_footprint=False) > 0.5
-    # test_img = data.copy()
-    # test_img[~mask_reproj] = np.nan
-    # plt.imshow(test_img, origin='lower', vmin=0, vmax=1e23)
+    result_df = pd.DataFrame(lookup_obj.sample_all_data())
+
+    save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
+    assert os.path.exists(save_df_path)
+    save_df_name = f"sample_mask_test_1_{vel_stub_simple}.csv"
+    save_df_full_path = os.path.join(save_df_path, save_df_name)
+
+    """
+    Divide the Herschel 70-160 columns by 2 because they are N_H and everything
+    else is N(H2); N_H = N(H) + 2*N(H2) and N(H) is 0 by assumption.
+    """
+
+    result_df["column_density_70-160"] = result_df["column_density_70-160"] / 2
+    print(result_df)
+
+    result_df.to_csv(save_df_full_path)
     # plt.show()
 
-    def _mask_image_and_return_average(img, wcs):
+
+class CORadexGridCreate:
+    """
+    December 22, 2023
+    Handle Radex grid production. Uses the framework laid out in
+    co_column_grid.ipynb. Uses multiprocessing.Pool to speed things up.
+
+    This is the theoretical/model side, whereas COData is the observational
+    side. They are complimentary and will be used together for maximum
+    flexibility.
+
+    Seamlessly swap between different grid axes for ultimate flexibility.
+    (Rejected plan) Predefine your output values for ultimate customization potential.
+    """
+
+    allowed_keys = {'NH2', 'n', 'Tk'}
+
+    default_range = {
+        'NH2': (19, 24, 1),
+        'n': (1, 6, 1),
+        'Tk': (28, 40, 1),
+    }
+
+    default_scaling = {
+        'NH2': 'log',
+        'n': 'log',
+        'Tk': 'linear',
+    }
+
+    radex_parameter_aliases = {
+        # what spectralradex calls each parameter
+        'NH2': 'cdmol', # these aren't the same, but that is handled elsewhere
+        'n': 'h2',
+        'Tk': 'tkin',
+    }
+
+    # Radex names for each CO isotope
+    co_isotopes = ('co', '13co', 'c18o')
+
+    def __init__(self, axis_names, **kwargs):
         """
-        Dec 19, 2023
-        Does not use _cutout_to_footprint internally, so if you want that done
-        you have to do it yourself before this function.
-
-        At some point need to add error to this function, though the large avg
-        over pixels will probably render a pre-existing pixel error uselessly
-        small. The stddev error under the mask is probably more useful.
-        Although... some of the PACS, SPIRE errors are absolute, not just
-        statistical/relative. Like the background error. So that's probably
-        worth dealing with in a smarter way.
-        See 2023-12-19 notes for more info on how to do this
-
-        :param img: array
-        :param wcs: WCS
+        Going to play the kwargs dict game with this one.
+        Axis names is the only required argument so it's the only one explicitly
+        named.
+        :param axis_names: iterable of string labels.
+            As few as 1 or as many as you want is ok. String labels are the
+            predetermined parameter keys that I decided on. They are as follows:
+            NH2, n, Tk
+            Any or all of these may be placed in any order. Each can only appear
+            once (so you have a practical limit of 3 elements to this iterable
+            unless I were to support more parameters, which I don't plan to do).
+            Order is (x, y, z, ...). If "n" is the first element, then n is the
+            x axis, and so on.
+        optional kwargs
+        :param range: dict with keys in axis_names and values of 3-tuples.
+            3-tuples are (start, stop, step) range descriptions for each axis's
+            parameter.
+            Just like any Python indexing, or Python's "range" function or
+            numpy's "arange", stop is not inclusive but start is.
+            Default ranges will be used for each parameter for which range is
+            not set.
+        Upon initialization, the grid will be set up, but the Radex calls won't
+        start until another method is called. This way, grid configuration can
+        be checked before too much time is invested in grid population.
         """
-        mask_reproj = reproject_interp((mask_float, mask_wcs), wcs, shape_out=img.shape, return_footprint=False) > 0.5
-        values_under_mask = img[mask_reproj].ravel()
-        mean = np.nanmean(values_under_mask)
-        # median = np.nanmedian(values_under_mask)
-        stddev = np.std(values_under_mask)
-        return mean, median
+        self.axis_keys = tuple(axis_names)
+        # Fill ranges with defaults
+        self.axis_ranges = [CORadexGridCreate.default_range[k] for k in self.axis_keys]
+        # Check if any ranges were manually set
+        manually_set_ranges = kwargs.get("range", None)
+        if manually_set_ranges is not None:
+            # Update self.axis_ranges with the manually set ranges
+            # Loop thru axis keys
+            for i, k in enumerate(self.axis_keys):
+                # Check if a range was set for that key
+                k_range = manually_set_ranges.get(k, None)
+                if k_range is not None:
+                    # Put that range into the axis_ranges list
+                    self.axis_ranges[i] = k_range
+        # Set up the axes. log axis are still in log here
+        self.axis_arrays = [np.arange(*r) for r in self.axis_ranges]
+        # The "xyz" here is important: ijk (the array shape) is this reversed
+        self.grid_shape_xyz = tuple(arr.size for arr in self.axis_arrays)
+        # Create the default parameters dictionary
+        # This could be modified by the user before running the grid
+        self.params = radex.get_default_parameters()
+        # Modify some of the parameters
+        self.params['fmin'] = 100.
+        self.params['fmax'] = 400.
+        self.params['linewidth'] = 2.
+        # Figure out what the leftover parameters are and flag them so that they
+        # are manually set before the grid is run.
+        # This is important for NH2, which cannot be set in the params_dict because
+        # cdmol depends on the CO isotope
+        unused_params = set(allowed_keys) - set(self.axis_keys)
+        # Create dict that tracks the value of fixed parameters. May be empty if grid is 3D
+        self.fixed_params = {k: None for k in unused_params}
 
+    def manually_set_param(self, key, value):
+        """
+        Dec 23 2023
+        Manually set one of the three available axis parameters which is not
+        being varied in the grid.
+        i.e., if the grid is (n, NH2), this method would be used to set Tk.
+
+        This function MUST be run manually on all parameters in self.fixed_params.
+        If not, self.run_grid will raise an error.
+
+        :param key: string, one of the allowed_keys
+        :param value: float value. will be appropriately transformed
+        """
+        if key in self.fixed_params:
+            self.fixed_params[key] = value
+        else:
+            # Warn, but do not stop the code.
+            print(f"Warning: manually setting a value for a variable parameter <{key}>. This value will be ignored. The grid will still run.")
+
+    def run_grid(self, n_procs=4):
+        """
+        Execute the Radex calls to make the grid.
+        :param n_procs: int number of workers in the multiprocessing.Pool.
+            Default is 4, the number of physical cores on my laptop.
+        """
+        # Make sure n_procs is something reasonable. Cap it at 8, I'll fix the code if it's necessary to go over that.
+        n_procs_cap = 8
+        if n_procs > n_procs_cap:
+            raise RuntimeError(f"I'm preventing you from running a Pool with > {n_procs_cap} processes. If you know it's okay to do so, go into the code and increase n_procs_cap.")
+        # Set up grid iteration tuple
+        self.axis_tup_list = itertools.product(*self.axis_arrays)
+        # Mirror that grid iteration list with a list of index tuples
+        # This will give easy access into the 2 or 3D arrays
+        self.axis_index_list = itertools.product(*[range(x) for x in self.grid_shape_xyz])
+        # Combine these two lists into an arg list for the Pool
+        # the list elements are tuples(param_args, indices)
+        # param_args are tuple(*float) and indices are tuple(*int). Those tuples are equal length
+        self.arg_list = list(zip(self.axis_tup_list, self.axis_index_list))
+
+        # Task creator function
+        def _create_process_task(axis_param_keys, params_dict, fixed_params):
+            """
+            December 23, 2023
+            Create a function that will be used by each process in the Pool.
+            The point of using a function-creating function is to freeze the
+            instance variables into the function.
+            I'm not sure if this is strictly necessary but it feels safer
+            than letting each process access instance attributes.
+            """
+            # Reset the argument variables to copies of the arguments
+            axis_param_keys = tuple(axis_param_keys)
+            params_dict = params_dict.copy()
+            fixed_params = fixed_params.copy()
+            # Define a single-process task for running Radex for one gridpoint
+            def _process_task_run_radex(args):
+                """
+                December 23, 2023
+                Run Radex for one gridpoint. Designed to be farmed out to a Pool.
+                :param args: (tuple(*float), tuple(*int))
+                    The first tuple, of floats, gives the parameter values.
+                    The second tuple, of ints, gives the grid indices.
+                    They are equal length; length is the number of variable
+                    parameters (len(self.axis_keys)).
+                    The indices aren't exactly used in this function; they are
+                    returned by the function so that it's much easier to look up
+                    the correct grid cell later.
+                :returns: tuple(tuple(*int), tuple(*float))
+                    The first tuple, of ints, is the tuple of grid indices.
+                    This is identical to the second tuple in args.
+                    The second tuple, of floats, holds output values extracted
+                    from the Radex runs.
+                """
+                # Unpack the arguments. The two elements are also tuples.
+                grid_param_values, grid_indices = args
+                # Copy everything (again) to make sure we aren't modifying
+                grid_param_keys = tuple(axis_param_keys)
+                params_dict = params_dict.copy()
+                fixed_params = fixed_params.copy()
+                # Loop through isotopes and run Radex once for each
+                interim_result_dict = {}
+                for isotope in CORadexGridCreate.co_isotopes:
+                    # Fill out params
+                    params_dict['molfile'] = isotope + ".dat"
+                    # Set the axis parameters
+                    for k, v in zip(grid_param_keys, grid_param_values):
+                        CORadexGridCreate.set_parameter(isotope, params_dict, k, v)
+                    # Set the fixed parameters
+                    for k, v in fixed_params.items():
+                        CORadexGridCreate.set_parameter(isotope, params_dict, k, v)
+                    interim_result_dict[isotope] = radex.run(params_dict)
+                output_values = CORadexGridCreate.extract_and_pack_radex_outputs(interim_result_dict)
+                return (grid_indices, output_values)
+            return _process_task_run_radex
+
+        # Task function. This function will be sent to the Pool
+        process_task = self._create_process_task(self.axis_keys, self.params, self.fixed_params)
+
+        # Timekeeping
+        t0 = time.perf_counter()
+        with Pool(n_procs) as pool:
+            entire_result_list = pool.map(process_task, self.axis_tup_list)
+        t1 = time.perf_counter()
+
+        output_keys, output_arrays = self.unpack_and_rearrange_radex_outputs(entire_result_list)
+        ######################### continue from here. save as FITS
+
+
+
+
+    @staticmethod
+    def set_parameter(isotope, params_dict, key, value):
+        """
+        Dec 23 2023
+        Set the correct parameter in the dictionary
+        Static so that it can be used within a process in the Pool
+        """
+        value = CORadexGridCreate.parameter_transform(isotope, key, value)
+        params_dict[CORadexGridCreate.radex_parameter_aliases[key]] = value
+
+    @staticmethod
+    def parameter_transform(isotope, key, value):
+        """
+        Dec 23 2023
+        Apply required transforms to the parameter value before it is sent to
+        Radex. These include scaling and/or column density transforms for a
+        given CO isotope.
+        This function essentially coordinates/wraps a couple other static methods
+        :param isotope: string co, 13co, or c18o
+        :param key: grid parameter key, must be in CORadexGridCreate.allowed_keys
+        :param value: float parameter value
+        :returns: float transformed parameter value
+        """
+        # scaling
+        value = CORadexGridCreate.scale_to_param(value)
+        # check if column density, apply correct factors
+        if key == "NH2":
+            value = CORadexGridCreate.convert_nh2_to_co_isotope(value, isotope)
+        return value
+
+    @staticmethod
+    def scale_to_param(x, key):
+        """
+        December 23, 2023
+        Scale value(s) to their Radex parameter formats
+        i.e., if scaling is "log", then the input x=4 will become 10,000
+        If scaling is "linear", then input x=4 will remain 4.
+        :param x: value
+        :param key: name of parameter
+        :returns: scaled value
+        """
+        scaling = CORadexGridCreate.default_scaling[key]
+        if scaling == 'log':
+            return 10.**x
+        elif scaling == 'linear':
+            return x
+        else:
+            raise RuntimeError(f"Scaling type <{scaling}> unknown")
+
+    @staticmethod
+    def scale_from_param(x, key):
+        """
+        December 23, 2023
+        Inverse operation of scale_to_param
+        """
+        scaling = CORadexGridCreate.default_scaling[key]
+        if scaling == 'log':
+            return np.log10(x)
+        elif scaling == 'linear':
+            return x
+        else:
+            raise RuntimeError(f"Scaling type <{scaling}> unknown")
+
+    @staticmethod
+    def convert_nh2_to_co_isotope(nh2, isotope):
+        """
+        Dec 23 2023
+        convert N(H2) to N(13CO) or N(C18O)
+        """
+        n12co = nh2 * ratio_12co_to_H2 # 8.5e-5, Tielens book number
+        if isotope == 'co':
+            return n12co
+        elif isotope == '13co':
+            n13co = n12co / ratio_12co_to_13co # 44.65, Karim et al. number
+            return n13co
+        elif isotope == 'c18o':
+            nc18o = n12co / ratio_12co_to_c18o # 417, Wilson and Rood 1994
+            return nc18o
+        else:
+            raise RuntimeError(f"isotope? {isotope}")
+
+    @staticmethod
+    def extract_and_pack_radex_outputs(interim_result_dict):
+        """
+        Dec 23 2023
+        Extract the relevant information from interim_result_dict and repackage
+        it as a tuple in a predetermined order so that it can be unpacked later.
+        This function is meant to be called from within a Pool.
+        :param interim_result_dict: dict with string keys co, 13co, c18o.
+            Each value is the DataFrame generated by spectralradex upon running
+            Radex for that isotope (and the parameter configuration, which is
+            not of concern for this function)
+        :returns: tuple(*float) in the order which would be generated by
+            for property in (TR, tau):
+                for isotope in (co, 13co, c18o):
+                    for line in (1-0, 3-2):
+                        skip c18o 3-2
+                        append value for property of line of isotope
+            This results in a tuple of length 10.
+            Why a tuple a not a list? Lists overallocate, particularly when you
+            are building them with list.append, which I will be doing. I don't
+            need to save an empty allocated list buffer for every single pixel
+            in the grid; that could waste memory on the order of the size of the
+            grid. The grids of course aren't very big so this isn't a huge deal.
+            But philosophically, I think it's reasonable to convert the list to
+            an immutable tuple when I send it back to the calling function.
+        """
+        result_list = []
+        for property_colname in ["T_R (K)", "tau"]:
+            for isotope in CORadexGridCreate.co_isotopes:
+                # Get the DataFrame for this isotope
+                isotope_df = interim_result_dict[isotope]
+                for line_iloc in [0, 2]:
+                    # [0, 2] are the index locations of the 1-0 and 3-2 transitions in the DataFrame
+                    if (isotope == 'c18o') and (line_iloc == 2):
+                        # No need for the C18O 3-2 line
+                        continue
+                    result_list.append(isotope_df[property_colname])
+        return tuple(result_list)
+
+    def unpack_and_rearrange_radex_outputs(result_tuples):
+        """
+        Dec 23 2023
+        Outside-Pool counterpart to extract_and_pack_radex_outputs.
+        extract_and_pack_radex_outputs worked inside each process in the Pool
+        to arrange the outputs in a sensible order.
+        unpack_and_rearrange_radex_outputs takes an iterable made up of many
+        return values from extract_and_pack_radex_outputs and arranges them in
+        their own 1, 2, or 3D arrays.
+        :param result_tuples: iterable of tuples.
+            Each element is a tuple returned by extract_and_pack_radex_outputs.
+        :returns: (list, dict)
+            list has strings in good order for saving. The strings match the
+            keys in the dict.
+            dict has string keys and array values.
+            The key describes the array; "TR_13co_10" would indicate that the
+            array holds the radiation temperature of 13CO 1-0.
+        """
+        # Create the empty arrays. We know in advance we need 10 for the outputs.
+        output_labels = []
+        # Generate output value keys using the same nested for loop used to
+        # pack up the values
+        for property_name in ["TR", "tau"]:
+            for isotope in CORadexGridCreate.co_isotopes:
+                for line in ["10", "32"]:
+                    if (isotope == 'c18o') and (line == '32'):
+                        continue
+                    output_labels.append(f"{property_name}_{isotope}_{line}")
+        # This is the array shape
+        self.grid_shape_ijk = self.grid_shape_xyz[::-1]
+        # Initialize a bunch of arrays
+        output_arrays = {k: np.zeros(self.grid_shape_ijk) for k in output_labels}
+        # Just loop-fill the arrays. No fancy indexing, it'll take longer to write
+        # that it will run.
+        for indices_xyz, output_values in result_tuples:
+            indices_ijk = indices_xyz[::-1]
+            for k, v in zip(output_labels, output_values):
+                output_arrays[k][indices_ijk] = v
+        # Add another len(self.axis_keys) arrays to hold the input parameters
+        # Have to flip around the axis_arrays list so that ij indexing works.
+        # Can't use xy indexing because in 3D it does (z, x, y) shape
+        # Flip it back around afterwards so that we can match it up with axis_keys easily
+        parameter_arrays = np.meshgrid(*self.axis_arrays[::-1], indexing='ij')[::-1]
+        for k, arr in zip(self.axis_keys, parameter_arrays):
+            output_arrays[k] = arr
+        output_labels = list(self.axis_keys) + output_labels
+        return output_labels, output_arrays
+
+    def create_savename(self):
+        """
+        Dec 23 2023
+        Make a unique filename using the axis_keys, ranges, and fixed_params
+        """
+        key_strings = []
+        for k, r in zip(self.axis_keys, self.axis_ranges):
+            s = ".".join(str(x) for x in self.axis_ranges)
+            key_strings.append(f"{k}.{s}")
+        for k in fixed_params:
+            key_strings.append(f"fixed.{k}.{fixed_params[k]:.2f}")
+        return "-".join(key_strings)
+
+
+class CORadexGridRead:
+    """
+    December 22, 2023
+    Handle Radex grid reading. Uses the framework laid out in
+    co_column_grid.ipynb.
+
+    Should feel similar to CORadexGridCreate but doesn't do any grid creation.
+    """
+    def __init__(self, filename):
+        """
+        :param filename: full path to a file saved by CORadexGridCreate
+        """
+        ...
+
+
+def test_radex_grid():
+    """
+    December 23, 2023
+    test the CORadexGridCreate and CORadexGridRead classes
+    """
+    grid_creator = CORadexGridCreate(["n", "NH2"])
+    grid_creator.run_grid()
 
 
 
@@ -3873,11 +4312,14 @@ if __name__ == "__main__":
         # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
         # get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
 
-    # sample_multiple_maps(velocity_limits=velocity_limits['north_cloud_2'])
-    sample_masked_map()
+    # sample_multiple_maps_regions(velocity_limits=velocity_limits['north_cloud_2'])
+    # sample_multiple_maps_regions(velocity_limits=velocity_limits['redshifted_2'])
+    # sample_masked_map()
 
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
+
+    test_radex_grid()
 
     # calculate_cii_column_density_detection_threshold()
 
