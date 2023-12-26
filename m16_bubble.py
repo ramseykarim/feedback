@@ -1631,7 +1631,6 @@ def sample_masked_map():
     result_df.to_csv(save_df_full_path)
     # plt.show()
 
-
 class CORadexGridCreate:
     """
     December 22, 2023
@@ -1646,24 +1645,24 @@ class CORadexGridCreate:
     (Rejected plan) Predefine your output values for ultimate customization potential.
     """
 
-    allowed_keys = {'NH2', 'n', 'Tk'}
+    allowed_keys = ['n', 'NH2', 'Tk']
 
     default_range = {
-        'NH2': (19, 24, 1),
         'n': (1, 6, 1),
+        'NH2': (19, 24, 1),
         'Tk': (28, 40, 1),
     }
 
     default_scaling = {
-        'NH2': 'log',
         'n': 'log',
+        'NH2': 'log',
         'Tk': 'linear',
     }
 
     radex_parameter_aliases = {
         # what spectralradex calls each parameter
-        'NH2': 'cdmol', # these aren't the same, but that is handled elsewhere
         'n': 'h2',
+        'NH2': 'cdmol', # these aren't the same, but that is handled elsewhere
         'Tk': 'tkin',
     }
 
@@ -1714,6 +1713,8 @@ class CORadexGridCreate:
         self.axis_arrays = [np.arange(*r) for r in self.axis_ranges]
         # The "xyz" here is important: ijk (the array shape) is this reversed
         self.grid_shape_xyz = tuple(arr.size for arr in self.axis_arrays)
+        # This is the array shape
+        self.grid_shape_ijk = self.grid_shape_xyz[::-1]
         # Create the default parameters dictionary
         # This could be modified by the user before running the grid
         self.params = radex.get_default_parameters()
@@ -1728,6 +1729,8 @@ class CORadexGridCreate:
         unused_params = set(self.allowed_keys) - set(self.axis_keys)
         # Create dict that tracks the value of fixed parameters. May be empty if grid is 3D
         self.fixed_params = {k: None for k in unused_params}
+        # Disallow file overwriting unless we expressly permit it
+        self.allow_overwrite = False
 
     def manually_set_param(self, key, value):
         """
@@ -1771,138 +1774,83 @@ class CORadexGridCreate:
         # Mirror that grid iteration list with a list of index tuples
         # This will give easy access into the 2 or 3D arrays
         self.axis_index_list = itertools.product(*[range(x) for x in self.grid_shape_xyz])
-        # Combine these two lists into an arg list for the Pool
-        # the list elements are tuples(param_args, indices)
-        # param_args are tuple(*float) and indices are tuple(*int). Those tuples are equal length
-        self.arg_list = list(zip(self.axis_tup_list, self.axis_index_list))
 
-        # # Task creator function
-        # def _create_process_task(axis_param_keys, params_dict, fixed_params):
-        #     """
-        #     December 23, 2023
-        #     Create a function that will be used by each process in the Pool.
-        #     The point of using a function-creating function is to freeze the
-        #     instance variables into the function.
-        #     I'm not sure if this is strictly necessary but it feels safer
-        #     than letting each process access instance attributes.
-        #     """
-        #     # Reset the argument variables to copies of the arguments
-        #     axis_param_keys = tuple(axis_param_keys)
-        #     params_dict = params_dict.copy()
-        #     fixed_params = fixed_params.copy()
-        #     # Define a single-process task for running Radex for one gridpoint
-        #     def _process_task_run_radex(args):
-        #         """
-        #         December 23, 2023
-        #         Run Radex for one gridpoint. Designed to be farmed out to a Pool.
-        #         :param args: (tuple(*float), tuple(*int))
-        #             The first tuple, of floats, gives the parameter values.
-        #             The second tuple, of ints, gives the grid indices.
-        #             They are equal length; length is the number of variable
-        #             parameters (len(self.axis_keys)).
-        #             The indices aren't exactly used in this function; they are
-        #             returned by the function so that it's much easier to look up
-        #             the correct grid cell later.
-        #         :returns: tuple(tuple(*int), tuple(*float))
-        #             The first tuple, of ints, is the tuple of grid indices.
-        #             This is identical to the second tuple in args.
-        #             The second tuple, of floats, holds output values extracted
-        #             from the Radex runs.
-        #         """
-        #         # Unpack the arguments. The two elements are also tuples.
-        #         grid_param_values, grid_indices = args
-        #         # Copy everything (again) to make sure we aren't modifying
-        #         grid_param_keys = tuple(axis_param_keys)
-        #         params_dict_copy = params_dict.copy()
-        #         fixed_params_copy = fixed_params.copy()
-        #         # Loop through isotopes and run Radex once for each
-        #         interim_result_dict = {}
-        #         for isotope in CORadexGridCreate.co_isotopes:
-        #             # Fill out params
-        #             params_dict_copy['molfile'] = isotope + ".dat"
-        #             # Set the axis parameters
-        #             for k, v in zip(grid_param_keys, grid_param_values):
-        #                 CORadexGridCreate.set_parameter(isotope, params_dict_copy, k, v)
-        #             # Set the fixed parameters
-        #             for k, v in fixed_params_copy.items():
-        #                 CORadexGridCreate.set_parameter(isotope, params_dict_copy, k, v)
-        #             interim_result_dict[isotope] = radex.run(params_dict_copy)
-        #         output_values = CORadexGridCreate.extract_and_pack_radex_outputs(interim_result_dict)
-        #         return (grid_indices, output_values)
-        #     return _process_task_run_radex
-
-        def _process_task_run_radex(args):
-            """
-            TASK FOR TOMORROW:
-            pickle cannot serialize local (inner) functions. The function must be
-            available in the global namespace. I will have to restructure this
-            a bit, but luckily only this.
-
-            December 23, 2023
-            Run Radex for one gridpoint. Designed to be farmed out to a Pool.
-            :param args: (tuple(*float), tuple(*int))
-                The first tuple, of floats, gives the parameter values.
-                The second tuple, of ints, gives the grid indices.
-                They are equal length; length is the number of variable
-                parameters (len(self.axis_keys)).
-                The indices aren't exactly used in this function; they are
-                returned by the function so that it's much easier to look up
-                the correct grid cell later.
-            :returns: tuple(tuple(*int), tuple(*float))
-                The first tuple, of ints, is the tuple of grid indices.
-                This is identical to the second tuple in args.
-                The second tuple, of floats, holds output values extracted
-                from the Radex runs.
-            """
-            # Unpack the arguments. The two elements are also tuples.
-            grid_param_values, grid_indices = args
-            # Copy everything (again) to make sure we aren't modifying
-            grid_param_keys = tuple(self.axis_keys)
-            params_dict_copy = self.params.copy()
-            fixed_params_copy = self.fixed_params.copy()
-            # Loop through isotopes and run Radex once for each
-            interim_result_dict = {}
-            for isotope in CORadexGridCreate.co_isotopes:
-                # Fill out params
-                params_dict_copy['molfile'] = isotope + ".dat"
-                # Set the axis parameters
-                for k, v in zip(grid_param_keys, grid_param_values):
-                    CORadexGridCreate.set_parameter(isotope, params_dict_copy, k, v)
-                # Set the fixed parameters
-                for k, v in fixed_params_copy.items():
-                    CORadexGridCreate.set_parameter(isotope, params_dict_copy, k, v)
-                interim_result_dict[isotope] = radex.run(params_dict_copy)
-            output_values = CORadexGridCreate.extract_and_pack_radex_outputs(interim_result_dict)
-            return (grid_indices, output_values)
-
+        # Print some stuff about the grid we're about to run
+        print(f"Grid shape {self.grid_shape_ijk} and size {math.prod(self.grid_shape_ijk)}.")
 
         # Task function. This function will be sent to the Pool
-        process_task = _process_task_run_radex #_create_process_task(self.axis_keys, self.params, self.fixed_params)
-
+        process_task = CORadexGridCreate.process_task_run_radex
+        # Iterable from generator function to emit the constant arguments with every element of the iterable
+        # The zip() combines two lists into an arg list for the Pool
+        # the list elements are tuples(param_args, indices)
+        # param_args are tuple(*float) and indices are tuple(*int). Those tuples are equal length
+        all_args_iterable = CORadexGridCreate.generate_args(zip(self.axis_tup_list, self.axis_index_list), self.axis_keys, self.params, self.fixed_params)
         if n_procs > 1:
             print(f"Starting pool of {n_procs} workers...", flush=True)
             # Timekeeping
             t0 = time.perf_counter()
             with Pool(n_procs) as pool:
-                entire_result_list = pool.map(process_task, self.arg_list)
+                entire_result_list = list(pool.imap_unordered(process_task, all_args_iterable))
             t1 = time.perf_counter()
             print(f"Finished, {t1-t0:.3g} seconds elapsed.")
         else:
             print(f"Starting in serial...", flush=True)
             t0 = time.perf_counter()
-            entire_result_list = [process_task(x) for x in self.arg_list]
+            entire_result_list = [process_task(x) for x in all_args_iterable]
             t1 = time.perf_counter()
             print(f"Finished, {t1-t0:.3g} seconds elapsed.")
 
         output_keys, output_arrays = self.unpack_and_rearrange_radex_outputs(entire_result_list)
-        ######################### continue from here. save as FITS
 
         # Determine file save location
         self.savename = self.create_savename()
-
         print(f"Writing to {self.savename} ... ", end="", flush=True)
         self.save(output_keys, output_arrays)
         print("Done")
+
+    @staticmethod
+    def process_task_run_radex(args):
+        """
+        TASK FOR TOMORROW:
+        pickle cannot serialize local (inner) functions. The function must be
+        available in the global namespace. I will have to restructure this
+        a bit, but luckily only this.
+
+        December 23, 2023
+        Run Radex for one gridpoint. Designed to be farmed out to a Pool.
+        :param args: (tuple(*float), tuple(*int))
+            The first tuple, of floats, gives the parameter values.
+            The second tuple, of ints, gives the grid indices.
+            They are equal length; length is the number of variable
+            parameters (len(self.axis_keys)).
+            The indices aren't exactly used in this function; they are
+            returned by the function so that it's much easier to look up
+            the correct grid cell later.
+        :returns: tuple(tuple(*int), tuple(*float))
+            The first tuple, of ints, is the tuple of grid indices.
+            This is identical to the second tuple in args.
+            The second tuple, of floats, holds output values extracted
+            from the Radex runs.
+        """
+        # Unpack the arguments. The two elements are also tuples.
+        (grid_param_values, grid_indices), grid_param_keys, params_dict, fixed_params = args
+        # Copy everything (again) to make sure we aren't modifying
+        params_dict_copy = params_dict.copy()
+        fixed_params_copy = fixed_params.copy()
+        # Loop through isotopes and run Radex once for each
+        interim_result_dict = {}
+        for isotope in CORadexGridCreate.co_isotopes:
+            # Fill out params
+            params_dict_copy['molfile'] = isotope + ".dat"
+            # Set the axis parameters
+            for k, v in zip(grid_param_keys, grid_param_values):
+                CORadexGridCreate.set_parameter(isotope, params_dict_copy, k, v)
+            # Set the fixed parameters
+            for k, v in fixed_params_copy.items():
+                CORadexGridCreate.set_parameter(isotope, params_dict_copy, k, v)
+            interim_result_dict[isotope] = radex.run(params_dict_copy)
+        output_values = CORadexGridCreate.extract_and_pack_radex_outputs(interim_result_dict)
+        return (grid_indices, output_values)
 
     @staticmethod
     def set_parameter(isotope, params_dict, key, value):
@@ -2052,8 +2000,6 @@ class CORadexGridCreate:
                     if (isotope == 'c18o') and (line == '32'):
                         continue
                     output_labels.append(f"{property_name}_{isotope}_{line}")
-        # This is the array shape
-        self.grid_shape_ijk = self.grid_shape_xyz[::-1]
         # Initialize a bunch of arrays
         output_arrays = {k: np.zeros(self.grid_shape_ijk) for k in output_labels}
         # Just loop-fill the arrays. No fancy indexing, it'll take longer to write
@@ -2084,7 +2030,7 @@ class CORadexGridCreate:
             s = ".".join(str(x) for x in r)
             key_strings.append(f"{k}.{s}")
         # Loop through axis_keys (list) to preserve order in fixed_params (dict)
-        for k in self.axis_keys:
+        for k in self.allowed_keys:
             if k in self.fixed_params:
                 key_strings.append(f"fixed.{k}.{self.fixed_params[k]:.2f}")
         filename = "_".join(key_strings) + ".fits"
@@ -2103,10 +2049,18 @@ class CORadexGridCreate:
         # Set up HDU list and Header template
         hdu_list = [fits.PrimaryHDU()]
         header_template = fits.Header({
-            'CREATOR': f"Ramsey Karim via {__file__}.{__class__}.save",
+            'CREATOR': f"Ramsey Karim via {__file__}.{type(self).__name__}.save",
             'DATE': f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}",
             'COMMENT': "Grids created using the spectralradex wrapper of Radex",
         })
+        # Use the CTYPE Header keys to indicate the quantities on each axis
+        for i, k in enumerate(self.axis_keys):
+            header_template[f"CTYPE{i+1:d}"] = k
+        # Use the keyword 'FIXED{i}' to list fixed parameters
+        i = 0
+        for k in self.allowed_keys:
+            if k in self.fixed_params:
+                header_template[f"FIXED{i+1:d}"] = f"{k},{self.fixed_params[k]:.2f}"
         # Use keys as extnames
         for k in output_keys:
             arr = output_arrays[k]
@@ -2115,7 +2069,7 @@ class CORadexGridCreate:
             hdr['EXTNAME'] = k
             hdu_list.append(fits.ImageHDU(data=arr, header=hdr))
         # Write
-        fits.HDUList(hdu_list).writeto(self.savename)
+        fits.HDUList(hdu_list).writeto(self.savename, overwrite=self.allow_overwrite)
 
     def decide_units(self, key):
         """
@@ -2158,6 +2112,20 @@ class CORadexGridCreate:
         # return any(fixed_value is None for fixed_value in self.fixed_params.values())
         return [k for k, v in self.fixed_params.items() if v is None]
 
+    @staticmethod
+    def generate_args(iterable_arg, *constant_args):
+        """
+        From one iterable argument and some number of "constant arguments",
+        create an iterable that pairs each element of iterable_arg with all of the
+        constant args.
+        This is to help Pool.imap work and to avoid holding too many copies of
+        the constant_args in memory at once
+        :param iterable_arg: iterable
+        :param *constant_args: any number of other arguments, any type(s).
+        """
+        for element in iterable_arg:
+            yield (element, *constant_args)
+
 
 class CORadexGridRead:
     """
@@ -2169,9 +2137,74 @@ class CORadexGridRead:
     """
     def __init__(self, filename):
         """
-        :param filename: full path to a file saved by CORadexGridCreate
+        Dec 25, 2023
+        :param filename: string name of a file saved by CORadexGridCreate
+            I'm using the same directory, so I'll have this function find that
+            automatically
         """
-        ...
+        # Get filename
+        self.full_filename = self.find_full_path(filename)
+        self.data = {}
+        self.units = {}
+        self.axis_keys = []
+        self.axis_arrays = []
+        self.fixed_params = {}
+        # Populate the above instance variables
+        self.load_grid(self.full_filename)
+
+
+    def find_full_path(self, filename):
+        """
+        Dec 25 2023
+        Knows about the directory where the grids are saved
+        :param filename: the filename relative to the grid directory (so just
+            the filename)
+        :returns: string full path
+        """
+        filepath = os.path.join(catalog.utils.misc_data_path, "co_grids")
+        return os.path.join(filepath, filename)
+
+    def load_grid(self, filename):
+        """
+        Dec 25
+        Loads in the file. Makes a dictionary from the extnames to the data.
+        Gathers some useful information from the Headers.
+        Does not return; populates instance variables:
+            self.data, self.units, self.axis_keys, self.axis_arrays,
+            self.fixed_params
+        :param filename: absolute filename of the grid
+        """
+        header = None
+        with fits.open(filename) as hdul:
+            for i, hdu in enumerate(hdul):
+                if i == 0:
+                    # PrimaryHDU
+                    continue
+                elif i == 1:
+                    # Save one of the headers
+                    header = hdu.header
+                k = hdu.header['EXTNAME']
+                self.data[k] = hdu.data
+                self.units[k] = hdu.header['BUNIT']
+        # Extract additional information from the saved header
+        naxis = header['NAXIS']
+        for i in range(naxis):
+            self.axis_keys.append(header[f"CTYPE{i+1:d}"])
+        for k in list(header.keys()):
+            if "FIXED" in k:
+                name, val = header[k].split(',')
+                self.fixed_params[name] = float(val)
+        # Found a fun trick to get the right slices
+        slices = ((0,)*(naxis-1) + (slice(None),))*2
+        # Get the axes. Things are in XYZ order.
+        for i, k in enumerate(self.axis_keys):
+            # full_arr might be 2 or 3D; will still work if 1D
+            full_arr = self.data[k]
+            # First axis is x, so that's the last index
+            axis_array = full_arr[slices[0+i:naxis+i]]
+            self.axis_arrays.append(axis_array)
+
+
 
 
 def test_radex_grid():
@@ -2179,10 +2212,21 @@ def test_radex_grid():
     December 23, 2023
     test the CORadexGridCreate and CORadexGridRead classes
     """
-    grid_creator = CORadexGridCreate(["n", "NH2"], range={"NH2": (21, 23, 1), "n": (1, 6, 1)})
-    grid_creator.manually_set_param("Tk", 30)
-    # grid_creator.manually_set_param("NH2", 21)
-    grid_creator.run_grid(n_procs=2)
+    if True:
+        # grid_creator = CORadexGridCreate(["n", "NH2"], range={"NH2": (19, 24, 0.25), "n": (1, 6, 0.25)})
+        # grid_creator.manually_set_param("Tk", 30)
+        grid_creator = CORadexGridCreate(["n", "Tk"], range={"Tk": (29, 41, 1), "n": (1, 6, 0.25)})
+        grid_creator.manually_set_param("NH2", 22)
+        # grid_creator.allow_overwrite = False
+        grid_creator.run_grid(n_procs=4)
+        savename = os.path.basename(grid_creator.savename)
+        print(savename)
+    else:
+        savename = "n.1.6.1_NH2.21.23.1_fixed.Tk.30.00.fits"
+    if True:
+        grid_reader = CORadexGridRead(savename)
+        print(grid_reader.axis_keys)
+
 
 
 
