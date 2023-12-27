@@ -722,6 +722,26 @@ class COColumnDensity:
     its own.
     Making it a class instead of a function to have more fun with it.
     """
+
+    # Constants, in order:
+    # B_0 (MHz), E_upper (K), mu (Debye), nu (GHz), J_upper
+    # From the above, we construct g and S
+    # Looks like B_0 is constant to the molecule, and does not change with transtion
+    _constants = {
+        '13co10': (55101.01, 5.28880, 0.11046, 110.20135400, 1),
+        '13co32': (55101.01, 31.73179, 0.11046, 330.587965300, 3), # see 2023-09-11 notes, still re-researching this
+        'c18o10': (55101.01, 5.26868, 0.11046, 109.78217340, 1),
+        # For the 12co lines, only the frequency is needed
+        '12co10': 115.27120180,
+        '12co32': 345.79598990,
+    }
+
+    _thick_line = {
+        '13co10': '12co10',
+        'c18o10': '12co10',
+        '13co32': '12co32',
+    }
+
     def __init__(self, optically_thin_line_stub):
         """
         Initialize instance using a line stub like '13co10', whatever the
@@ -731,15 +751,6 @@ class COColumnDensity:
         :param optically_thin_line_stub: str, line stub describing optically
             thin CO line
         """
-        # Constants, in order:
-        # B_0 (MHz), E_upper (K), mu (Debye), nu (GHz), J_upper
-        # From the above, we construct g and S
-        # Looks like B_0 is constant to the molecule, and does not change with transtion
-        _constants = {
-            '13co10': (55101.01, 5.28880, 0.11046, 110.20135400, 1),
-            '13co32': (55101.01, 31.73179, 0.11046, 330.587965300, 3), # see 2023-09-11 notes, still re-researching this
-            'c18o10': (55101.01, 5.26868, 0.11046, 109.78217340, 1),
-        }
         # Take out anything on the other side of a hyphen and ignore it
         if '-' in optically_thin_line_stub:
             optically_thin_line_stub = optically_thin_line_stub.split('-')[0]
@@ -751,6 +762,8 @@ class COColumnDensity:
         self.mu = mu * u.Debye
         # relying on the units to correct bugs from mixing up "mu" and "nu"
         self.nu = nu * u.GHz
+        # Get the frequency of the optically thick line used for Tex
+        self.thick_nu = _constants[_thick_line[optically_thin_line_stub]] * u.GHz
         # Default filling factor is 1.0
         self.ff = 1.0 # can set a different one in .set_filling_factor()
 
@@ -856,20 +869,25 @@ class COColumnDensity:
         self.ratio_thick_to_thin = thick_to_thin
         self.ratio_co_to_h2 = co_to_h2
 
-    def _calculate_Tex(self, t_b):
+    @staticmethod
+    def calculate_Tex(t_b, nu):
         """
         Calculate Tex from peak TB without the RJ approximation
         RJ approximation h*nu << kT implies TB = Tex. Not applicable for
-        CO 3-2, and only somewhat for CO 1-0. Better to correct properly.
+        CO 3-2, and only somewhat for CO 1-0. Better to correct properly, which
+        is what we're doing here.
         See the CO column density notes.
 
         Equation to implement is the basic definition of brightness temperature
         T_ex = (h*nu / k) * [ln{ h*nu/(k*TB) + 1 }]^-1
 
+        staticmethod so that we can use this outside the function, it's really
+        useful. It does not depend on any instance attributes.
+
         :param t_b: Quantity, measured brightness temperature T_B
         :returns: Quantity excitation temperature T_ex
         """
-        hnu_kB = const.h * self.nu / const.k_B
+        hnu_kB = const.h * nu / const.k_B
         return (hnu_kB / np.log((hnu_kB/t_b) + 1)).to(u.K)
 
     def _calculate_thin_line_column_density(self):
@@ -879,7 +897,7 @@ class COColumnDensity:
         """
         # Let Tex be equal to peak MB temperature in the opt. thick line.
         # This is an assumption, so I'll keep them as separate variables.
-        self.Tex = self._calculate_Tex(self.peak_temperature/self.ff)
+        self.Tex = self.calculate_Tex(self.peak_temperature/self.ff, self.thick_nu)
         self.e_Tex = self.e_pt # # TODO: need to error propagate this!! I'll leave it as it is now because it won't be a ton of error.
         # Rotational partition function Qrot
         Qrot = (const.k_B * self.Tex / (const.h * self.B0)).decompose() + (1./3)
@@ -1246,7 +1264,8 @@ class COData:
 
     def __init__(self, velocity_limits):
         # All the data sources we will use and keys to describe them
-        self.vel_stub_simple = make_simple_vel_stub(velocity_limits)
+        self.velocity_limits = velocity_limits
+        self.vel_stub_simple = make_simple_vel_stub(self.velocity_limits)
         self._map_filenames = {
             "column_70-160": "herschel/coldens_70-160_colorsolution_70zeroedat160.fits",
             "column_160-500": "herschel/m16_coldens_high.fits",
@@ -1254,44 +1273,73 @@ class COData:
             "column_c18o10": f"purplemountain/column_density_v3__c18o10-pmo_{self.vel_stub_simple}.fits",
             "ratio_32_to_10": f"apex/ratio_v2_13co_32_to_10_pmo_{self.vel_stub_simple}.fits", # 13co32 to 13co10
             "ratio_13_to_18": f"purplemountain/ratio_13co_to_c18o_10_pmo_{self.vel_stub_simple}.fits", # 13co10 to c18o10
+            "12co10": "12co10-pmo",
+            "13co10": "13co10-pmo",
+            "c18o10": "c18o10-pmo",
+            "12co32": "12co32-pmo",
+            "13co32": "13co32-pmo",
         }
-        # The extensions to each FITS file
-        # Top level keys match _map_filenames keys
-        # Top level values are tuples whose elements represent a single extension / map
-        # Tuple elements are 2-tuples which are [extname, data_name]
-        # data_name is the descriptive name of the extension that should be used in the DataFrame
-        # If the top level value is just a string, then it's a single extension. string is the descriptive name
+        """
+        The extensions to each FITS file
+        Top level keys match _map_filenames keys (KEY)
+        Their values are tuples. The first element indicates what kind of data it is (DATA TYPE)
+        The second element is either a tuple or a string (DATA INFO)
+        If DATA INFO a tuple, the elements represent a single extension / map in a multi-extension file
+        That tuple's elements are 2-tuples which are EXTNAME, DATA NAME
+        data_name is the descriptive name (DATA NAME) of the extension that should be used in the DataFrame
+        If DATA INFO is a string, then it's a single extension. string is the descriptive name DATA NAMAE
+
+        All together, that means that
         self._key_lookup = {
-            "column_70-160": "column_density_70-160",
-            "column_160-500": "column_density_160-500",
-            "column_13co10": (("H2coldens", "column_density_13co10"), ("err_H2coldens", "err_column_density_13co10")),
-            "column_c18o10": (("H2coldens", "column_density_c18o10"), ("err_H2coldens", "err_column_density_c18o10")),
-            "ratio_32_to_10": ((1, "ratio_32_10"), (2, "err_ratio_32_10"), (3, "peak_13co32"), (4, "peak_13co10")),
-            "ratio_13_to_18": ((1, "ratio_13_18"), (2, "err_ratio_13_18"), (3, "peak_13co10"), (4, "peak_c18o10")),
+            KEY: (DATA TYPE, DATA INFO)
+        }
+        DATA TYPE:
+            single, multi, or cube
+        DATA INFO: depends on DATA TYPE.
+            single: DATA NAME
+            multi: (EXTNAME, DATA NAME)
+            cube: DATA NAME
+        """
+        self._key_lookup = {
+            "column_70-160": ("single", "column_density_70-160"),
+            "column_160-500": ("single", "column_density_160-500"),
+            "column_13co10": ("multi", (("H2coldens", "column_density_13co10"), ("err_H2coldens", "err_column_density_13co10"))),
+            "column_c18o10": ("multi", (("H2coldens", "column_density_c18o10"), ("err_H2coldens", "err_column_density_c18o10"))),
+            "ratio_32_to_10": ("multi", ((1, "ratio_32_10"), (2, "err_ratio_32_10"))), # (3, "peak_13co32"), (4, "peak_13co10"))),
+            "ratio_13_to_18": ("multi", ((1, "ratio_13_18"), (2, "err_ratio_13_18"))), # (3, "peak_13co10"), (4, "peak_c18o10"))),
+            "12co10": ("cube", "peak_12co10"),
+            "13co10": ("cube", "peak_13co10"),
+            "c18o10": ("cube", "peak_c18o10"),
+            "12co32": ("cube", "peak_12co32"),
+            "13co32": ("cube", "peak_13co32"),
         }
         self.sample_type_setting = None
         self.sample_framework_setting = None
         self.diagnostic_plot = False
 
-    def get_extname_dict(self, data_key):
+    def get_load_information(self, data_key):
         """
         Create an "extnames_to_extract" dict using the data_key
+        or return the data_name of the single cube or extension
         :returns: tuple, 2 elements
-            1) extnames_to_extract dict, which is keyed with data_names
-                and has extnames as values
-            2) bool, whether or not the data is multi-extension (True if multi)
+            1) either the extnames_to_extract dict or the string data_name
+            2) data_type string: single, cube, or multi
         """
         # Check for some short-circuit cases
         if data_key not in self._key_lookup:
             raise RuntimeError(f"{data_key} not in {__class__} lookup tables")
-        extnames = self._key_lookup[data_key]
-        if isinstance(extnames, str):
-            return extnames, False
-        # Now do the actual work
-        extnames_to_extract = {}
-        for extname, data_name in extnames:
-            extnames_to_extract[data_name] = extname
-        return extnames_to_extract, True
+        # data_type is a string describing the format of the data, not type(data)
+        data_type, data_info = self._key_lookup[data_key]
+        if data_type in ['single', 'cube']:
+            data_name = data_info
+            return data_name, data_type
+        elif data_type == 'multi':
+            extnames_to_extract = {}
+            for extname, data_name in data_info:
+                extnames_to_extract[data_name] = extname
+            return extnames_to_extract, data_type
+        else:
+            raise RuntimeError(f"Unknown format <{data_type}>")
 
     def sample_all_data(self):
         """
@@ -1307,19 +1355,23 @@ class COData:
 
     def sample_data(self, data_key, sample_framework=None, sample_type=None):
         """
-        Load either multi- or single-extension FITS data and return the result
+        Load multi- or single-extension or cube FITS data and return the result
         of sampling it somehow.
         sample_framework and sample_type can be None and will be passed through
         so that defaults can be checked later.
 
+        This could probably be combined with self.get_load_information but it's
+        not worth the time to refactor.
+
         This is a user-facing function.
         """
-        extnames_to_extract, is_multi = self.get_extname_dict(data_key)
-        if is_multi:
-            return self.load_multi_extension_data(data_key, extnames_to_extract, sample_framework, sample_type)
-        else:
-            data_name = extnames_to_extract # single string
-            return self.load_single_extension_data(data_key, data_name, sample_framework, sample_type)
+        name_or_extnames, data_type = self.get_load_information(data_key)
+        if data_type == 'multi':
+            return self.load_multi_extension_data(data_key, name_or_extnames, sample_framework, sample_type)
+        elif data_type == 'single':
+            return self.load_single_extension_data(data_key, name_or_extnames, sample_framework, sample_type)
+        elif data_type == 'cube':
+            return self.load_cube_and_find_peak(data_key, name_or_extnames, sample_framework, sample_type)
 
 
     def load_multi_extension_data(self, data_key, extnames_to_extract, sample_framework, sample_type):
@@ -1360,6 +1412,21 @@ class COData:
         data, header = fits.getdata(catalog.utils.search_for_file(short_filename), header=True)
         values = self.extract_values_from_image(data, WCS(header), sample_framework=sample_framework, sample_type=sample_type)
         return {data_name: values}
+
+    def load_cube_and_find_peak(self, data_key, data_name, sample_framework, sample_type):
+        """
+        Dec 26 2023
+        Same goal as load_single and load_multi, but different type of data.
+        """
+        line_stub = self._map_filenames[data_key]
+        cube_obj = cube_utils.CubeData(get_map_filename(line_stub)).convert_to_K()
+        peak_T_map = cube_obj.data.spectral_slab(*self.velocity_limits).max(axis=0).to(u.K).to_value()
+        values = self.extract_values_from_image(peak_T_map, cube_obj.wcs_flat, sample_framework=sample_framework, sample_type=sample_type)
+        # Kinda awkward way to get errors but it's what we gotta do
+        error_map = np.ones_like(peak_T_map) * get_onesigma(line_stub)
+        errors = self.extract_values_from_image(error_map, cube_obj.wcs_flat, sample_framework=sample_framework, sample_type=sample_type)
+        return {data_name: values, "err_"+data_name: errors}
+
 
     def extract_values_from_image(self, data, wcs_obj, sample_framework=None, sample_type=None):
         """
@@ -1527,37 +1594,14 @@ def sample_multiple_maps_regions(velocity_limits=None):
     lookup_obj = COData(velocity_limits)
     lookup_obj.sample_type_setting = "regions"
     lookup_obj.sample_framework_setting = reg_list
-
-    # ratio 13co32 to 13co10
-    result_dict.update(lookup_obj.sample_data("ratio_32_to_10"))
-    # ratio 13co10 to c18o10
-    result_dict.update(lookup_obj.sample_data("ratio_13_to_18"))
-    result_dict.update(lookup_obj.sample_data("column_13co10"))
-    result_dict.update(lookup_obj.sample_data("column_c18o10"))
-    result_dict.update(lookup_obj.sample_data("column_70-160"))
-    result_dict.update(lookup_obj.sample_data("column_160-500"))
-
-    """
-    Get the 12CO3-2 peak_T values
-    Use the PMO resolution for consistency with everything else
-    """
-    cube = cube_utils.CubeData(get_map_filename('12co32-pmo')).convert_to_K()
-    subcube = cube.data.spectral_slab(*velocity_limits)
-    peak_T_32 = subcube.max(axis=0).to(u.K).to_value()
-    result_dict.update({"peak_12co32-pmo": lookup_obj.extract_values_from_image(peak_T_32, cube.wcs_flat)})
-
-    cube = cube_utils.CubeData(get_map_filename('12co32')).convert_to_K()
-    subcube = cube.data.spectral_slab(*velocity_limits)
-    peak_T_32 = subcube.max(axis=0).to(u.K).to_value()
-    result_dict.update({"peak_12co32": lookup_obj.extract_values_from_image(peak_T_32, cube.wcs_flat)})
+    result_dict.update(lookup_obj.sample_all_data())
+    result_df = pd.DataFrame(result_dict)
 
 
     save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
     assert os.path.exists(save_df_path)
     save_df_name = f"sample_points_test_1_{vel_stub_simple}.csv"
     save_df_full_path = os.path.join(save_df_path, save_df_name)
-
-    result_df = pd.DataFrame(result_dict)
 
     """
     Divide the Herschel 70-160 columns by 2 because they are N_H and everything
@@ -2079,7 +2123,7 @@ class CORadexGridCreate:
         :param key: string name of FITS extension
         :returns: string unit description. Compatible with u.Unit() constructor
         """
-        easy_ones = {"NH2": str(u.cm**-2), 'n': str(u.cm**-3)}
+        easy_ones = {"NH2": str(u.cm**-2), "n": str(u.cm**-3), "Tk": "K"}
         if key in easy_ones:
             return easy_ones[key]
         elif key[:2] == 'TR':
@@ -2204,6 +2248,32 @@ class CORadexGridRead:
             axis_array = full_arr[slices[0+i:naxis+i]]
             self.axis_arrays.append(axis_array)
 
+    def get(self, key):
+        """
+        Dec 26 2023
+        General method to get a data array from this grid.
+        Can also handle a ratio of two arrays.
+        :param key: string key to the self.data dict
+        :returns: array from the grid
+        """
+        if '/' in key:
+            # Ratio
+            numerator, denominator = [self._get(x.strip()) for x in key.split('/')]
+            return numerator / denominator
+        else:
+            return self._get(key)
+
+    def _get(self, key):
+        """
+        Dec 26 2023
+        Simple getter method for one data array. Will raise KeyError if
+        not found in dict.
+        :param key: string key
+        :returns: array from the grid
+        """
+        if key not in self.data:
+            raise KeyError(f"Key {key} not available in this grid.")
+        return self.data[key]
 
 
 
@@ -2226,6 +2296,163 @@ def test_radex_grid():
     if True:
         grid_reader = CORadexGridRead(savename)
         print(grid_reader.axis_keys)
+
+def make_more_radex_grids():
+    """
+    Dec 26 2023
+    Make more Radex grids
+    First job:
+    Using the point NC-5, which is in the low velocity bunch of points.
+    It has NH2 = 22.52 and Tex(12CO10) = 20.9
+
+    I guess Tex(12CO10) cannot == Tk according to Radex; it seems the correct
+    Tk should be closer to 22 K. Close, but the difference matters.
+    """
+    ranges = {"NH2": (20, 24, 0.25), "Tk": (16, 40, 1), "n": (1, 5.5, 0.25)}
+    # Tk vs n grid
+    if True:
+        grid_creator = CORadexGridCreate(["n", "Tk"], range=ranges)
+        grid_creator.manually_set_param("NH2", 22.37)
+        grid_creator.run_grid(n_procs=4)
+        savename = os.path.basename(grid_creator.savename)
+        print(savename)
+    # NH2 vs n grid
+    if False:
+        grid_creator = CORadexGridCreate(["n", "NH2"], range=ranges)
+        grid_creator.manually_set_param("Tk", 24.)
+        grid_creator.run_grid(n_procs=4)
+        savename = os.path.basename(grid_creator.savename)
+        print(savename)
+
+
+def calc_extent(arr):
+    """
+    Dec 26 2023: Moved here (temporarily to the global namespace)
+    Written a little earlier than Dec 14 in a jupyter notebook
+
+    Calculate the extent for a given axis which makes the center of the pixels
+    line up correctly with their axis values.
+
+    This must be run for both x and y axes and the resulting lists concatenated
+    before passed to imshow or contour. i.e.
+    plt.imshow(..., extent=(calc_extent(x_axis) + calc_extent(y_axis)))
+    """
+    diff = np.diff(arr)[0]
+    tmp_arr = arr - diff/2
+    return [tmp_arr[0], tmp_arr[-1]+diff]
+
+
+def compare_data_with_radex_grid(select_grid=None):
+    """
+    December 26, 2023
+    Got the grid creator and reader ready and also have the data sampler ready.
+    Combine these and see what happens.
+    """
+    # Load grid
+
+    ## original grids
+    grid_menu = {
+        0: "n.1.6.0.25_NH2.19.24.0.25_fixed.Tk.30.00.fits",
+        1: "n.1.6.0.25_Tk.29.41.1_fixed.NH2.22.00.fits",
+        ## New grids for NC-5 (row_idx = 4)
+        2: "n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.20.90.fits",
+        3: "n.1.5.5.0.25_Tk.16.40.1_fixed.NH2.22.52.fits",
+        ## New grid for NC-5 with Tk=22 (slighlty higher than before)
+        4: "n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.22.00.fits",
+        ## Now checking if Tk=24 messes everything up or is OK
+        5: "n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.24.00.fits",
+        ## New grid for NC-5 with NH2=22.37 (slightly lower than before)
+        6: "n.1.5.5.0.25_Tk.16.40.1_fixed.NH2.22.37.fits",
+    }
+    if select_grid is None:
+        select_grid = 5
+    grid_savename = grid_menu[select_grid]
+
+    grid_reader = CORadexGridRead(grid_savename)
+    # Load data
+    data_savename = "misc_regrids/sample_points_test_1_11.0.21.0.csv"
+    data_df = pd.read_csv(catalog.utils.search_for_file(data_savename))
+    # print(grid_reader.data.keys())
+    # print(data_df.columns)
+
+    plot_pairs = [ # (grid, data)
+        ("TR_13co_32 / TR_13co_10", "ratio_32_10"), # 32 to 10
+        ("TR_13co_10 / TR_c18o_10", "ratio_13_18"), # 13 to 18
+        ("TR_co_10", "peak_12co10"), # 12 CO 10
+        ("TR_co_32", "peak_12co32"), # 12 CO 32
+        ("TR_13co_10", "peak_13co10"), # 13 CO 10
+        ("TR_13co_32", "peak_13co32"), # 13 CO 32
+        ("NH2", "column_density_13co10"),
+        ("NH2", "column_density_c18o10"),
+        ("TR_c18o_10", "peak_c18o10"), # 13 CO 10
+    ]
+
+    fig = plt.figure(figsize=(15, 10))
+    fig_gridspec_shape = (2, 3)
+    gs = fig.add_gridspec(*fig_gridspec_shape)
+    extent = calc_extent(grid_reader.axis_arrays[0]) + calc_extent(grid_reader.axis_arrays[1])
+    legend_handles = []
+
+    row_idx = 0
+    for row_idx in range(6):
+        row = data_df.iloc[row_idx]
+        reg_name = row['reg_name']
+        ax = fig.add_subplot(gs[np.unravel_index(row_idx, fig_gridspec_shape)])
+        # ax.imshow(grid_reader.get("TR_co_32"), origin='lower', cmap='Greys', extent=extent)
+        for i, (grid_key, data_key) in enumerate(plot_pairs):
+            try:
+                img = grid_reader.get(grid_key)
+            except KeyError:
+                assert grid_key == "NH2"
+                continue
+            val = row[data_key]
+            if grid_key == "NH2":
+                levels = [np.log10(val)]
+            else:
+                levels = [val]
+            # ax.imshow(img, origin='lower', extent=extent)
+            color = marcs_colors[i]
+            ax.contour(img, levels=levels, colors=color, extent=extent)
+            try:
+                err = row["err_" + data_key]
+                levels = [val-err, val+err]
+                if grid_key == "NH2":
+                    levels = [np.log10(x) for x in levels]
+                ax.contourf(img, levels=levels, colors=color, extent=extent, alpha=0.2)
+            except:
+                # print(f"no available error found for {data_key}")
+                ...
+            if row_idx == 0:
+                legend_handles.append(mpatches.Patch(color=color, label=data_key))
+        ax.set_title(reg_name)
+        get_unit = lambda ax_idx : grid_reader.units[grid_reader.axis_keys[ax_idx]]
+        ax.set_xlabel(f"{grid_reader.axis_keys[0]} ({get_unit(0)})")
+        ax.set_ylabel(f"{grid_reader.axis_keys[1]} ({get_unit(1)})")
+
+        if reg_name == "NC-5" and grid_reader.axis_keys[1] == "Tk":
+            ax.axhline(22, color='k', linestyle=':', alpha=0.5)
+
+        # Check Tex for both 12CO 3-2 and 1-0; can use this to make new grids
+        # Print out the 13co10 and c18o10 column density; can use this to make new grids
+        if False:
+            print(f"REG {reg_name}")
+            for k in ["peak_12co10", "peak_12co32"]:
+                line_stub = k.split("_")[1]
+                line_freq = COColumnDensity._constants[line_stub] * u.GHz
+                tex = COColumnDensity.calculate_Tex(row[k]*u.K, line_freq)
+                print(f"{k}, {row[k]:.2f} +/- {row['err_'+k]:.2f} -> {tex:.2f}")
+            for k in ["column_density_13co10", "column_density_c18o10"]:
+                print(f"{k}, {row[k]:.2E} +/- {row['err_'+k]:.2E} (log10 = {np.log10(row[k]):.2f})")
+
+    # on the last axis
+    ax.legend(handles=legend_handles)
+    plt.tight_layout()
+    fixed_params_stub = "".join([f"{k}{v:.2f}" for k, v in grid_reader.fixed_params.items()])
+    savename = f"gridplots_{grid_reader.axis_keys[1]}vs{grid_reader.axis_keys[0]}_at_{fixed_params_stub}.png"
+    savename = os.path.join(catalog.utils.todays_image_folder(), savename)
+    fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title="grid",
+        file=__file__, func="compare_data_with_radex_grid"
+    ))
 
 
 
@@ -4504,7 +4731,9 @@ if __name__ == "__main__":
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
 
-    test_radex_grid()
+    # make_more_radex_grids()
+    for i in range(7):
+        compare_data_with_radex_grid(i)
 
     # calculate_cii_column_density_detection_threshold()
 
