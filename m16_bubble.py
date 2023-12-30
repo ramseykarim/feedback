@@ -183,7 +183,7 @@ default_reg_filename_list = [ # commonly used region filenames
 ]
 onesigmas = {
     '12co10-pmo': 0.415, '13co10-pmo': 0.200, 'c18o10-pmo': 0.202,
-    '12co32-pmo': 0.07, '13co32-pmo': 0.09, # checked 2023-10-19 by eye
+    '12co32-pmo': 0.1, '13co32-pmo': 0.1, # checked 2023-10-19 by eye (0.07, 0.09 for 12 and 13); updated 2023-12-28 to 0.1 for both (not a big difference)
 }
 
 def vlim_hash(data_stub, velocity_limits=None, generic=False):
@@ -1449,7 +1449,12 @@ class COData:
             return self.extract_values_from_image_regions(data, wcs_obj, sample_framework)
         elif sample_type == "mask":
             # sample_framework is tuple(mask, mask_wcs)
+            # "mask" implies getting the mean and standard deviation, etc
             return self.extract_values_from_image_mask(data, wcs_obj, *sample_framework)
+        elif sample_type == "mask_vals":
+            # sample_framework same as for "mask"
+            # "mask_vals" implies getting the full list of values under the mask
+            return self.extract_values_from_image_mask(data, wcs_obj, *sample_framework, return_all_values=True)
         else:
             raise RuntimeError(f"Sample type {sample_type} not supported.")
 
@@ -1465,7 +1470,7 @@ class COData:
             values_list.append(data[i, j])
         return values_list
 
-    def extract_values_from_image_mask(self, data, wcs_obj, mask, mask_wcs):
+    def extract_values_from_image_mask(self, data, wcs_obj, mask, mask_wcs, return_all_values=False):
         """
         Grab values using the mask.
         Return a tuple (value, error) where error is the standard deviation
@@ -1474,6 +1479,11 @@ class COData:
             Will be converted to array of float 0-1. 1 is True, 0 is False.
             Float means that we can reproject it! Can't reproject bool array.
             Will have to do (mask > 0.5) to make it a real bool array.
+        :param return_all_values: bool
+            Whether or not to return the list of values under the mask.
+            If False, then return (mean, low, high, standard deviation).
+            (low, high) are the 16th and 84th quantiles.
+            If True, return the full list of values.
 
         At some point need to add error to this function, though the large avg
         over pixels will probably render a pre-existing pixel error uselessly
@@ -1484,42 +1494,48 @@ class COData:
         See 2023-12-19 notes for more info on how to do this
         """
         data_cut, wcs_cut, cutout = COData.cutout_to_footprint(data, wcs_obj, mask_wcs, mask.shape, return_cutout=True)
-        mask_reproj_float = reproject_interp((mask.astype(float), mask_wcs), wcs_cut, shape_out=data_cut.shape, return_footprint=False)
-        mask_reproj = mask_reproj_float > 0.5
-        values_under_mask = data_cut[mask_reproj]
-        if self.diagnostic_plot:
-            data_copy = data_cut.copy()
-            data_copy[~mask_reproj] = np.nan
-            big_data_copy = data*0 + 1
-            big_data_copy[cutout.slices_original] = np.nan
-            plt.figure()
-            plt.subplot(231)
-            plt.imshow(mask, origin='lower')
-            plt.subplot(232)
-            plt.imshow(mask_reproj, origin='lower')
-            plt.subplot(233)
-            plt.imshow(data_copy, origin='lower')
-            plt.subplot(234)
-            plt.imshow(data, origin='lower')
-            plt.subplot(235)
-            plt.imshow(big_data_copy, origin='lower')
-        # Return mean, stddev
-        clean_values = values_under_mask[np.isfinite(values_under_mask) & (values_under_mask > 0)]
-        normalized = False
-        norm_val = 1e19
-        if np.any(clean_values > norm_val):
-            # Some issues with very large numbers in the np.std() function; this addresses them.
-            clean_values = clean_values / norm_val
-            normalized = True
-        mean = np.mean(clean_values)
-        stddev = np.std(clean_values)
-        lo, hi = misc_utils.flquantiles(clean_values, 6) # 6 approximates 16, 84 %iles for -?+ 1sigma
-        if normalized:
-            mean = mean * norm_val
-            stddev = stddev * norm_val
-            lo = lo * norm_val
-            hi = hi * norm_val
-        return {'value': mean, 'lo': lo, 'hi': hi, 'stddev': stddev}
+        if return_all_values:
+            # Reproject the data to the mask so that the lists are all the same length
+            data_reproj = reproject_interp((data_cut, wcs_cut), mask_wcs, shape_out=mask.shape, return_footprint=False)
+            return data_reproj[mask]
+        else:
+            # Reproject the mask to the data so that we get faithful stats
+            mask_reproj_float = reproject_interp((mask.astype(float), mask_wcs), wcs_cut, shape_out=data_cut.shape, return_footprint=False)
+            mask_reproj = mask_reproj_float > 0.5
+            values_under_mask = data_cut[mask_reproj]
+            if self.diagnostic_plot:
+                data_copy = data_cut.copy()
+                data_copy[~mask_reproj] = np.nan
+                big_data_copy = data*0 + 1
+                big_data_copy[cutout.slices_original] = np.nan
+                plt.figure()
+                plt.subplot(231)
+                plt.imshow(mask, origin='lower')
+                plt.subplot(232)
+                plt.imshow(mask_reproj, origin='lower')
+                plt.subplot(233)
+                plt.imshow(data_copy, origin='lower')
+                plt.subplot(234)
+                plt.imshow(data, origin='lower')
+                plt.subplot(235)
+                plt.imshow(big_data_copy, origin='lower')
+            # Return mean, stddev
+            clean_values = values_under_mask[np.isfinite(values_under_mask) & (values_under_mask > 0)]
+            normalized = False
+            norm_val = 1e19
+            if np.any(clean_values > norm_val):
+                # Some issues with very large numbers in the np.std() function; this addresses them.
+                clean_values = clean_values / norm_val
+                normalized = True
+            mean = np.mean(clean_values)
+            stddev = np.std(clean_values)
+            lo, hi = misc_utils.flquantiles(clean_values, 6) # 6 approximates 16, 84 %iles for -?+ 1sigma
+            if normalized:
+                mean = mean * norm_val
+                stddev = stddev * norm_val
+                lo = lo * norm_val
+                hi = hi * norm_val
+            return {'value': mean, 'lo': lo, 'hi': hi, 'stddev': stddev}
 
     @staticmethod
     def cutout_to_footprint(target_data, target_wcs, reference_wcs, reference_shape, return_cutout=False):
@@ -1529,14 +1545,37 @@ class COData:
         reference wcs, shape describes the smaller footprint which should define
         the cutout.
         """
+
+        # Okay, WCS.calc__footprint() is a nearly-useless function without some
+        # serious assumptions. See 2023-12-28 notes. Have to find footprint manually
+        footprint_coords = []
+        for i in [0, reference_shape[0]-1]:
+            for j in [0, reference_shape[1]-1]:
+                footprint_coords.append(reference_wcs.array_index_to_world(i, j))
+
+        ra = [x.fk5.ra.deg for x in footprint_coords]
+        de = [x.fk5.dec.deg for x in footprint_coords]
+        min_ra, max_ra = np.min(ra), np.max(ra)
+        min_de, max_de = np.min(de), np.max(de)
+
+        """
+        An older version of this function used this code, but it relies on
+        knowing the frame (FK5, Galactic, etc) a priori. There is not a good
+        way to get the frame from the WCS object, so I changed the code to
+        use WCS.array_index_to_world, which gives SkyCoords that can be
+        converted easily.
+
         reference_footprint = reference_wcs.calc_footprint(axes=reference_shape)
         ra, de = reference_footprint[:, 0], reference_footprint[:, 1]
+        """
+
         min_ra, max_ra = np.min(ra), np.max(ra)
         min_de, max_de = np.min(de), np.max(de)
         center_ra, center_de = (min_ra + max_ra)/2, (min_de + max_de)/2
         size_ra, size_de = (max_ra - min_ra), (max_de - min_de)
+
         # size will be flipped (y, x) = (de, ra) because that's Cutout2D's call signature
-        cutout = Cutout2D(target_data, SkyCoord(center_ra*u.deg, center_de*u.deg), wcs=target_wcs, size=(size_de*u.deg, size_ra*u.deg))
+        cutout = Cutout2D(target_data, SkyCoord(center_ra*u.deg, center_de*u.deg, frame="fk5"), wcs=target_wcs, size=(size_de*u.deg, size_ra*u.deg))
         if return_cutout:
             return cutout.data, cutout.wcs, cutout
         else:
@@ -1628,7 +1667,9 @@ def sample_masked_map():
     mask_velocity_limits = (15*kms, 21*kms)
     mom0 = cube.data.spectral_slab(*mask_velocity_limits).moment0()
     mask_base = mom0.to_value()
-    mask = mask_base > 40
+    mask_wcs = cube.wcs_flat
+
+    mask = mask_base > 40 #; 40 for 12co32
     # Blank out a square around the long-tail CO source at the MYSO
     islice = slice(106, 130)
     jslice = slice(161, 193)
@@ -1637,43 +1678,85 @@ def sample_masked_map():
     islice = slice(112, 143)
     jslice = slice(89, 134)
     mask[islice, jslice] = False
-    if False:
+    # Blank out the part of the northern cloud that isn't illuminated
+    islice = slice(159, 206)
+    jslice = slice(187, 218)
+    mask[islice, jslice] = False
+    # Blank out a patch on the east side of the shell
+    islice = slice(180, 207)
+    jslice = slice(80, 104)
+    mask[islice, jslice] = False
+    # Blank out a few stray spots
+    islice = slice(100, 167)
+    jslice = slice(37, 70)
+    mask[islice, jslice] = False
+
+    if True:
+        # Regrid to the PMO grid so that we don't have a billion reduntant pixels
+        pmo10 = cube_utils.CubeData(get_map_filename("12co10-pmo"))
+        wcs_pmo10 = pmo10.wcs_flat
+        shape_pmo10 = pmo10.data.shape[1:]
+        mask_base = reproject_interp((mask_base, mask_wcs), wcs_pmo10, shape_out=shape_pmo10, return_footprint=False)
+        mask = reproject_interp((mask.astype(float), mask_wcs), wcs_pmo10, shape_out=shape_pmo10, return_footprint=False) > 0.5
+        mask_wcs = wcs_pmo10
+
+    n_pixels_mask = np.sum(mask)
+    print("Pixels under mask:", n_pixels_mask)
+
+
+    if True:
+        # Find area under map
+        pixel_scale = misc_utils.get_pixel_scale(mask_wcs)
+        pixel_area_physical = ((pixel_scale * los_distance_M16 / u.radian)**2).to(u.pc**2)
+        print(f"Pixel area: {pixel_area_physical:.8f}")
+        print(f"Mask area: {(pixel_area_physical*n_pixels_mask):.8f}")
+        # Check mass using an average column density
+        coldens = [0.5, 2] * u.cm**-2 * 1e22 # N(H2)
+        mass = (coldens * mean_molecular_weight_neutral * 2 * Hmass * pixel_area_physical * n_pixels_mask).to(u.solMass)
+        print(mass)
+
+
+
+
+    if True:
+        # Debug plot to check mask
         test_img = mask_base.copy()
         test_img[~mask] = np.nan
         plt.imshow(test_img, origin='lower')
         plt.colorbar()
         plt.show()
+        # plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"mask_{mask_data_stub}_{make_simple_vel_stub(mask_velocity_limits)}_regrid.png"),
+        #     metadata=catalog.utils.create_png_metadata(title="mask from co32", file=__file__, func="sample_masked_map"))
+
     # Done with this mask!
-    # Convert to float so it can be reprojected
-    # mask_float = mask.astype(float)
-    mask_wcs = cube.wcs_flat
 
 
-    # Try reprojecting it to some sample data
-    velocity_limits = (11*kms, 21*kms)
-    vel_stub_simple = make_simple_vel_stub(velocity_limits)
-    lookup_obj = COData(velocity_limits)
-    lookup_obj.sample_type_setting = "mask"
-    lookup_obj.sample_framework_setting = (mask, mask_wcs)
-    lookup_obj.diagnostic_plot = False
+    if False:
+        # Try reprojecting it to some sample data
+        velocity_limits = (11*kms, 21*kms)
+        vel_stub_simple = make_simple_vel_stub(velocity_limits)
+        lookup_obj = COData(velocity_limits)
+        lookup_obj.sample_type_setting = "mask_vals"
+        lookup_obj.sample_framework_setting = (mask, mask_wcs)
+        lookup_obj.diagnostic_plot = False
 
-    result_df = pd.DataFrame(lookup_obj.sample_all_data())
+        result_df = pd.DataFrame(lookup_obj.sample_all_data())
 
-    save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
-    assert os.path.exists(save_df_path)
-    save_df_name = f"sample_mask_test_1_{vel_stub_simple}.csv"
-    save_df_full_path = os.path.join(save_df_path, save_df_name)
+        save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
+        assert os.path.exists(save_df_path)
+        save_df_name = f"sample_mask_test_1_{vel_stub_simple}_vals_regrid.csv"
+        save_df_full_path = os.path.join(save_df_path, save_df_name)
 
-    """
-    Divide the Herschel 70-160 columns by 2 because they are N_H and everything
-    else is N(H2); N_H = N(H) + 2*N(H2) and N(H) is 0 by assumption.
-    """
+        """
+        Divide the Herschel 70-160 columns by 2 because they are N_H and everything
+        else is N(H2); N_H = N(H) + 2*N(H2) and N(H) is 0 by assumption.
+        """
 
-    result_df["column_density_70-160"] = result_df["column_density_70-160"] / 2
-    print(result_df)
+        result_df["column_density_70-160"] = result_df["column_density_70-160"] / 2
+        print(result_df)
 
-    result_df.to_csv(save_df_full_path)
-    # plt.show()
+        result_df.to_csv(save_df_full_path)
+        # plt.show()
 
 class CORadexGridCreate:
     """
@@ -1773,6 +1856,14 @@ class CORadexGridCreate:
         unused_params = set(self.allowed_keys) - set(self.axis_keys)
         # Create dict that tracks the value of fixed parameters. May be empty if grid is 3D
         self.fixed_params = {k: None for k in unused_params}
+
+        # Check kwargs for any additional text that need to be added to the savename
+        if kwargs.get("stub", None) is not None:
+            # Add leading underscore to separate from rest of filename
+            self.save_stub = "_" + kwargs.get("stub")
+        else:
+            self.save_stub = ""
+
         # Disallow file overwriting unless we expressly permit it
         self.allow_overwrite = False
 
@@ -2077,7 +2168,7 @@ class CORadexGridCreate:
         for k in self.allowed_keys:
             if k in self.fixed_params:
                 key_strings.append(f"fixed.{k}.{self.fixed_params[k]:.2f}")
-        filename = "_".join(key_strings) + ".fits"
+        filename = "_".join(key_strings) + self.save_stub + ".fits"
         filepath = os.path.join(catalog.utils.misc_data_path, "co_grids")
         return os.path.join(filepath, filename)
 
@@ -2193,6 +2284,7 @@ class CORadexGridRead:
         self.axis_keys = []
         self.axis_arrays = []
         self.fixed_params = {}
+        self.grid_shape = None # will be tuple
         # Populate the above instance variables
         self.load_grid(self.full_filename)
 
@@ -2247,6 +2339,8 @@ class CORadexGridRead:
             # First axis is x, so that's the last index
             axis_array = full_arr[slices[0+i:naxis+i]]
             self.axis_arrays.append(axis_array)
+        # Get the shape of the array; any array will work, use a parameter array
+        self.grid_shape = self.data[self.axis_keys[0]].shape
 
     def get(self, key):
         """
@@ -2275,6 +2369,53 @@ class CORadexGridRead:
             raise KeyError(f"Key {key} not available in this grid.")
         return self.data[key]
 
+    # Create function for this so it's easier
+    def plot_two_grids(self, xgrid_name, ygrid_name, param_names, ax=None, lims={}):
+        """
+        Convenience function for plotting the constant parameter contours on a
+        plot of two observables.
+        xgrid will be the x axis value and so on
+        cd_lims and n_lims should each be lists of 2 Quantities, [lo, hi] limits for plotting
+        Specify two parameter names; these must be in self.axis_keys
+
+        This is only going to work in two dimensions easily, so I'm banning all others
+        """
+        assert len(self.axis_keys) <= 2
+        if ax is None:
+            plt.figure()
+            ax = plt.subplot(111)
+        # Within limits function for ease
+        def within_lims(x, limits):
+            return limits[0] <= x <= limits[1]
+        # Set up for the slice trick
+        slices_template = ((0,)*(len(self.axis_keys)-1) + (slice(None),))*2
+        # Set up a linestyle list
+        ls = ['-', '--', ':']
+        # Loop through the parameter names
+        for i_key, key in enumerate(param_names):
+            if key not in self.axis_keys:
+                raise RuntimeError(f"Parameter {key} not available in this grid ({', '.join(self.axis_keys)})")
+            if key not in lims:
+                # Make permissive limit lists if they're not specified
+                lims[key] = [-np.inf, np.inf]
+            # Find out which parameter this is so that we know how to index grids
+            key_idx = self.axis_keys.index(key)
+            # Reset the color cycle since the later colors are tricky
+            ax.set_prop_cycle(None)
+            # Iterate through the constant values of this parameter
+            for i in range(0, self.grid_shape[1-key_idx], 1):
+                # The start=2, step=4 is so we don't plot a ton of contours. just plot the whole number log ones
+                # Do the slice trick! Modified so that it's i instead of 0
+                # And flip the slices around because we're getting the "variation" across the *other* parameter
+                slices = tuple(i if x==0 else x for x in slices_template[0+key_idx:len(self.axis_keys)+key_idx])[::-1]
+                param_val = self._get(key)[slices][0]
+                if within_lims(param_val, lims[key]):
+                    xarr = self.get(xgrid_name)[slices]
+                    yarr = self.get(ygrid_name)[slices]
+                    ax.plot(xarr, yarr, linestyle=ls[i_key], label=f"{key}={param_val:.2f}")
+        ax.set_xlabel(xgrid_name)
+        ax.set_ylabel(ygrid_name)
+        ax.legend()
 
 
 def test_radex_grid():
@@ -2310,16 +2451,16 @@ def make_more_radex_grids():
     """
     ranges = {"NH2": (20, 24, 0.25), "Tk": (16, 40, 1), "n": (1, 5.5, 0.25)}
     # Tk vs n grid
-    if True:
+    if False:
         grid_creator = CORadexGridCreate(["n", "Tk"], range=ranges)
-        grid_creator.manually_set_param("NH2", 22.37)
+        grid_creator.manually_set_param("NH2", 22.)
         grid_creator.run_grid(n_procs=4)
         savename = os.path.basename(grid_creator.savename)
         print(savename)
     # NH2 vs n grid
-    if False:
-        grid_creator = CORadexGridCreate(["n", "NH2"], range=ranges)
-        grid_creator.manually_set_param("Tk", 24.)
+    if True:
+        grid_creator = CORadexGridCreate(["n", "NH2"], range=ranges, stub="abund56")
+        grid_creator.manually_set_param("Tk", 28.)
         grid_creator.run_grid(n_procs=4)
         savename = os.path.basename(grid_creator.savename)
         print(savename)
@@ -2342,36 +2483,56 @@ def calc_extent(arr):
     return [tmp_arr[0], tmp_arr[-1]+diff]
 
 
-def compare_data_with_radex_grid(select_grid=None):
+def grid_reader_filename_wrapper(select_grid=None, stub=""):
+    """
+    Dec 28, 2023
+    Wrap the CORadexGridRead object in a function that knows which grids we
+    have created and the peculiarities of our naming scheme.
+    This is outside the bounds of what CORadexGridRead should know about, so
+    I'm putting it in this function.
+    :returns: tuple(CORadexGridRead, extra_stub)
+        extra_stub is a descriptive element that should be put onto PNG
+        filenames for distinction from "regular" grids.
+    """
+    # Add "flair" to the filename to select special cases
+    extra_stub = "" if not stub else "_"+stub
+    assert not stub
+    # Load grid
+    ## original grids
+    grid_menu = {
+        # original fixed parameters, but ranges updated
+        ## "t30" is in t_grids now
+        "N22": "n.1.5.5.0.25_Tk.16.40.1_fixed.NH2.22.00.fits",
+
+        ## New grids for NC-5 (row_idx = 4)
+        "nc-5_t20.9": "n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.20.90.fits",
+        "nc-5_N22.52": "n.1.5.5.0.25_Tk.16.40.1_fixed.NH2.22.52.fits",
+        ## New grid for NC-5 with Tk=22 (slighlty higher than before)
+        ## Now checking if Tk=24 messes everything up or is OK
+        ## added those to t_grids
+        ## New grid for NC-5 with NH2=22.37 (slightly lower than before)
+        "nc-5_N22.37": "n.1.5.5.0.25_Tk.16.40.1_fixed.NH2.22.37.fits",
+
+    }
+    ## New grids to test out NC 1, 2, 3
+    t_grids = [22, 24, 26, 28, 29, 30, 31, 32] # a bunch of constant Tk grids at whole-number Tk values
+    grid_menu.update({t: f"n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.{t:d}.00{extra_stub}.fits" for t in t_grids})
+    if select_grid is None:
+        select_grid = 30
+    grid_savename = grid_menu[select_grid]
+    grid_reader = CORadexGridRead(grid_savename)
+    return grid_reader, extra_stub
+
+def compare_data_with_radex_grid(select_grid=None, stub=""):
     """
     December 26, 2023
     Got the grid creator and reader ready and also have the data sampler ready.
     Combine these and see what happens.
     """
-    # Load grid
-
-    ## original grids
-    grid_menu = {
-        0: "n.1.6.0.25_NH2.19.24.0.25_fixed.Tk.30.00.fits",
-        1: "n.1.6.0.25_Tk.29.41.1_fixed.NH2.22.00.fits",
-        ## New grids for NC-5 (row_idx = 4)
-        2: "n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.20.90.fits",
-        3: "n.1.5.5.0.25_Tk.16.40.1_fixed.NH2.22.52.fits",
-        ## New grid for NC-5 with Tk=22 (slighlty higher than before)
-        4: "n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.22.00.fits",
-        ## Now checking if Tk=24 messes everything up or is OK
-        5: "n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.24.00.fits",
-        ## New grid for NC-5 with NH2=22.37 (slightly lower than before)
-        6: "n.1.5.5.0.25_Tk.16.40.1_fixed.NH2.22.37.fits",
-    }
-    if select_grid is None:
-        select_grid = 5
-    grid_savename = grid_menu[select_grid]
-
-    grid_reader = CORadexGridRead(grid_savename)
+    grid_reader, extra_stub = grid_reader_filename_wrapper(select_grid=select_grid, stub=stub)
     # Load data
-    data_savename = "misc_regrids/sample_points_test_1_11.0.21.0.csv"
-    data_df = pd.read_csv(catalog.utils.search_for_file(data_savename))
+    data_fn = "misc_regrids/sample_points_test_1_11.0.21.0.csv"
+    data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     # print(grid_reader.data.keys())
     # print(data_df.columns)
 
@@ -2382,9 +2543,11 @@ def compare_data_with_radex_grid(select_grid=None):
         ("TR_co_32", "peak_12co32"), # 12 CO 32
         ("TR_13co_10", "peak_13co10"), # 13 CO 10
         ("TR_13co_32", "peak_13co32"), # 13 CO 32
+        ("TR_c18o_10", "peak_c18o10"), # 13 CO 10
         ("NH2", "column_density_13co10"),
         ("NH2", "column_density_c18o10"),
-        ("TR_c18o_10", "peak_c18o10"), # 13 CO 10
+        ("NH2", "column_density_70-160"),
+        ("NH2", "column_density_160-500"),
     ]
 
     fig = plt.figure(figsize=(15, 10))
@@ -2393,12 +2556,21 @@ def compare_data_with_radex_grid(select_grid=None):
     extent = calc_extent(grid_reader.axis_arrays[0]) + calc_extent(grid_reader.axis_arrays[1])
     legend_handles = []
 
+    # color_list_template = list(mpl_cm.rainbow(np.linspace(0, 1, len(plot_pairs))))
+    # color_list = color_list_template[0::2] + color_list_template[1::2]
+    color_list = plt.rcParams['axes.prop_cycle'].by_key()['color'] * 2
+
     row_idx = 0
     for row_idx in range(6):
         row = data_df.iloc[row_idx]
         reg_name = row['reg_name']
+        print(reg_name)
         ax = fig.add_subplot(gs[np.unravel_index(row_idx, fig_gridspec_shape)])
-        # ax.imshow(grid_reader.get("TR_co_32"), origin='lower', cmap='Greys', extent=extent)
+        img_select = ["_co_10", "_co_32", "_13co_10", "_13co_32"]
+        # if row_idx < len(img_select):
+        #     ax.imshow(grid_reader.get("tau"+img_select[row_idx]), origin='lower', cmap='Greys', extent=extent, aspect=(img.shape[0]/img.shape[1]))
+        chisq_array = np.zeros(grid_reader.grid_shape)
+        obs_count = 0
         for i, (grid_key, data_key) in enumerate(plot_pairs):
             try:
                 img = grid_reader.get(grid_key)
@@ -2411,8 +2583,12 @@ def compare_data_with_radex_grid(select_grid=None):
             else:
                 levels = [val]
             # ax.imshow(img, origin='lower', extent=extent)
-            color = marcs_colors[i]
-            ax.contour(img, levels=levels, colors=color, extent=extent)
+            color = color_list[i]
+            if "peak_12co" in data_key:
+                ls = ":"
+            else:
+                ls = "-"
+            ax.contour(img, levels=levels, colors=color, extent=extent, linestyles=ls)
             try:
                 err = row["err_" + data_key]
                 levels = [val-err, val+err]
@@ -2422,8 +2598,23 @@ def compare_data_with_radex_grid(select_grid=None):
             except:
                 # print(f"no available error found for {data_key}")
                 ...
+            # Legend creation
             if row_idx == 0:
                 legend_handles.append(mpatches.Patch(color=color, label=data_key))
+            # Get the chi squared for this measurement
+            select_pixel = (9, 11)
+            if grid_key == 'NH2':
+                chisq_array += ((val/1e19 - 10**(img-19))/(err/1e19))**2
+                print("nh2", f"{((val/1e19 - 10**(img[select_pixel]-19))/(err/1e19))**2:.2f}")
+            else:
+                print(grid_key, f"{val:.2f}", f"{img[select_pixel]:.2f}", f"{err:.2f}", f"{((val - img[select_pixel])/err)**2:.2f}")
+                chisq_array += ((val - img)/err)**2
+            obs_count += 1
+
+            im = ax.imshow(np.log10(chisq_array/(obs_count-2)), origin='lower', cmap='Greys_r', extent=extent, aspect=(chisq_array.shape[0]/chisq_array.shape[1]), vmin=1, vmax=3)
+        print(f"{np.log10(chisq_array[select_pixel]/(obs_count-2)):.2f}")
+        fig.colorbar(im, ax=ax)
+
         ax.set_title(reg_name)
         get_unit = lambda ax_idx : grid_reader.units[grid_reader.axis_keys[ax_idx]]
         ax.set_xlabel(f"{grid_reader.axis_keys[0]} ({get_unit(0)})")
@@ -2448,12 +2639,62 @@ def compare_data_with_radex_grid(select_grid=None):
     ax.legend(handles=legend_handles)
     plt.tight_layout()
     fixed_params_stub = "".join([f"{k}{v:.2f}" for k, v in grid_reader.fixed_params.items()])
-    savename = f"gridplots_{grid_reader.axis_keys[1]}vs{grid_reader.axis_keys[0]}_at_{fixed_params_stub}.png"
+    savename = f"gridplots_{grid_reader.axis_keys[1]}vs{grid_reader.axis_keys[0]}_at_{fixed_params_stub}{extra_stub}.png"
     savename = os.path.join(catalog.utils.todays_image_folder(), savename)
-    fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title="grid",
-        file=__file__, func="compare_data_with_radex_grid"
-    ))
+    plt.show()
+    # fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title="grid",
+    #     file=__file__, func="compare_data_with_radex_grid"
+    # ))
 
+def scatter_radex_grid(select_grid=None, stub=""):
+    """
+    Dec 28, 2023
+    Re-create the scatter plots that I debuted in co_radex_grid_plots.ipynb
+    """
+    # Load grid
+    grid_reader, extra_stub = grid_reader_filename_wrapper(select_grid=select_grid, stub=stub)
+    # Load data
+    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
+    data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
+    fig = plt.figure(figsize=(15, 8))
+    ax = plt.subplot(111)
+    grid_reader.plot_two_grids("TR_c18o_10", "TR_13co_32 / TR_13co_10",
+        grid_reader.axis_keys, ax=ax, lims={"NH2": (21.5, 22.5), "n": (3, 4)})
+
+    xdata_name = "peak_c18o10"
+    ydata_name = "ratio_32_10"
+    color_name = "column_density_13co10"
+
+    ax.errorbar(data_df[xdata_name], data_df[ydata_name], xerr=data_df["err_"+xdata_name], yerr=data_df["err_"+ydata_name], marker='none', alpha=0.2, linestyle='none', color='k')
+    sc = ax.scatter(data_df[xdata_name], data_df[ydata_name], marker='o', alpha=1, c=np.log10(data_df[color_name]), cmap=cmocean.cm.matter_r)
+    fig.colorbar(sc, ax=ax, label=color_name)
+    ax.set_xlim((0, 4))
+    ax.set_ylim((0, 2.5))
+
+    plt.show()
+
+
+def calc_mass_from_masked_data():
+    """
+    Dec 30, 2023
+    Using the 12co32 mask, PMO-grid data, find the mass for all the column density measurements.
+    0.06404582 pc2 is the pixel area
+    """
+    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
+    data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
+    cd_colnames = [colname for colname in data_df.columns if "column_density" in colname]
+    for colname in cd_colnames:
+        print(colname)
+        col = data_df[colname]
+        n_nan = np.sum(col.isnull())
+        n_valid = np.sum(col.notnull())
+        print("nan", n_nan, "not nan", n_valid)
+        print("total == sum nan+notnan", len(col)==n_nan+n_valid)
+        cdtot = np.sum(col) * u.cm**-2 # works even though there are nans!
+        pixel_area_physical = 0.06404582 * u.pc**2 # see notes 2023-12-30
+        mass = (cdtot * pixel_area_physical * 2 * Hmass * mean_molecular_weight_neutral).to(u.solMass)
+        print(f"{mass:.2f}")
+        print()
 
 
 
@@ -4732,8 +4973,11 @@ if __name__ == "__main__":
     # get_co_spectra_for_radex()
 
     # make_more_radex_grids()
-    for i in range(7):
-        compare_data_with_radex_grid(i)
+    # for i in [28]:
+    #     k = f"t{i}"
+    # compare_data_with_radex_grid("t28")
+    # scatter_radex_grid()
+    calc_mass_from_masked_data()
 
     # calculate_cii_column_density_detection_threshold()
 
