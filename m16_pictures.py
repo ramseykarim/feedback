@@ -1594,6 +1594,11 @@ def irac8um_to_cii_figure_2p5beam():
         metadata=catalog.utils.create_png_metadata(title='IRAC 4 used to predict cii,FIR. next to upGREAT CII',
             file=__file__, func="irac8um_to_cii_figure_2p5beam"))
 
+"""
+I also do some similar stuff in m16_pictures_2.correlation_plot_8um_cii
+in terms of reprojecting 8 micron to CII and converting units.
+"""
+
 """ """
 
 

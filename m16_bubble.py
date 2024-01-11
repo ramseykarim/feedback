@@ -34,7 +34,7 @@ import itertools
 
 # from math import ceil
 # from scipy import signal
-# from scipy.interpolate import UnivariateSpline
+from scipy.interpolate import UnivariateSpline
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -331,7 +331,9 @@ def get_2d_map(data_stub, velocity_limits=None, average_Tmb=False, data_memo=Non
             return img, info_dict
         # Not memoized, continue loading
         data_filename, = data_filename
-        img, hdr = fits.getdata(catalog.utils.search_for_file(data_filename), header=True)
+        data_full_filename = catalog.utils.search_for_file(data_filename)
+        info_dict['full_path'] = data_full_filename
+        img, hdr = fits.getdata(data_full_filename, header=True)
         info_dict['wcs'] = WCS(hdr)
         info_dict['hdr'] = hdr
         if 'BUNIT' in hdr:
@@ -1032,9 +1034,14 @@ def get_co_spectra_for_radex():
     Grab some CO spectra for spectralradex (working in spectralradex_column_fit.py)
     """
     # selected_coord = SkyCoord("18:18:14.9371 -13:34:26.988", unit=(u.hourangle, u.deg), frame='fk5') # first test coord, sort of bright west side of N19
-    selected_coord = SkyCoord("18:18:44.6122 -13:33:40.152", unit=(u.hourangle, u.deg), frame='fk5') # second test coord, smooth part of east N19 where Tex is same for CO 1-0 and 3-2
+    # selected_coord = SkyCoord("18:18:44.6122 -13:33:40.152", unit=(u.hourangle, u.deg), frame='fk5') # second test coord, smooth part of east N19 where Tex is same for CO 1-0 and 3-2
 
-    line_stub = "13co32-pmo"
+    selected_coord = SkyCoord("18:18:17.8904 -13:33:04.941", unit=(u.hourangle, u.deg), frame='fk5') # north slightly west on the CII ring
+    # selected_coord = SkyCoord("18:18:40.6282 -13:34:27.298", unit=(u.hourangle, u.deg), frame='fk5') # north slightly west on the CII ring
+
+    print("THIS IS FOR CII!")
+
+    line_stub = "cii"
     cube_co = cube_utils.CubeData(get_map_filename(line_stub)).convert_to_K().convert_to_kms()
     x, y = cube_co.wcs_flat.world_to_pixel(selected_coord)
     plt.subplot(121)
@@ -2450,6 +2457,10 @@ def make_more_radex_grids():
     Tk should be closer to 22 K. Close, but the difference matters.
     """
     ranges = {"NH2": (20, 24, 0.25), "Tk": (16, 40, 1), "n": (1, 5.5, 0.25)}
+
+    # fine grid
+    ranges['NH2'] = (21, 23, 0.05)
+    ranges['n'] = (2.6, 4.6, 0.05)
     # Tk vs n grid
     if False:
         grid_creator = CORadexGridCreate(["n", "Tk"], range=ranges)
@@ -2459,8 +2470,8 @@ def make_more_radex_grids():
         print(savename)
     # NH2 vs n grid
     if True:
-        grid_creator = CORadexGridCreate(["n", "NH2"], range=ranges, stub="abund56")
-        grid_creator.manually_set_param("Tk", 28.)
+        grid_creator = CORadexGridCreate(["n", "NH2"], range=ranges, stub="fine0.05")
+        grid_creator.manually_set_param("Tk", 30.)
         grid_creator.run_grid(n_procs=4)
         savename = os.path.basename(grid_creator.savename)
         print(savename)
@@ -2496,7 +2507,7 @@ def grid_reader_filename_wrapper(select_grid=None, stub=""):
     """
     # Add "flair" to the filename to select special cases
     extra_stub = "" if not stub else "_"+stub
-    assert not stub
+
     # Load grid
     ## original grids
     grid_menu = {
@@ -2517,8 +2528,17 @@ def grid_reader_filename_wrapper(select_grid=None, stub=""):
     ## New grids to test out NC 1, 2, 3
     t_grids = [22, 24, 26, 28, 29, 30, 31, 32] # a bunch of constant Tk grids at whole-number Tk values
     grid_menu.update({t: f"n.1.5.5.0.25_NH2.20.24.0.25_fixed.Tk.{t:d}.00{extra_stub}.fits" for t in t_grids})
+
+    grid_menu.update({f'{t:d}fine0.1': f"n.2.6.4.6.0.1_NH2.21.23.0.1_fixed.Tk.{t:d}.00_fine0.1.fits" for t in [30]})
+    grid_menu.update({f'{t:d}fine0.1-0.05': f"n.2.6.4.6.0.05_NH2.21.23.0.1_fixed.Tk.{t:d}.00_fine0.05.fits" for t in [30]})
+    grid_menu.update({f'{t:d}fine0.05': f"n.2.6.4.6.0.05_NH2.21.23.0.05_fixed.Tk.{t:d}.00_fine0.05.fits" for t in [30]})
+
     if select_grid is None:
         select_grid = 30
+
+    if "fine" in stub:
+        select_grid = f"{select_grid:d}{stub}"
+
     grid_savename = grid_menu[select_grid]
     grid_reader = CORadexGridRead(grid_savename)
     return grid_reader, extra_stub
@@ -2665,14 +2685,34 @@ def scatter_radex_grid(select_grid=None, stub=""):
     ydata_name = "ratio_32_10"
     color_name = "column_density_13co10"
 
+    notnull_mask = data_df[xdata_name].notnull() & data_df[ydata_name].notnull()
+    xdata_notnull = data_df[xdata_name][notnull_mask]
+    ydata_notnull = data_df[ydata_name][notnull_mask]
+    x_mean = np.mean(xdata_notnull)
+    y_mean = np.mean(ydata_notnull)
+    x_std = np.std(xdata_notnull)
+    y_std = np.std(ydata_notnull)
+    """
+    The 16th/84th quantiles are pretty symmetric for peak_c18o10 and ratio_32_10, so I'll just use the stddev
+    x_lo, x_hi = misc_utils.flquantiles(xdata_notnull, q=6)
+    y_lo, y_hi = misc_utils.flquantiles(ydata_notnull, q=6)
+    print(x_mean-x_lo, x_hi-x_mean, x_mean, x_std)
+    print(y_mean-y_lo, y_hi-y_mean, y_mean, y_std)
+    """
+
+    ax.errorbar([x_mean], [y_mean], xerr=[x_std], yerr=[y_std], alpha=1, color='k', markersize=3, linewidth=4, capsize=7, capthick=2)
+
+
     ax.errorbar(data_df[xdata_name], data_df[ydata_name], xerr=data_df["err_"+xdata_name], yerr=data_df["err_"+ydata_name], marker='none', alpha=0.2, linestyle='none', color='k')
     sc = ax.scatter(data_df[xdata_name], data_df[ydata_name], marker='o', alpha=1, c=np.log10(data_df[color_name]), cmap=cmocean.cm.matter_r)
+
     fig.colorbar(sc, ax=ax, label=color_name)
     ax.set_xlim((0, 4))
     ax.set_ylim((0, 2.5))
 
-    plt.show()
-
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"scatter_{xdata_name}_{ydata_name}.png"),
+        metadata=catalog.utils.create_png_metadata(title="scatter plot. std error bars",
+            file=__file__, func="scatter_radex_grid"))
 
 def calc_mass_from_masked_data():
     """
@@ -2696,6 +2736,140 @@ def calc_mass_from_masked_data():
         print(f"{mass:.2f}")
         print()
 
+def sum_chisq_to_get_masked_area_errorbars():
+    """
+    Jan 2, 2024
+    2024!!!
+
+    Outlined a routine to get NH2 and n error bars in 2024-01-02 notes
+    Use ratio_32_10 and peak_c18o10 to make overlay plot chisq.
+    Average them for the masked area.
+    """
+    # no args gets the 30 K grid, fine for N19 ring
+    grid_reader, extra_stub = grid_reader_filename_wrapper(30, 'fine0.05')
+    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
+    data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
+    # Identify the measurements to use
+    measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
+    grid_keys = ["TR_13co_32 / TR_13co_10", "TR_c18o_10", "TR_13co_32"]
+    grid_arrays = [grid_reader.get(k) for k in grid_keys]
+    notnull_mask = None
+
+    # Iterate thru measurements once quickly to build the notnull_mask
+    for meas_key in measurement_keys:
+        mask = data_df[meas_key].notnull()
+        if notnull_mask is None:
+            # Establish
+            notnull_mask = mask
+        else:
+            # Add on
+            notnull_mask = notnull_mask & mask
+
+    # notnull_mask = notnull_mask * data_df["column_density_c18o10"].isnull()
+
+
+    # With the completed mask in hand, iterate first through the notnull points
+    # and then through the measurement keys
+    chisq_array = np.zeros(grid_reader.grid_shape)
+    count = 0
+    for i in data_df.index:
+        if not notnull_mask[i]:
+            # is null, skip
+            continue
+        for j, k in enumerate(measurement_keys):
+            meas = data_df.loc[i, k]
+            # err = data_df.loc[i, "err_"+k]
+            err = 1
+            chisq_array += ((meas - grid_arrays[j])/err)**2
+        count += 1
+    print(f"Using {count} pixel samples")
+
+    chisq_array /= np.sum(notnull_mask)
+
+    extent = calc_extent(grid_reader.axis_arrays[0]) + calc_extent(grid_reader.axis_arrays[1])
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = plt.subplot(211)
+    im = ax.imshow(np.log10(chisq_array), origin='lower', extent=extent)
+    fig.colorbar(im, ax=ax)
+
+    min_chisq = np.min(chisq_array)
+    min_loc = np.where(chisq_array==min_chisq)
+    print(min_chisq)
+    print(min_loc)
+
+    solution = [grid_reader.axis_arrays[i][j] for i, j in enumerate(min_loc[::-1])]
+    print(solution)
+
+    ax.contour(chisq_array, levels=[min_chisq*2], origin='lower', extent=extent, colors='white')
+    ax.plot(*solution, marker='x', color='red')
+
+    # Find the row and column indices for the solution. min_loc is ij indexed
+    cd_min_loc, n_min_loc = [x.item() for x in min_loc]
+
+    ax = plt.subplot(223)
+    # Find the constant cd, varying n chisq curve
+    chisq_curve = chisq_array[cd_min_loc, :]
+    chisq_curve = (chisq_curve - min_chisq*2)*-1
+    print(chisq_curve)
+    xaxis = grid_reader.axis_arrays[0]
+    plt.plot(xaxis, chisq_curve, marker='x')
+    spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
+    try:
+        x0, x1 = spline.roots()
+        plt.axvline(x0, color='k')
+        plt.axvline(x1, color='k')
+        xresamp = np.linspace(x0, x1, 50)
+        plt.plot(xresamp, spline(xresamp))
+        plt.ylim((0, min_chisq*1.3))
+        print(grid_reader.axis_keys[0])
+        xsoln = xaxis[n_min_loc]
+        elo, ehi = xsoln-x0, x1-xsoln
+        print(elo, ehi)
+        xe = (elo + ehi)/2
+        plt.errorbar([xsoln], [min_chisq*1.1], xerr=xe)
+    except:
+        pass
+
+
+    ax = plt.subplot(224)
+    # Find the constant cd, varying n chisq curve
+    chisq_curve = chisq_array[:, n_min_loc]
+    chisq_curve = (chisq_curve - min_chisq*2)*-1
+    print(chisq_curve)
+    xaxis = grid_reader.axis_arrays[1]
+    plt.plot(xaxis, chisq_curve, marker='x')
+    spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
+    try:
+        x0, x1 = spline.roots()
+        plt.axvline(x0, color='k')
+        plt.axvline(x1, color='k')
+        xresamp = np.linspace(x0, x1, 50)
+        plt.plot(xresamp, spline(xresamp))
+        plt.ylim((0, min_chisq*1.3))
+        print(grid_reader.axis_keys[1])
+        xsoln = xaxis[cd_min_loc]
+        elo, ehi = xsoln-x0, x1-xsoln
+        print(elo, ehi)
+        xe = (elo + ehi)/2
+        plt.errorbar([xsoln], [min_chisq*1.1], xerr=xe)
+    except:
+        pass
+
+    # plt.show()
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid_noerrors{extra_stub}.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"{', '.join(measurement_keys)}",
+            file=__file__, func="sum_chisq_to_get_masked_area_errorbars"))
+
+def print_out_particle_mass_for_rho():
+    """
+    January 3, 2024
+    Print out the particle mass needed to turn number density n in to mass density rho
+    This will account for mean molecular weight
+    """
+    atomic_particle_mass = Hmass * mean_molecular_weight_neutral
+    print(f"Atomic Hmass * mu: {atomic_particle_mass:.2E}")
+    print(f"Molecular 2 * Hmass * mu: {2*atomic_particle_mass:.2E}")
 
 
 """
@@ -4048,6 +4222,10 @@ def overlay_two_moments(background='8um', overlays=('cii', '12co32'), velocity_l
         metadata=catalog.utils.create_png_metadata(title=cutout_stub, file=__file__, func="overlay_two_moments"))
     plt.close(fig)
 
+
+"""
+Save moment 0
+"""
 def save_moment0(line_stub='cii', velocity_limits=None, cutout_reg_stub='N19'):
     """
     October 26, 2023
@@ -4420,6 +4598,13 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
         metadata=catalog.utils.create_png_metadata(title=f"points: {reg_filename_short}",
         file=__file__, func="plot_spectra"))
 
+"""
+Various stuff about comparing 8 micron to CII.
+The compare_8micron_and_cii_intensities is pretty old (June 2023) and a little
+misdirected I think. The correlation_plot_8um_cii is a test from January 2024
+to make the Cornelia-style correlation plots, since Maitraiyee and Lars are
+making these too.
+"""
 
 def compare_8micron_and_cii_intensities(velocity_limits, reg_index=0):
     """
@@ -4600,6 +4785,124 @@ def compare_8micron_and_cii_intensities(velocity_limits, reg_index=0):
     # 2023-05-03,04,05,09,10,11,26,30, 06-02,07,14
     fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"cii_irac4_{make_simple_vel_stub(velocity_limits)}_{reg_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title='cii and irac4-cii', file=__file__, func="compare_8micron_and_cii_intensities"))
+
+def correlation_plot_8um_cii():
+    """
+    January 10, 2024
+    Drafting a correlation plot between CII and 8 micron. I'll be using a lot of
+    code/inspiration from m16_pictures.irac8um_to_cii_figure_2p5beam
+    For whatever reason, I didn't use the reproject_adaptive there,
+    I just used interp. I think that's fine.
+    """
+    intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
+    """ Get CII and convert to cgs """
+    cii_cube_obj = cube_utils.CubeData(get_map_filename('cii')).convert_to_kms()
+    cii_slab = cii_cube_obj.data.spectral_slab(0*kms, 40*kms)
+    cii_mom0 = cii_slab.moment0()
+    # Calculate 1sigma uncertainty on moment0
+    n_channels = cii_slab.shape[0]
+    channel_width_vel = np.mean(np.diff(cii_cube_obj.data.spectral_axis))
+    channel_noise = get_onesigma('cii') * u.K
+    mom0_noise = channel_noise * channel_width_vel * np.sqrt(n_channels)
+    print("CII noise", mom0_noise)
+    # Mask CII by 3sigma like Cornelia does in the 2021 paper, Sec 3.2
+    cii_mom0[cii_mom0 < mom0_noise] = np.nan*u.K*kms
+    # Convert to cgs
+    line_center = cii_cube_obj.data.header['RESTFREQ'] * u.Hz
+    # Next parts copied from m16_pictures.irac8um_to_cii_figure_2p5beam
+    # Calculate velocity axis in frequency, do the same interval thing for 1 km/s -> Hz conversion
+    velocity_axis_freq = cii_cube_obj.data.spectral_axis[::-1].to(u.Hz, equivalencies=u.doppler_radio(line_center))
+    # Ratio of channel widths in freq and velocity converts km/s to Hz correctly (I think)
+    channel_width_freq = np.mean(np.diff(velocity_axis_freq)) # last element, so it matches the first below
+    # The conversion from T_B to S_nu is linear, so we can divide out velocity and multiply back in frequency later with no consequence.
+    cii_mom0_cgs = (cii_mom0/channel_width_vel).to(u.Jy/u.sr, equivalencies=u.brightness_temperature(line_center)) * channel_width_freq
+    cii_mom0_cgs = cii_mom0_cgs.to(intensity_unit_cgs) # finish the conversion
+    """ Get IRAC 4 and convolve/reproject to CII """
+    irac4_conv_fn = "irac4_ciigrid_cgs.fits" # The savename I'm using
+    if False:
+        img_8, img_info_8 = get_2d_map("8um")
+        # Convolve to CII
+        bmaj, bmin, pa = photometry_beams['8um']
+        beam_8 = cube_utils.Beam(bmaj*u.arcsec, bmin*u.arcsec, pa*u.deg)
+        beam_cii = cii_cube_obj.data.beam
+        beam_conv = beam_cii.deconvolve(beam_8)
+        pixel_scale = misc_utils.get_pixel_scale(img_info_8['wcs'])
+        kernel = beam_conv.as_kernel(pixel_scale)
+        img_8 = convolve_fft(img_8, kernel, preserve_nan=True) # keep the nans from becoming 0s
+        img_8 = reproject_interp((img_8, img_info_8['wcs']), cii_cube_obj.wcs_flat, shape_out=cii_mom0.shape, return_footprint=False)
+        # Convert 8 micron units to cgs
+        irac4_effective_width = 3.94e12 * u.Hz # 3.94 THz from Table 4.3 of IRAC Instrument Handbook (per irac8um_to_cii_figure)
+        img_unit = img_info_8['unit']
+        intensity_unit_cgs = u.Unit('erg s-1 cm-2 sr-1')
+        intensity_8um_obs = (img_8 * img_unit * irac4_effective_width).to(intensity_unit_cgs)
+        # Save this because the convolution takes a minute
+        keys_to_add = [
+            ('DATE', f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"),
+            ('CREATOR', f"Ramsey, {__file__}.correlation_plot_8um_cii"),
+            ('BUNIT', f"{intensity_unit_cgs.to_string('latex_inline')}"),
+            ('BMAJ', (f"{beam_cii.major.to(u.deg).to_value()}", 'deg')),
+            ('BMIN', (f"{beam_cii.minor.to(u.deg).to_value()}", 'deg')),
+            ('BPA', ("0", 'deg')),
+            ('TELESCOP', 'Spitzer'),
+            ('CHNLNUM', '4'),
+            ('HISTORY', "CII resolution"),
+            ('HISTORY', "8 um converted to cgs and on CII grid and beam"),
+        ]
+        new_hdr = cii_cube_obj.wcs_flat.to_header()
+        for k, v in keys_to_add:
+            new_hdr[k] = v
+        hdu = fits.PrimaryHDU(data=intensity_8um_obs.to_value(), header=new_hdr)
+        hdu.writeto(os.path.join(os.path.dirname(img_info_8['full_path']), irac4_conv_fn), overwrite=False)
+    else:
+        img_8, hdr_8 = fits.getdata(catalog.utils.search_for_file(f"spitzer/{irac4_conv_fn}"), header=True)
+
+    # All convolved and converted now
+    img_cii = cii_mom0_cgs.to_value()
+    nanmask = (np.isfinite(img_8) & np.isfinite(img_cii)).flatten()
+    # Use mask to trim down the number of points plotted
+    skip_mask = nanmask.copy()
+    skip_mask[:] = False
+    skip_mask[::10] = True
+    nanmask = nanmask & skip_mask
+
+    # Adjust the IRAC map by 2e-3; see my 2024-01-10 notes and Cornelia's 2021 sec 3.2
+    img_8 = img_8 - 2e-3
+
+    # Using i index as proxy for declination just to see something
+    ii, jj = np.meshgrid(np.arange(img_cii.shape[0]), np.arange(img_cii.shape[1]), indexing='ij')
+
+    values_cii = img_cii.flatten()[nanmask]
+    values_8 = img_8.flatten()[nanmask]
+    values_dec = ii.flatten()[nanmask]
+
+    ax = plt.subplot(211)
+    plt.scatter(values_8, values_cii, marker='.', alpha=0.2, c=values_dec, cmap='jet')
+    # Plot Cornelia's fit to the Orion data
+    xlim = (1e-4, 5e-1)
+    ylim = (1e-5, 1e-2)
+    x = np.array(xlim)
+    y = 10**(np.log10(x)*0.7 - 1.79) # point correlation 2021
+    y2 = 10**(np.log10(x)*0.65 - 1.83) # point density correlation 2021
+    y3 = 2.2e-2 * x**0.79 # Horsehead 2017 paper
+    plt.plot(x, y, color=marcs_colors[1])
+    plt.plot(x, y2, color=marcs_colors[2])
+    plt.plot(x, y3, color=marcs_colors[3])
+
+    plt.xlim(xlim)
+    plt.ylim(ylim)
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel("8 micron (cgs)")
+    plt.ylabel("CII (cgs)")
+
+    plt.subplot(223)
+    plt.imshow(img_cii, origin='lower')
+    plt.subplot(224)
+    plt.imshow(ii, cmap='jet', origin='lower')
+
+    plt.show()
+
+
 
 
 def n19_shell_dust_mass():
@@ -4798,6 +5101,7 @@ def convert_pacs_tau_to_coldens():
 
 
 if __name__ == "__main__":
+    pass # in case nothing else is commented in, just so this is syntactically correct
     """
     Moment 0 examples
     """
@@ -4873,16 +5177,28 @@ if __name__ == "__main__":
     #     for dv2 in np.arange(-2, 6, 1):
     #         overlay_moment(background=l1, overlay=l2, velocity_limits=[np.around(v + dv1*kms, 2) for v in vco], velocity_limits2=[np.around(v + dv2*kms, 2) for v in vco], cutout_reg_stub='med')
 
-    # for i in range(5):
-    #     compare_8micron_and_cii_intensities((20*kms, 21*kms), i)
-
     ####
     ## Save moment 0 to FITS
     ####
     # save_moment0(line_stub='12co32', velocity_limits=(23*kms, 27*kms), cutout_reg_stub=None)
     # line = '12co10-nob'
-    # save_moment0(line_stub=line, velocity_limits=(21*kms, 27*kms), cutout_reg_stub=None)
-    # save_moment0(line_stub='12co10-nob', velocity_limits=(23*kms, 27*kms), cutout_reg_stub='med-large')
+    # vel_stubs = [(10*kms, 21*kms), (17*kms, 21*kms)]
+    # for vs in vel_stubs:
+    #     for line in ['12co10-nob', '13co32', '13co10-pmo', '13co10-nob']:
+    #         try:
+    #             save_moment0(line_stub=line, velocity_limits=vs, cutout_reg_stub=None)
+    #         except Exception as e:
+    #             print(f"Exception from {line}", vs)
+    #             print(e)
+    #             print("ignoring and continuing")
+    # save_moment0(line_stub='cii', velocity_limits=(0*kms, 40*kms), cutout_reg_stub=None)
+
+
+    """ Comparing 8micron and CII """
+    # for i in range(5):
+    #     compare_8micron_and_cii_intensities((20*kms, 21*kms), i)
+    correlation_plot_8um_cii()
+
 
 
     """
@@ -4977,7 +5293,9 @@ if __name__ == "__main__":
     #     k = f"t{i}"
     # compare_data_with_radex_grid("t28")
     # scatter_radex_grid()
-    calc_mass_from_masked_data()
+    # calc_mass_from_masked_data()
+    # sum_chisq_to_get_masked_area_errorbars()
+    # print_out_particle_mass_for_rho()
 
     # calculate_cii_column_density_detection_threshold()
 
