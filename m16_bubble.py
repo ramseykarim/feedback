@@ -1660,43 +1660,74 @@ def sample_multiple_maps_regions(velocity_limits=None):
     result_df.to_csv(save_df_full_path)
 
 
-def sample_masked_map():
+def sample_masked_map(region_name='N19'):
     """
     December 17, 2023
     Try using a mask-based approach to sampling. Take averages of each quantity
     and output just one value + error per velocity interval / area
 
     First mask will be N19 molecular shell
+
+    :param region_name: either 'N19' or 'BNR' (Bright Northern Ridge)
     """
     # Construct and test the  mask
     mask_data_stub = "12co32-pmo"
     cube = cube_utils.CubeData(get_map_filename(mask_data_stub)).convert_to_K().convert_to_kms()
-    mask_velocity_limits = (15*kms, 21*kms)
-    mom0 = cube.data.spectral_slab(*mask_velocity_limits).moment0()
-    mask_base = mom0.to_value()
-    mask_wcs = cube.wcs_flat
 
-    mask = mask_base > 40 #; 40 for 12co32
-    # Blank out a square around the long-tail CO source at the MYSO
-    islice = slice(106, 130)
-    jslice = slice(161, 193)
-    mask[islice, jslice] = False
-    # Blank out the other emission, the sort of part-ring around NGC 6611
-    islice = slice(112, 143)
-    jslice = slice(89, 134)
-    mask[islice, jslice] = False
-    # Blank out the part of the northern cloud that isn't illuminated
-    islice = slice(159, 206)
-    jslice = slice(187, 218)
-    mask[islice, jslice] = False
-    # Blank out a patch on the east side of the shell
-    islice = slice(180, 207)
-    jslice = slice(80, 104)
-    mask[islice, jslice] = False
-    # Blank out a few stray spots
-    islice = slice(100, 167)
-    jslice = slice(37, 70)
-    mask[islice, jslice] = False
+
+    if region_name == "N19":
+        mask_velocity_limits = (15*kms, 21*kms)
+        mom0 = cube.data.spectral_slab(*mask_velocity_limits).moment0()
+        mask_base = mom0.to_value()
+        mask_wcs = cube.wcs_flat
+
+        mask = mask_base > 40 #; 40 for 12co32
+        # Blank out a square around the long-tail CO source at the MYSO
+        islice = slice(106, 130)
+        jslice = slice(161, 193)
+        mask[islice, jslice] = False
+        # Blank out the other emission, the sort of part-ring around NGC 6611
+        islice = slice(112, 143)
+        jslice = slice(89, 134)
+        mask[islice, jslice] = False
+        # Blank out the part of the northern cloud that isn't illuminated
+        islice = slice(159, 206)
+        jslice = slice(187, 218)
+        mask[islice, jslice] = False
+        # Blank out a patch on the east side of the shell
+        islice = slice(180, 207)
+        jslice = slice(80, 104)
+        mask[islice, jslice] = False
+        # Blank out a few stray spots
+        islice = slice(100, 167)
+        jslice = slice(37, 70)
+        mask[islice, jslice] = False
+
+        # Configure velocity limits for later
+        velocity_limits = (11*kms, 21*kms)
+        vel_stub_simple = make_simple_vel_stub(velocity_limits)
+
+
+    elif region_name == "BNR":
+        mask_velocity_limits = (23*kms, 27*kms)
+        mom0 = cube.data.spectral_slab(*mask_velocity_limits).moment0()
+        mask_base = mom0.to_value()
+        mask_wcs = cube.wcs_flat
+        mask = mask_base > 30 # for 12co32, 40 also looks good. see image in 2024-01-13 folder and notes from that day.
+        # Only allow values within this box
+        islice = slice(119, 182)
+        jslice = slice(145, 213)
+        # Create an all-False array
+        box_mask = np.zeros_like(mask_base).astype(bool)
+        # True the values within the square
+        box_mask[islice, jslice] = True
+        # AND together the mask and the square
+        mask = mask & box_mask
+
+        # Velocity
+        velocity_limits = mask_velocity_limits # same as for mask. we made ratios for this (23-27) already
+        vel_stub_simple = make_simple_vel_stub(velocity_limits)
+
 
     if True:
         # Regrid to the PMO grid so that we don't have a billion reduntant pixels
@@ -1740,8 +1771,6 @@ def sample_masked_map():
 
     if False:
         # Try reprojecting it to some sample data
-        velocity_limits = (11*kms, 21*kms)
-        vel_stub_simple = make_simple_vel_stub(velocity_limits)
         lookup_obj = COData(velocity_limits)
         lookup_obj.sample_type_setting = "mask_vals"
         lookup_obj.sample_framework_setting = (mask, mask_wcs)
@@ -1751,7 +1780,7 @@ def sample_masked_map():
 
         save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
         assert os.path.exists(save_df_path)
-        save_df_name = f"sample_mask_test_1_{vel_stub_simple}_vals_regrid.csv"
+        save_df_name = f"sample_mask_{region_name}_{vel_stub_simple}_vals_regrid.csv"
         save_df_full_path = os.path.join(save_df_path, save_df_name)
 
         """
@@ -2720,7 +2749,8 @@ def calc_mass_from_masked_data():
     Using the 12co32 mask, PMO-grid data, find the mass for all the column density measurements.
     0.06404582 pc2 is the pixel area
     """
-    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
+    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
+    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     cd_colnames = [colname for colname in data_df.columns if "column_density" in colname]
     for colname in cd_colnames:
@@ -2747,7 +2777,8 @@ def sum_chisq_to_get_masked_area_errorbars():
     """
     # no args gets the 30 K grid, fine for N19 ring
     grid_reader, extra_stub = grid_reader_filename_wrapper(30, 'fine0.05')
-    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
+    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
+    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     # Identify the measurements to use
     measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
@@ -2857,7 +2888,7 @@ def sum_chisq_to_get_masked_area_errorbars():
         pass
 
     # plt.show()
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid_noerrors{extra_stub}.png"),
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid_noerrors{extra_stub}_BNR.png"),
         metadata=catalog.utils.create_png_metadata(title=f"{', '.join(measurement_keys)}",
             file=__file__, func="sum_chisq_to_get_masked_area_errorbars"))
 
@@ -5197,7 +5228,7 @@ if __name__ == "__main__":
     """ Comparing 8micron and CII """
     # for i in range(5):
     #     compare_8micron_and_cii_intensities((20*kms, 21*kms), i)
-    correlation_plot_8um_cii()
+    # correlation_plot_8um_cii()
 
 
 
@@ -5276,6 +5307,7 @@ if __name__ == "__main__":
     }
     # for s in ['green-cloud', 'red-cloud', 'redshifted_2', 'north_cloud_2']:
     # for s in ['redshifted_2', 'north_cloud_2']:
+    # for s in ['red-cloud']:
         # co_column_manage_inputs(line='10', isotope='18', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
@@ -5283,7 +5315,7 @@ if __name__ == "__main__":
 
     # sample_multiple_maps_regions(velocity_limits=velocity_limits['north_cloud_2'])
     # sample_multiple_maps_regions(velocity_limits=velocity_limits['redshifted_2'])
-    # sample_masked_map()
+    # sample_masked_map("BNR")
 
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
     # get_co_spectra_for_radex()
@@ -5294,7 +5326,7 @@ if __name__ == "__main__":
     # compare_data_with_radex_grid("t28")
     # scatter_radex_grid()
     # calc_mass_from_masked_data()
-    # sum_chisq_to_get_masked_area_errorbars()
+    sum_chisq_to_get_masked_area_errorbars()
     # print_out_particle_mass_for_rho()
 
     # calculate_cii_column_density_detection_threshold()
