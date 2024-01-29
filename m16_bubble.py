@@ -35,6 +35,7 @@ import itertools
 # from math import ceil
 # from scipy import signal
 from scipy.interpolate import UnivariateSpline
+from scipy import signal
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -714,6 +715,68 @@ def co_column_manage_inputs(line='10', isotope='13', velocity_limits=None, cutou
     print("Done, wrote to ", savename)
 
 
+def calculate_co_column_density_detection_threshold():
+    """
+    January 22, 2023
+    Similar to calculate_cii_column_density_detection_threshold
+    Use 3 km/s wide line, but try 2 and 4 to see if anything changes.
+    """
+    # Velocity array
+    v_arr = np.arange(-5, 5.01, 0.1) * kms
+    # linewidth
+    fwhm = 3 * kms
+    # Gaussian model
+    g = cps2.models.Gaussian1D(amplitude=1, mean=0, stddev=(fwhm.to_value() / 2.355))
+    t_arr = g(v_arr.to_value())
+
+    if False:
+        plt.plot(v_arr.to_value(), t_arr)
+        plt.show()
+
+    thin_line_stub = "13co10-pmo"
+    thin_channel_uncertainty = get_onesigma(thin_line_stub) * u.K
+    # in the CO column density function we trim 12co by 6 K (not related to error)
+    # then we trim 13co by 3sigma (all channels)
+    # then we trim again by 1sigma on the 13co moment 0 map which was created with the trimmed 13co > 3sigma
+    # So for our test here, let's see what those errors look like.
+    n_channels = v_arr.size
+    dv = v_arr[1]-v_arr[0]
+    newline_tab = "\n" + "\t"*3
+    print(f"{thin_line_stub} 1 sigma channel noise{newline_tab}{thin_channel_uncertainty}")
+    print(f"N channels{newline_tab}{n_channels}")
+    print(f"channel width (dV){newline_tab}{dv:.3f}")
+    mom0_1sigma = thin_channel_uncertainty * dv * np.sqrt(n_channels)
+    print(f"Moment 0 1sigma{newline_tab}{mom0_1sigma:.3f}")
+    t_arr = t_arr*thin_channel_uncertainty
+    mom0 = np.trapz(t_arr, x=v_arr)
+    print(f"Max, linewidth of test spectrum{newline_tab}{np.max(t_arr):.3f}, {fwhm:.3f}")
+    print(f"Moment 0 of test spectrum{newline_tab}{mom0:.3f}")
+
+    co_line = COColumnDensity(thin_line_stub)
+    Tex = 30 * u.K
+    ff = 1
+
+    # Calculate thin line column density, from COColumnDensity._calculate_thin_line_column_density
+    # Rotational partition function Qrot
+    Qrot = (const.k_B * Tex / (const.h * co_line.B0)).decompose() + (1./3)
+    # Exponential term
+    exp_term = np.exp(co_line.Eu / Tex)
+    # Some constants
+    g = 2*co_line.Ju + 1
+    S = co_line.Ju / g
+    # Prefactor (after cancelling 4pi from top and bottom)
+    prefactor_numerator = const.eps0 * 3 * const.k_B
+    prefactor_denominator = 2 * np.pi**2 * co_line.nu * S * co_line.mu**2
+    prefactor = prefactor_numerator / prefactor_denominator
+    # All together
+    thin_line_column_density = (prefactor * (Qrot/g) * exp_term * mom0/ff).to(u.cm**-2)
+    h2_column_density = thin_line_column_density * ratio_12co_to_13co / ratio_12co_to_H2
+    print(f"For Tex = {Tex}")
+    print(f"Column density detection limit{newline_tab}{h2_column_density:.2E}")
+
+
+
+
 class COColumnDensity:
     """
     May 17, 2023
@@ -756,16 +819,16 @@ class COColumnDensity:
         # Take out anything on the other side of a hyphen and ignore it
         if '-' in optically_thin_line_stub:
             optically_thin_line_stub = optically_thin_line_stub.split('-')[0]
-        if optically_thin_line_stub not in _constants:
+        if optically_thin_line_stub not in self._constants:
             raise RuntimeError(f"Line {optically_thin_line_stub} not supported.")
-        B0, Eu, mu, nu, self.Ju = _constants[optically_thin_line_stub]
+        B0, Eu, mu, nu, self.Ju = self._constants[optically_thin_line_stub]
         self.B0 = B0 * u.MHz
         self.Eu = Eu * u.K
         self.mu = mu * u.Debye
         # relying on the units to correct bugs from mixing up "mu" and "nu"
         self.nu = nu * u.GHz
         # Get the frequency of the optically thick line used for Tex
-        self.thick_nu = _constants[_thick_line[optically_thin_line_stub]] * u.GHz
+        self.thick_nu = self._constants[self._thick_line[optically_thin_line_stub]] * u.GHz
         # Default filling factor is 1.0
         self.ff = 1.0 # can set a different one in .set_filling_factor()
 
@@ -2749,10 +2812,12 @@ def calc_mass_from_masked_data():
     Using the 12co32 mask, PMO-grid data, find the mass for all the column density measurements.
     0.06404582 pc2 is the pixel area
     """
-    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
-    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
+    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; reg_stub = "N19"
+    # data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; reg_stub = "BNR"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     cd_colnames = [colname for colname in data_df.columns if "column_density" in colname]
+    print("REGION:", reg_stub)
+    print()
     for colname in cd_colnames:
         print(colname)
         col = data_df[colname]
@@ -2760,10 +2825,13 @@ def calc_mass_from_masked_data():
         n_valid = np.sum(col.notnull())
         print("nan", n_nan, "not nan", n_valid)
         print("total == sum nan+notnan", len(col)==n_nan+n_valid)
+        cdavg = np.mean(col) * u.cm**2
+        cdstd = np.std(col) * u.cm**-2
         cdtot = np.sum(col) * u.cm**-2 # works even though there are nans!
         pixel_area_physical = 0.06404582 * u.pc**2 # see notes 2023-12-30
         mass = (cdtot * pixel_area_physical * 2 * Hmass * mean_molecular_weight_neutral).to(u.solMass)
-        print(f"{mass:.2f}")
+        print(f"mean, std cd {cdavg:.2E} +/- {cdstd:.2E}")
+        print(f"mass {mass:.2f}")
         print()
 
 def sum_chisq_to_get_masked_area_errorbars():
@@ -2776,9 +2844,11 @@ def sum_chisq_to_get_masked_area_errorbars():
     Average them for the masked area.
     """
     # no args gets the 30 K grid, fine for N19 ring
-    grid_reader, extra_stub = grid_reader_filename_wrapper(30, 'fine0.05')
-    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"
-    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
+    tk = 32
+    # grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
+    grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
+    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; region_label = "N19"
+    # data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; region_label = "BNR"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     # Identify the measurements to use
     measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
@@ -2809,8 +2879,8 @@ def sum_chisq_to_get_masked_area_errorbars():
             continue
         for j, k in enumerate(measurement_keys):
             meas = data_df.loc[i, k]
-            # err = data_df.loc[i, "err_"+k]
-            err = 1
+            err = data_df.loc[i, "err_"+k]
+            # err = 1
             chisq_array += ((meas - grid_arrays[j])/err)**2
         count += 1
     print(f"Using {count} pixel samples")
@@ -2845,8 +2915,8 @@ def sum_chisq_to_get_masked_area_errorbars():
     print(chisq_curve)
     xaxis = grid_reader.axis_arrays[0]
     plt.plot(xaxis, chisq_curve, marker='x')
-    spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
     try:
+        spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
         x0, x1 = spline.roots()
         plt.axvline(x0, color='k')
         plt.axvline(x1, color='k')
@@ -2870,8 +2940,8 @@ def sum_chisq_to_get_masked_area_errorbars():
     print(chisq_curve)
     xaxis = grid_reader.axis_arrays[1]
     plt.plot(xaxis, chisq_curve, marker='x')
-    spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
     try:
+        spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
         x0, x1 = spline.roots()
         plt.axvline(x0, color='k')
         plt.axvline(x1, color='k')
@@ -2888,7 +2958,7 @@ def sum_chisq_to_get_masked_area_errorbars():
         pass
 
     # plt.show()
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid_noerrors{extra_stub}_BNR.png"),
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid{tk}{extra_stub}_{region_label}.png"),
         metadata=catalog.utils.create_png_metadata(title=f"{', '.join(measurement_keys)}",
             file=__file__, func="sum_chisq_to_get_masked_area_errorbars"))
 
@@ -2901,6 +2971,49 @@ def print_out_particle_mass_for_rho():
     atomic_particle_mass = Hmass * mean_molecular_weight_neutral
     print(f"Atomic Hmass * mu: {atomic_particle_mass:.2E}")
     print(f"Molecular 2 * Hmass * mu: {2*atomic_particle_mass:.2E}")
+
+
+def trim_CO_mass_to_CII_grid(velocity_limits=None):
+    """
+    January 29, 2024
+    Mask the PMO column densities using the CII image. Add them up for mass
+    """
+    if velocity_limits is None:
+        velocity_limits = (11*kms, 21*kms)
+    vel_stub_simple = make_simple_vel_stub(velocity_limits)
+    pmo_fn = f"purplemountain/column_density_v3__13co10-pmo_{vel_stub_simple}.fits"
+    # Make CII valid mask
+    cii_mask_fn = "sofia/cii_mom0_0.0.40.0.fits"
+    cii_img, cii_hdr = fits.getdata(catalog.utils.search_for_file(cii_mask_fn), header=True)
+    cii_mask = np.isfinite(cii_img).astype(float)
+
+    # Reproject CII to PMO
+    pmo_mass_pixel, pmo_hdr = fits.getdata(catalog.utils.search_for_file(pmo_fn), extname='mass', header=True)
+    mask_reproj = reproject_interp((cii_mask, cii_hdr), pmo_hdr, return_footprint=False) > 0.5
+    pmo_mass_pixel_subset = pmo_mass_pixel.copy()
+    pmo_mass_pixel_subset[~mask_reproj] = np.nan
+
+    cii_fn = f"sofia/Cp_largeM16_coldens_ff1.0_{vel_stub_simple}.fits"
+    cii_mass_pixel, cii_hdr = fits.getdata(catalog.utils.search_for_file(cii_fn), extname='mass', header=True)
+
+    cii_mass_sum = np.nansum(cii_mass_pixel) * u.solMass
+    pmo_mass_sum = np.nansum(pmo_mass_pixel) * u.solMass
+    pmo_mass_sum_subset = np.nansum(pmo_mass_pixel_subset) * u.solMass
+
+    print("velocity", make_vel_stub(velocity_limits))
+    print(f"CII {cii_mass_sum:.0f}")
+    print(f"PMO full {pmo_mass_sum:.0f}")
+    print(f"PMO subset {pmo_mass_sum_subset:.0f}")
+
+    plt.subplot(221)
+    plt.imshow(mask_reproj, origin='lower')
+    plt.subplot(222)
+    plt.imshow(pmo_mass_pixel, origin='lower')
+    plt.subplot(223)
+    plt.imshow(pmo_mass_pixel_subset, origin='lower')
+    plt.subplot(224)
+    plt.imshow(cii_mass_pixel, origin='lower')
+    plt.show()
 
 
 """
@@ -2971,6 +3084,10 @@ def calculate_cii_column_density(filling_factor=1.0, velocity_limits=None, cutou
     See 2023-10-05 notes. tau <= 1.3 for Pillars, and turns out that the 13CII
     detection towards the IRAS source in the Bright Northern Ridge (fka RCW 165)
     also gives tau ~ 1.3, with 80 K 12CII and 2 K 13CII.
+
+    For updated optical depth, see 2024-01-17 notes. The 13CII spectrum plots
+    show a higher peak optical depth. However, I should stick with 1.3 for ease
+    and because the 2.2 higher one is probably only valid towards the MYSO.
     """
     assumed_optical_depth = 1.3
 
@@ -3205,7 +3322,7 @@ def calculate_cii_column_density_detection_threshold():
     A10 = 10**(-5.63437) / u.s # Einstein A
     filling_factor = 1.0
     # Let Tex be 100 (but change it and check)
-    Tex = 70 * u.K
+    Tex = 60 * u.K
 
     hnukBTex = hnu_kB/Tex
     Z = g0 + g1*np.exp(-hnukBTex) # hnu_kB = Eu/kB since ground is 0 energy (might also be ok if not, but it's definitely ok in this case)
@@ -5131,6 +5248,412 @@ def convert_pacs_tau_to_coldens():
     new_hdu.writeto(savename, overwrite=True)
 
 
+def spitzer_expansion_plot():
+    """
+    January 23, 2024
+    Spitzer expansion plot from Xander's data.
+    Data in misc_data/spitzer_expansion.txt
+    """
+    data_fn = os.path.join(catalog.utils.misc_data_path, "spitzer_expansion.txt")
+    data = np.loadtxt(data_fn, skiprows=3)
+    with open(data_fn, 'r') as f:
+        densities = [float(x) for x in f.readline().split()[1:]]
+    colors = {1e5: 'orange', 1e4: 'red', 1e3: 'green', 1e2: 'blue'}
+    v_array = data[:, 0]
+    fig = plt.figure(figsize=(8, 8))
+    for i in range(1, data.shape[1]):
+        plt.plot(v_array, data[:, i], label=densities[i-1], color=colors[densities[i-1]])
+
+    data_table = """| region | v | M | Nlyc | M_nor |
+| ---- | ---- | ---- | ---- | ---- |
+| 1977 | 1.5 | 700 | 1 | 9.89E-01 |
+| m43 | 6 | 7 | 1.5 | 6.59E-03 |
+| Veil | 13 | 1500 | 70 | 3.03E-02 |
+| RCW36 | - | 1000 | 6 | 2.36E-01 |
+| RCW 120 | 15 | 500 | 38 | 1.86E-02 |
+| RCW 49 | 13 | 24000 | 3900 | 8.70E-03 |
+| 30 Dor | 25 | 4.50E+05 | 1.20E+05 | 5.30E-03 |
+| N19_X | 5 | 700 | 18 | 5.50E-02 |"""
+    # colnames = [x.strip() for x in [0].split('|') if x.strip()]
+    rows = [[x.strip() for x in line.split('|') if x.strip()] for line in data_table.split('\n')]
+    colnames = rows[0]
+    rows = rows[2:]
+    df = pd.DataFrame(rows, columns=colnames)
+    df = df.replace(to_replace='-', value=np.nan)
+    for col in list(df.columns):
+        if col == 'region':
+            continue
+        df[col] = df[col].astype('float')
+
+    # adjust approximately by my N19 Q0 value
+    df.loc[df['region']=='N19', 'M_nor'] = 2 * df[df['region']=='N19']['M_nor']
+    # essentially doesn't matter, only pushes the point up a tiny bit, stays within the same two density contours
+
+    plt.plot(df['v'], df['M_nor'], linestyle='none', marker='o', color=marcs_colors[0])
+    for i in df.index:
+        row = df.loc[i]
+        name = row['region']
+        v = row['v']
+        mnorm = row['M_nor']
+        if np.isnan(v):
+            continue
+        plt.text(v, mnorm, name, ha='center')
+
+    new_data = {
+        'N19': (4, 0.204), 'M16': (10, 0.0275)
+    }
+    for name in new_data:
+        v, mnorm = new_data[name]
+        plt.plot(v, mnorm, 'o', color=marcs_colors[1])
+        plt.text(v, mnorm, name, ha='center')
+
+    plt.legend()
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlim((1, 20))
+    plt.ylim((1e-3, 10))
+    plt.xlabel("Expansion Velocity (km s$^{-1}$)")
+    plt.ylabel("M$_{\\rm norm}$")
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), "spitzer_expansion.png"),
+        metadata=catalog.utils.create_png_metadata(title="both n19 Q0 values",
+            file=__file__, func="spitzer_expansion_plot"))
+
+def integrate_cii_and_FIR_luminosities():
+    """
+    January 24, 2024
+    Sum the FIR and CII fluxes to get energy for Xander's tables.
+
+    The next step would be to mask this to get N19; this is for M16 + N19
+
+    Result:
+    CII 1024.7933376112644 solLum
+    FIR (40-500 from 70,160,250) 437548.4931927458 solLum
+    """
+    cii_fn = "sofia/cii_integrated_intensity_cgs.fits"
+    fir_fn = "herschel/m16-I_FIR.fits"
+    def _load(short_fn):
+        img, hdr = fits.getdata(catalog.utils.search_for_file(short_fn), header=True)
+        wcs = WCS(hdr)
+        unit = u.Unit(hdr['BUNIT'])
+        return img*unit, wcs
+    cii_img, cii_wcs = _load(cii_fn)
+    fir_img, fir_wcs = _load(fir_fn)
+    cii_reproj = reproject_interp((cii_img.to_value(), cii_wcs), fir_wcs, shape_out=fir_img.shape, return_footprint=False)
+    fir_img[np.isnan(cii_reproj)] = np.nan
+    del cii_reproj
+    # Works great!
+    # Now sum over pixels. Do it at native resolutions.
+    def _calc_lum(img, wcs):
+        pixel_scale = misc_utils.get_pixel_scale(wcs)
+        pixel_area = (pixel_scale * los_distance_M16 / u.radian)**2
+        flux_sum = np.nansum(img)
+        return (flux_sum * pixel_area * 4 * np.pi * u.sr).to(u.solLum)
+    cii_lum = _calc_lum(cii_img, cii_wcs)
+    fir_lum = _calc_lum(fir_img, fir_wcs)
+    print(f"CII {cii_lum}")
+    print(f"FIR (40-500 from 70,160,250) {fir_lum}")
+
+
+def ekin_ew_vs_age_plot():
+    """
+    January 29, 2024
+    Recreate the figure from Xander's 2024-01-23 email
+    Ekin/Ew vs Age
+    """
+    existing_data = {
+        'RCW 36\n(bipolar)': (0.7, 7.38e-3),
+        'RCW 120': (0.15, 8.21e-1),
+        'M42': (0.2, 4.89e-1),
+        'RCW 49': (2, 6.57e-2),
+    }
+
+    new_data = {
+        'N19': {
+            'age': 0.5, 'v': 4, 'mshell': 700, 'Ew': 1.1e47,
+        },
+        'M16': {
+            'age': 2, 'v': 10, 'mshell': 1e4, 'Ew': 9.8e50,
+        },
+    }
+    units = {'age': u.Myr, 'v': kms, 'mshell': u.solMass, 'Ew': u.erg}
+    def _get_age(name):
+        return new_data[name]['age'] #* units['age']
+    def _get_ekin_ew(name):
+        m = new_data[name]['mshell'] * units['mshell']
+        v = new_data[name]['v'] * units['v']
+        wind_energy = new_data[name]['Ew'] * units['Ew']
+        kinetic_energy = 0.5 * m * v**2
+        kinetic_to_wind = (kinetic_energy / wind_energy).decompose()
+        return kinetic_to_wind.to_value()
+
+    plt.figure(figsize=(8, 8))
+    for name in existing_data:
+        t, ratio = existing_data[name]
+        plt.plot(t, ratio, marker='o', color=marcs_colors[0])
+        plt.text(t, ratio, name, ha='center')
+    for name in new_data:
+        t = _get_age(name)
+        ratio = _get_ekin_ew(name)
+        plt.plot(t, ratio, marker='o', color=marcs_colors[1])
+        plt.text(t, ratio, name, ha='center')
+
+
+    plt.xlim((0.1, 10))
+    plt.ylim((3e-3, 3))
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel("age [Myr]")
+    plt.ylabel("E$_{\\rm kin}$ / E$_{\\rm w}$")
+
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), "ekin_ew_vs_age.png"),
+        metadata=catalog.utils.create_png_metadata(title="from Xanders 2024-01-23 email",
+            file=__file__, func="ekin_ew_vs_age_plot"))
+
+
+"""
+13 CII
+"""
+
+def spectra_13cii():
+    """
+    January 15, 2024
+    Compare 13CII spectra to 12CII
+    Use the regions in sofia/13cii_spots.reg; see 2024-01-15 notes
+    That file contains [Circle, Circle, Point, Point]
+    Continued Jan 16, modeling the figure after Guevara 2020 figs
+    """
+    coeff_13 = ratio_12co_to_13co / 0.625 # co ratio == c+ ratio
+    def cii_ratio_as_function_of_tau(tau):
+        """
+        Calculate the ratio of 12CII / 13CII brightness as a function of tau_12,
+        the optical depth of 12CII.
+        """
+        return (1. - np.exp(-tau)) / (1. - np.exp(-tau / coeff_13))
+
+    def make_tau_spline():
+        """
+        Fit a spline interpolating tau_12 values from 12/13 cii ratio values
+        """
+        tau_array = np.arange(0.01, 4., 0.01)
+        cii_ratio_array = cii_ratio_as_function_of_tau(tau_array)
+        tau_spline = UnivariateSpline(cii_ratio_array[::-1], tau_array[::-1], s=0)
+        return tau_spline
+
+    # Check and plot the 12cii/13cii relationship with tau
+    if False:
+        tau_array = np.arange(0.01, 4., 0.01)
+        cii_ratio_array = cii_ratio_as_function_of_tau(tau_array)
+        tau_spline = UnivariateSpline(cii_ratio_array[::-1], tau_array[::-1], s=0)
+        plt.plot(cii_ratio_array[::-1], tau_array[::-1])
+        x = 40
+        y = tau_spline(x)
+        print(x, y)
+        x = np.arange(20, 70, 1)
+        plt.plot(x, tau_spline(x), 'x')
+        plt.show()
+        return
+
+
+    from astropy.convolution import CustomKernel
+    reg_filename_short = "sofia/13cii_spots.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    reg_list = reg_list[:2] # just the two Circles
+    reg_dict = {reg.meta['text']: reg for reg in reg_list}
+    print(reg_dict)
+    # Load CII
+    cii_stub = 'cii'
+    cii_cube_obj = cube_utils.CubeData(get_map_filename(cii_stub)).convert_to_kms().convert_to_K()
+    # Figure
+    fig = plt.figure(figsize=(13, 7))
+    gs = fig.add_gridspec(2, 2)
+    # gs = fig.add_gridspec(2, 1)
+
+    assumed_13cii_dv = 11.2
+
+    line_limits_lookup = [(25.5, 31.5), (24.5, 30.5)]
+
+    for i, vel_str in enumerate(reg_dict):
+        ax = fig.add_subplot(gs[0, i])
+        reg = reg_dict[vel_str]
+
+        # Get spectrum from region somehow
+        if True:
+            subcube = cii_cube_obj.data.subcube_from_regions([reg])
+            # Get the number of pixels averaged under this mask
+            n_pixels_in_avg = np.sum(~subcube.mask.view()[0])
+            spectrum = subcube.mean(axis=(1, 2))
+        else:
+            # Centers of circles
+            pj, pi = [int(round(p)) for p in reg.to_pixel(cii_cube_obj.wcs_flat).center.xy]
+            spectrum = cii_cube_obj.data[:, pi, pj]
+            n_pixels_in_avg = 1
+
+        vel_axis = cii_cube_obj.data.spectral_axis.to_value()
+        new_vel_axis = np.arange(-20, 76, 1) # 1 km/s interpolation
+
+        spectrum_12 = spectrum.spectral_smooth(CustomKernel(signal.triang(3)))
+        spectrum_12 = spectrum_12.spectral_interpolate(new_vel_axis*kms).to_value()
+        # ax.plot(vel_axis, spectrum.to_value(), color='grey')
+        ax.step(new_vel_axis, spectrum_12, label="[CII]", where='mid', color='k')
+        # Convolve CII subcube
+        spectrum_13 = spectrum.spectral_smooth(CustomKernel(signal.triang(3)))
+        # Add 0.2 to the interpolation grid so that when we correct with -11.2, 13CII ends up sampled at whole number velocities
+        # spectrum_13 = spectrum_13.spectral_interpolate((new_vel_axis+0.2)*kms).to_value()
+        # vel_axis_13 = (new_vel_axis+0.2) - 11.2
+        # spectrum_13 = spectrum_13.spectral_interpolate(new_vel_axis*kms).to_value()
+        # vel_axis_13 = new_vel_axis - assumed_13cii_dv
+        spectrum_13 = spectrum_13.spectral_interpolate((new_vel_axis+assumed_13cii_dv)*kms).to_value()
+        vel_axis_13 = new_vel_axis
+
+        # spectrum_13[vel_axis < 36] = np.nan
+        # print(new_vel_axis)
+        # print(vel_axis_13)
+        ax.step(vel_axis_13, spectrum_13 * coeff_13, label="[$^{13}$CII] x 71.44", where='mid', color='r')
+
+        err_12cii = get_onesigma(cii_stub)/np.sqrt(n_pixels_in_avg)
+        err_13cii = err_12cii*coeff_13
+        ax.axhline(err_13cii, color='r', alpha=0.5)
+
+        # New axis for ratio, sharex with spectrum plot
+        ratio_ax = fig.add_subplot(gs[1, i], sharex=ax)
+        # Plot ratio
+        # Use 24-30 km/s
+        lo, hi = line_limits_lookup[i]
+        vel_subset_12 = new_vel_axis[(new_vel_axis > lo) & (new_vel_axis < hi)]
+        # vel_subset_13 = vel_axis_13[(vel_axis_13 > 23.5) & (vel_axis_13 < 30.5)] ## equivalent to vel_subset_12, but in practice off by float precision (so that 23.00...0x > 23) for vel_subset_13 but not 12
+        spec_subset_12 = spectrum_12[(new_vel_axis > lo) & (new_vel_axis < hi)]
+        spec_subset_13 = spectrum_13[(vel_axis_13 > lo) & (vel_axis_13 < hi)]
+        # print(spec_subset_12.size)
+        # print(spec_subset_13.size)
+
+        ratio_subset = spec_subset_12/spec_subset_13
+        # Clean the ratios; nan out values where 13cii is below 1sigma and where 13cii is below 12cii.
+        ratio_subset[spec_subset_13*coeff_13 < err_13cii] = np.nan
+        ratio_subset[spec_subset_13*coeff_13 < spec_subset_12] = np.nan
+        # ratio_ax.plot(vel_subset_12, ratio_subset, marker='x', color='grey', linestyle='none')
+        ratio_bar_plot = ratio_ax.bar(vel_subset_12, ratio_subset, color='grey', alpha=0.6, width=(vel_subset_12[1]-vel_subset_12[0]))
+        ratio_ax.set_ylim((20, 80))
+
+        # Figure out ratio error. Geometric, so fractional error easy
+        frac_err_12 = err_12cii / spec_subset_12
+        frac_err_13 = err_13cii / (spec_subset_13*coeff_13)
+        ratio_err = np.sqrt(frac_err_12**2 + frac_err_13**2)*ratio_subset
+
+        # New twin Axes for optical depth
+        tau_ax = ratio_ax.twinx()
+        tau_spline = make_tau_spline()
+        tau_subset = tau_spline(ratio_subset)
+        # tau_ax.plot(vel_subset_12, tau_subset, color='b', where='mid', linestyle='none')
+        tau_ax.set_ylim((0, 3))
+        # Errors on tau; do hi and lo, +/- onesigma. hi ratio => lo tau, so they're reversed
+        tau_lo = tau_spline(ratio_subset + ratio_err)
+        tau_hi = tau_spline(ratio_subset - ratio_err)
+        tau_hi_errorbar = tau_hi - tau_subset
+        tau_lo_errorbar = tau_subset - tau_lo
+
+
+
+        tau_plot = tau_ax.errorbar(vel_subset_12, tau_subset, marker='o', yerr=(tau_lo_errorbar, tau_hi_errorbar), color='b', capsize=2, linestyle='none')
+
+        print(max(tau_subset))
+
+
+        if False:
+            """
+            Tried fitting and subtraction. The Gaussian fit to the 12CII line is too inaccurate that deep in the line wings to help.
+            The fitted Gaussian doesn't affect the 13CII line at all, and makes a strange looking beat pattern in the main line.
+            That beat pattern usually means you're fitting with too thin a line. There's probably multiple components in the 12CII line,
+            and we have no hope of separating them with our data.
+            """
+            # Fit the 12CII to correct emission
+            fitter = cps2.fitting.LevMarLSQFitter()
+            g0 = cps2.models.Gaussian1D(amplitude=55, mean=28, stddev=4/2.355,
+                bounds={'amplitude': (40, 60), 'mean': (26, 30), 'stddev': (3/2.355, 5.5/2.355)})
+            velocity_mask = (vel_axis > 20) & (vel_axis < 35)
+            g_fit = fitter(g0, vel_axis[velocity_mask], spectrum.to_value()[velocity_mask])
+            print(g_fit)
+            # Plot fit
+            ax.step(new_vel_axis, g_fit(new_vel_axis), color='DarkGreen', where='mid')
+            ax.step(vel_axis_13, g_fit(new_vel_axis)*coeff_13, color='LimeGreen', where='mid')
+            # Try subtraction
+            ax.step(vel_axis_13, spectrum_13 - g_fit(new_vel_axis)*coeff_13, color='RoyalBlue', where='mid')
+
+        ax.set_ylim((-30, 150))
+        # plt.ylim((-330, 630))
+        ax.set_xlim((19.5, 37.5))
+        # ax.set_xlim((0, 55))
+        if i == 0:
+            ax.legend()
+            handles = [ratio_bar_plot, tau_plot]
+            labels = ["T$_{\\rm MB\\,[CII]}$ / T$_{\\rm MB\\,[^{13}CII]}$", "$\\tau_{\\rm [CII]}$"]
+            tau_ax.legend(handles=handles, labels=labels)
+
+        ratio_ax.set_xlabel(f"Velocity ({kms.to_string('latex_inline')})")
+        ratio_ax.set_ylabel("Line ratio [$^{12}$CII]/[$^{13}$CII]")
+        tau_ax.set_ylabel("[$^{12}$CII] optical depth")
+        ax.set_ylabel("T$_{\\rm MB}$ (K)")
+
+    plt.subplots_adjust(wspace=0.3, left=0.07, right=0.93, top=0.96)
+    # plt.show()
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"cii_13cii_tau_{assumed_13cii_dv:.1f}_circles.png"),
+        metadata=catalog.utils.create_png_metadata(title="Guevara 2020 plot inspiration",
+            file=__file__, func="spectra_13cii"))
+
+
+def contours_13cii():
+    """
+    January 17, 2024
+    Going to see what the zoomed-in contours of 13CII look like
+    """
+    reg_filename_short = "sofia/13cii_spots.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    reg_list = reg_list[:2] # just the two Circles
+    # Load CII
+    cii_stub = "cii"
+    cii_cube_obj = cube_utils.CubeData(get_map_filename(cii_stub)).convert_to_kms().convert_to_K()
+    # subcube = cii_cube_obj.data[:, 205:265, 200:305] # small box
+    # subcube = cii_cube_obj.data[:, 155:325, 150:365] # too wide
+    # subcube = cii_cube_obj.data[:, 185:285, 180:325] # a bit too wide
+    subcube = cii_cube_obj.data[:, 210:255, 215:285] # narrower
+    # Figure
+    fig = plt.figure(figsize=(10, 6))
+    # Moment 0
+    velocity_limits = (26*kms, 31*kms)
+    velocity_limits_13 = tuple(x + 11.2*kms for x in velocity_limits)
+    mom0_12 = subcube.spectral_slab(*velocity_limits).moment0()
+    slab_13 = subcube.spectral_slab(*velocity_limits_13)
+    mom0_13 = slab_13.moment0()
+    # Get uncertainty for 13CII contours
+    n_channels = slab_13.shape[0]
+    dv = np.mean(np.diff(subcube.spectral_axis)).to_value()
+    channel_noise = get_onesigma(cii_stub)
+    onesigma_mom0 = channel_noise * dv * np.sqrt(n_channels)
+    print(onesigma_mom0)
+
+    ax = plt.subplot(111, projection=subcube[0].wcs)
+    im = ax.imshow(mom0_12.to_value(), origin='lower')
+    fig.colorbar(im, ax=ax, label="[$^{12}$CII] integrated intensity " + f"({mom0_12.unit.to_string('latex_inline')})")
+    # ax = plt.subplot(122, sharex=ax, sharey=ax)
+    # im = ax.imshow(mom0_13.to_value(), origin='lower', vmin=-5, vmax=5)
+    # fig.colorbar(im, ax=ax)
+    ax.contour(mom0_13.to_value(), levels=[x*onesigma_mom0 for x in (2, 3, 4)], colors='k')
+
+    for reg in reg_list:
+        pixreg = reg.to_pixel(subcube[0].wcs)
+        pixreg.visual['facecolor'] = pixreg.visual['edgecolor'] = 'white'
+        pixreg.visual['linewidth'] = 2
+        pixreg.plot(ax=ax)
+
+    ax.set_xlabel("Right Ascension")
+    ax.set_ylabel("Declination")
+    plt.tight_layout()
+
+    # plt.show()
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"contours_13cii_{cii_stub}_{make_simple_vel_stub(velocity_limits)}.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"13cii contours 2,3,4 sigma {onesigma_mom0:.2f}",
+            file=__file__, func="contours_13cii"))
+
+
 if __name__ == "__main__":
     pass # in case nothing else is commented in, just so this is syntactically correct
     """
@@ -5222,7 +5745,7 @@ if __name__ == "__main__":
     #             print(f"Exception from {line}", vs)
     #             print(e)
     #             print("ignoring and continuing")
-    # save_moment0(line_stub='cii', velocity_limits=(0*kms, 40*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='12co32', velocity_limits=(15*kms, 21*kms), cutout_reg_stub=None)
 
 
     """ Comparing 8micron and CII """
@@ -5304,11 +5827,13 @@ if __name__ == "__main__":
         ### the good stuff
         'north_cloud_2': (11*kms, 21*kms), 'redshifted_2': (21*kms, 27*kms), # the originals
         'green-cloud': (21*kms, 23*kms), 'red-cloud': (23*kms, 27*kms), # the main green/red stuff, split more finely
+        ### new wave experimental 2024-01-15
+        'blue_clump': (6*kms, 11*kms), 'high_velocity': (35*kms, 40*kms),
     }
     # for s in ['green-cloud', 'red-cloud', 'redshifted_2', 'north_cloud_2']:
     # for s in ['redshifted_2', 'north_cloud_2']:
     # for s in ['red-cloud']:
-        # co_column_manage_inputs(line='10', isotope='18', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
+    #     co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
         # get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
@@ -5317,7 +5842,13 @@ if __name__ == "__main__":
     # sample_multiple_maps_regions(velocity_limits=velocity_limits['redshifted_2'])
     # sample_masked_map("BNR")
 
-    # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'], cutout_reg_stub='N19-small')
+    # calculate_cii_column_density(mask_cutoff=3*u.K, velocity_limits=velocity_limits['north_cloud_2'])
+    # calculate_cii_column_density(mask_cutoff=3*u.K, velocity_limits=velocity_limits['redshifted_2'])
+    # calculate_cii_column_density(mask_cutoff=3*u.K, velocity_limits=velocity_limits['green-cloud'])
+
+    # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'])
+    # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['redshifted_2'])
+    # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['red-cloud'])
     # get_co_spectra_for_radex()
 
     # make_more_radex_grids()
@@ -5326,10 +5857,11 @@ if __name__ == "__main__":
     # compare_data_with_radex_grid("t28")
     # scatter_radex_grid()
     # calc_mass_from_masked_data()
-    sum_chisq_to_get_masked_area_errorbars()
+    # sum_chisq_to_get_masked_area_errorbars()
     # print_out_particle_mass_for_rho()
 
     # calculate_cii_column_density_detection_threshold()
+    # calculate_co_column_density_detection_threshold()
 
     # convert_pacs_tau_to_coldens()
 
@@ -5365,3 +5897,8 @@ if __name__ == "__main__":
     # peak_T_velocity_map()
     # peak_T_and_moment_maps_CO(isotope='13', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
     # peak_T_and_moment_maps_CO(isotope='12', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
+    # contours_13cii()
+    # spitzer_expansion_plot()
+    ekin_ew_vs_age_plot()
+    # integrate_cii_and_FIR_luminosities()
+    # trim_CO_mass_to_CII_grid(velocity_limits=(21*kms, 27*kms))
