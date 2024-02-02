@@ -693,7 +693,7 @@ def crossmatch_stoop_and_hillenbrand(**kwargs):
         # super_cat_df["is_within_large"].mask(super_cat_df[filter_radius_col_name_large], "X", inplace=True)
 
     # Other debugging
-    if False:
+    if True:
         if False:
             # Count the number of stars in each filter and each catalog
             for prefix in ["h_", "s_"]:
@@ -727,7 +727,7 @@ def crossmatch_stoop_and_hillenbrand(**kwargs):
         print("IN S", sum(super_cat_df["Stoop_tC1_idx"].notnull()))
         print("IN H", sum(super_cat_df["Hillenbrand_t3A_idx"].notnull()))
 
-        if False:
+        if True:
             # Trim down to 5 arcmin and either S or H > fuv_cutoff
             super_cat_df = super_cat_df.loc[super_cat_df[filter_radius_col_name_small] & ((super_cat_df["h_log10FUV_flux_solLum"] > fuv_cutoff) | (super_cat_df["s_log10FUV_flux_solLum"] > fuv_cutoff))]
         elif False:
@@ -775,7 +775,7 @@ def crossmatch_stoop_and_hillenbrand(**kwargs):
             print(f"E(B-V) mean median std {np.nanmean(ebv):.2f}, {np.nanmedian(ebv):.2f}, {np.nanstd(ebv):.2f}")
             print(f"Av (Rv = {Rv}) mean median std {np.nanmean(av):.2f}, {np.nanmedian(av):.2f}, {np.nanstd(av):.2f}")
             print(f"N_H (Rv = {Rv}, N_H/Av = 1.9e21) mean median std {np.nanmean(nh):.2f}, {np.nanmedian(nh):.2f}, {np.nanstd(nh):.2f}")
-            return
+            # return
 
 
 
@@ -783,7 +783,7 @@ def crossmatch_stoop_and_hillenbrand(**kwargs):
         catr = make_cat_resolver(super_cat_df[catalog_select.lower()+"_SpType"])
 
         # Print bunch of stuff
-        if False:
+        if True:
             for s in catr.star_list:
                 print(s.spectral_types)
 
@@ -798,6 +798,7 @@ def crossmatch_stoop_and_hillenbrand(**kwargs):
             print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
             print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
             print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.Myr))}")
+            print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.solLum))}")
             print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
             print(f"IONIZING PHOTON FLUX: {print_val_err(ionizing_tot_med, ionizing_tot_err)}") # units should be 1/time
             mass_med, mass_err = catr.get_stellar_mass()
@@ -806,7 +807,7 @@ def crossmatch_stoop_and_hillenbrand(**kwargs):
             print(f"LUMINOSITY:   {print_val_err(lum_med, lum_err)}")
             print(f"MECH/FUV LUM: {(ke_med/fuv_tot_med).decompose():.1E}; MECH/total LUM: {(ke_med/lum_med).decompose():.1E}")
         # print different stuff
-        if True:
+        if False:
             print(f"| {catalog_select} | {filter_select} | ", end="")
             fuv_tot_med, _ = catr.get_FUV_flux()
             ke_med, _  = catr.get_mechanical_luminosity()
@@ -820,11 +821,31 @@ def crossmatch_stoop_and_hillenbrand(**kwargs):
 
     if False:
         """ Save """
-        super_cat_df = super_cat_df[["Hillenbrand_t3A_idx", "Stoop_tC1_idx", "h_log10FUV_flux_solLum", "s_log10FUV_flux_solLum", "h_log10_mech_lum_erg/Myr", "s_log10_mech_lum_erg/Myr", "h_SpType", "s_SpType", f"h_{fuv_cutoff_col_stub}", f"s_{fuv_cutoff_col_stub}", "is_within_small"]]
+        # "h_log10_mech_lum_erg/Myr", "s_log10_mech_lum_erg/Myr",
+        super_cat_df = super_cat_df[["Hillenbrand_t3A_idx", "Stoop_tC1_idx", "h_log10FUV_flux_solLum", "s_log10FUV_flux_solLum", "h_SpType", "s_SpType", f"h_{fuv_cutoff_col_stub}", f"s_{fuv_cutoff_col_stub}", "is_within_small"]]
         # super_cat_df
         print("Final df length", len(super_cat_df))
         super_cat_df.drop(columns=[x for x in super_cat_df.columns if "SkyCoord" in x]).to_html("/home/ramsey/Downloads/hillenbrand_stoop.html", na_rep="")
         # super_cat_df.to_csv(catalog.utils.m16_data_path + "catalogs/HS_super_catalog.csv", na_rep="")
+
+    if False:
+        """
+        Write up a LaTeX friendly table for the paper
+        RA, Dec, idx in both catalogs, type in both catalogs, filter status
+        """
+        table_df = super_cat_df[["RA", "DE", "h_SpType", "s_SpType"]].copy()
+        for k in ["Hillenbrand_t3A_idx", "Stoop_tC1_idx"]:
+            table_df[k] = super_cat_df[k].astype(int)
+        filter_cols = []
+        for k in [f"h_{fuv_cutoff_col_stub}", f"s_{fuv_cutoff_col_stub}"]:
+            col = super_cat_df[k].apply(lambda s: s.replace("X", k[0].upper()))
+            filter_cols.append(col)
+        filter_df = pd.DataFrame(filter_cols).T
+        filter_col = filter_df.apply(lambda row: ", ".join(list(s.strip() for s in row if s.strip())), axis=1)
+        table_df['Within Filter'] = filter_col
+        table_df.to_html("/home/ramsey/Downloads/hillenbrand_stoop_paperdraft.html", na_rep="")
+        print(table_df.to_latex())
+
 
 
 def n19_star_scoby(df):
@@ -838,6 +859,7 @@ def n19_star_scoby(df):
     ebv = df['s_E(B-V)'].mask(df['s_E(B-V)'].apply(lambda x: not str(x).strip()), float('NaN')).astype(float)
     print(ebv*3.1)
     n19_row = df.loc[4]
+    print(n19_row)
     catr = make_cat_resolver([n19_row['s_SpType']], is_list=True)
     print(catr.star_list)
     mdot_med, mdot_err = catr.get_mass_loss_rate()
@@ -848,6 +870,7 @@ def n19_star_scoby(df):
     print(f"MASS LOSS: {print_val_err(mdot_med, mdot_err)}")
     print(f"MV FLUX:  {print_val_err(mvflux_med, mvflux_err)}")
     print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.erg/u.Myr))}")
+    print(f"MECH LUM:  {print_val_err(ke_med, ke_err, extra_f=lambda x: x.to(u.solLum))}")
     print(f"FUV LUM:   {print_val_err(fuv_tot_med, fuv_tot_err)}") # extra_f=lambda x: x.to(u.erg/u.s)
     print(f"IONIZING PHOTON FLUX: {print_val_err(ionizing_tot_med, ionizing_tot_err)}") # units should be 1/time
     mass_med, mass_err = catr.get_stellar_mass()
@@ -866,4 +889,4 @@ if __name__ == "__main__":
     #     for i in range(3):
     #         crossmatch_stoop_and_hillenbrand(catalog_select=sh, filter_select=i)
 
-    crossmatch_stoop_and_hillenbrand(catalog_select="S", filter_select=1)
+    crossmatch_stoop_and_hillenbrand(catalog_select="H", filter_select=0, n19=True)

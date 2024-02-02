@@ -2812,8 +2812,8 @@ def calc_mass_from_masked_data():
     Using the 12co32 mask, PMO-grid data, find the mass for all the column density measurements.
     0.06404582 pc2 is the pixel area
     """
-    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; reg_stub = "N19"
-    # data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; reg_stub = "BNR"
+    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; reg_stub = "N19"
+    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; reg_stub = "BNR"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     cd_colnames = [colname for colname in data_df.columns if "column_density" in colname]
     print("REGION:", reg_stub)
@@ -5410,6 +5410,204 @@ def ekin_ew_vs_age_plot():
             file=__file__, func="ekin_ew_vs_age_plot"))
 
 
+def bubble_geometry():
+    """
+    January 31, 2024
+    try visualizing a biconcave disc with matplotlib 3d
+    """
+    def test_z(r):
+        # r is radius from 0
+        return np.cos(np.pi*r/2)
+
+    diameter = 2
+    a = (.05, 2, 0) # a0, a1, a2
+    def biconcave_z(r):
+        # r is radius from 0
+        rd2 = (r/diameter)**2 # appears multiple times
+        first = diameter * np.sqrt(1 - 4*rd2)
+        second = a[0] + a[1]*rd2 + a[2]*(rd2**2)
+        return first*second
+
+    # axis_array = np.linspace(-1.2, 1.2, 200)
+    # xx, yy = np.meshgrid(axis_array, axis_array, indexing='xy')
+    u = np.linspace(0, 2*np.pi, 30)
+    v = np.linspace(0, np.pi, 30)
+    xx = np.outer(np.cos(u), np.sin(v))
+    yy = np.outer(np.sin(u), np.sin(v))
+    rr = np.sqrt(xx**2 + yy**2)
+    # rr[rr>1] = np.nan
+    zz = biconcave_z(rr) * np.sign(np.cos(v))
+
+    # zz[xx < -0.8] = np.nan
+
+    fig = plt.figure(figsize=(12, 10))
+
+    def _plot3d(ax_description, wire=False, alpha=1):
+        ax = fig.add_subplot(ax_description, projection='3d')
+        if wire:
+            f = ax.plot_wireframe
+        else:
+            f = ax.plot_surface
+        f(xx, yy, zz, alpha=alpha)
+        ax.set_aspect("equal")
+        return ax
+
+    zz[(yy < -0.8) & (zz < 0.15)] = np.nan
+    ax1 = _plot3d(211)
+    ax2 = _plot3d(223, wire=True, alpha=0.7)
+    ax3 = _plot3d(224, alpha=0.7)
+
+    publication_ready = True
+    if publication_ready:
+        fig.subplots_adjust(hspace=-0.5, wspace=-0.05, top=1.2, bottom=-0.2, left=-0.1, right=1.1)
+    else:
+        fig.subplots_adjust(hspace=0, wspace=0, top=1, bottom=0, left=0, right=1)
+    # ax2 = fig.add_subplot(122)
+    # ax2.imshow(rr, origin='lower')
+
+    for j, ax in enumerate([ax1, ax2, ax3]):
+        for i_axis in [ax.xaxis, ax.yaxis, ax.zaxis]:
+            i_axis.set_ticklabels([])
+            for s in ['inward_factor', 'outward_factor']:
+                i_axis._axinfo['tick'][s] = 0.0
+        ax.patch.set_alpha(0)
+        ax.set_xlim((-1.1, 1.1))
+        ax.set_ylim((-1.1, 1.1))
+        ax.set_zlim((-0.45, 0.45))
+
+        l = 1.2
+        lw = 3
+        if j < 1:
+            ax.plot([0, 0], [0, 0], [-l, -biconcave_z(0)], color='k', linewidth=lw, zorder=0)
+            ax.plot([0, 0], [0, 0], [biconcave_z(0), l], color='k', linewidth=lw, zorder=100)
+        else:
+            ax.plot([0, 0], [0, 0], [-l, -biconcave_z(0)], color='k', linewidth=lw, zorder=0)
+            ax.plot([0, 0], [0, 0], [biconcave_z(0), l], color='k', linewidth=lw, zorder=0)
+
+
+    ax2.view_init(elev=7, azim=270)
+    ax3.view_init(elev=2, azim=270)
+
+    # plt.show()
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), "biconcave_disc_2.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"biconcave D={diameter} a = {a}",
+            file=__file__, func="bubble_geometry"))
+
+
+def bubble_cross_cut():
+    """
+    February 1, 2024
+    Try to make the shell cross cut diagram in matplotlib with fill-between
+    """
+
+    def biconcave_z(r, diameter, a):
+        """
+        The 3d viz uses:
+        diameter = 2
+        a = (.05, 2, 0) # a0, a1, a2
+
+        r is radius from 0
+        """
+        rd2 = (r/diameter)**2 # appears multiple times
+        first = diameter * np.sqrt(1 - 4*rd2)
+        second = a[0] + a[1]*rd2 + a[2]*(rd2**2)
+        return first*second
+
+    fig = plt.figure()
+    ax = fig.add_subplot()
+
+    def make_concentric_biconcave(diameter, a):
+        x0 = np.linspace(-diameter/2, diameter/2, 50)
+        x = np.concatenate([x0, x0[::-1]])
+        z0 = biconcave_z(x0, diameter, a)
+        z = np.concatenate([z0, -z0[::-1]])
+        return x, z
+
+    # molecular
+    x1, z1 = make_concentric_biconcave(2, (0.1, 2, 0))
+    # atomic
+    x2, z2 = make_concentric_biconcave(1.95, (0.09, 2, 1))
+    z2 *= 0.9
+    # HII
+    x3, z3 = make_concentric_biconcave(1.9, (0.08, 2, 2))
+    z3 *= 0.8
+    # plasma
+    x4, z4 = make_concentric_biconcave(1.8, (0.07, 2, 2))
+    z4 *= 0.7
+
+    def _filter(x, z, n):
+        z[(x > n) | (x < -n)] = np.nan
+
+    def _filter2(x, z, n, n2):
+        z[((x > n) | (x < -n)) & (z < n2)] = np.nan
+
+
+    color_h2 = marcs_colors[0]
+    color_pdr = marcs_colors[2]
+    color_hii = marcs_colors[1]
+    color_plasma = "Lavender"
+    color_star = "Magenta"
+
+
+    select = 2
+    if select == 1:
+        _filter(x1, z1, 1.6/2)
+        _filter(x2, z2, 1.7/2)
+        _filter(x3, z3, 1.8/2)
+
+        _filter2(x1, z1, 1.05/2, -0.3)
+        _filter2(x2, z2, 1.1/2, -0.3)
+        _filter2(x3, z3, 1.2/2, -0.3)
+
+        # _filter(x4, z4, -1.9)
+
+        ax.axvspan(-0.5, 0.5, color=marcs_colors[0], alpha=0.8)
+        ax.axvspan(-0.1, 0.1, color=marcs_colors[0], alpha=0.9)
+
+    elif select == 2:
+        _filter(x1, z1, 1/2)
+        _filter(x2, z2, 1.05/2)
+        _filter(x3, z3, 1.1/2)
+        _filter(x4, z4, 1.1/2)
+        ax.set_xlim((-1.5, 0.1))
+        cr = 0.1
+        cpos = (-1.1, 0.3)
+        c1 = mpatches.Circle(cpos, cr*1.7, color=color_h2)
+        r1 = mpatches.Rectangle((cpos[0]-cr, cpos[1]), cr*2, cr*3, color=color_h2, alpha=0.8)
+        c2 = mpatches.Circle(cpos, cr*1.5, color=color_pdr)
+        r2_w = mpatches.Rectangle((cpos[0] - cr*2, cpos[1]-2*cr), cr, cr*5, color='w')
+        r3_w = mpatches.Rectangle((cpos[0] + cr*0.5, cpos[1]-2*cr), cr*3, cr*5, color='w')
+        c3 = mpatches.Circle(cpos, cr*1.3, color=color_hii)
+        c4 = mpatches.Circle(cpos, cr*0.9, color=color_plasma)
+        ax.add_patch(c1)
+        ax.add_patch(r1)
+        ax.add_patch(r2_w)
+        ax.add_patch(c2)
+        ax.add_patch(c3)
+        ax.add_patch(r3_w)
+        ax.add_patch(c4)
+        ax.scatter([cpos[0]], [cpos[1]], s=90, marker='*', facecolor=color_star, edgecolor='k')
+
+
+    ax.fill_between(x1, z1, color=color_h2)
+    ax.fill_between(x2, z2, color=color_pdr)
+    ax.fill_between(x3, z3, color=color_hii)
+    ax.fill_between(x4, z4, color=color_plasma)
+
+    # stars
+    rng = np.random.default_rng(seed=77544)
+    star_x = rng.uniform(low=-0.04, high=0.04, size=9)
+    star_y = rng.uniform(low=-0.04, high=0.04, size=9)
+    star_s = (1 - rng.power(2, size=9))*300 + 75
+    print(star_s)
+    ax.scatter(star_x, star_y, s=star_s, marker='*', facecolor=color_star, edgecolor='k')
+
+    ax.set_aspect('equal')
+    ax.set_ylim((-0.53, 0.53))
+    plt.show()
+
+
+
 """
 13 CII
 """
@@ -5899,6 +6097,8 @@ if __name__ == "__main__":
     # peak_T_and_moment_maps_CO(isotope='12', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
     # contours_13cii()
     # spitzer_expansion_plot()
-    ekin_ew_vs_age_plot()
+    # ekin_ew_vs_age_plot()
     # integrate_cii_and_FIR_luminosities()
     # trim_CO_mass_to_CII_grid(velocity_limits=(21*kms, 27*kms))
+    # bubble_geometry()
+    bubble_cross_cut()
