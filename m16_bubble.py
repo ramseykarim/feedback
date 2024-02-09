@@ -2844,11 +2844,11 @@ def sum_chisq_to_get_masked_area_errorbars():
     Average them for the masked area.
     """
     # no args gets the 30 K grid, fine for N19 ring
-    tk = 32
-    # grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
-    grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
-    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; region_label = "N19"
-    # data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; region_label = "BNR"
+    tk = 30
+    grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
+    # grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
+    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; region_label = "N19"
+    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; region_label = "BNR"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     # Identify the measurements to use
     measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
@@ -2881,11 +2881,24 @@ def sum_chisq_to_get_masked_area_errorbars():
             meas = data_df.loc[i, k]
             err = data_df.loc[i, "err_"+k]
             # err = 1
+
+            # Absolute calibration error of 10%
+            abscal_rel = 0.1
+            if 'ratio' in k:
+                # Account for the sum of 2 10%s in the ratio, sqrt(2)*10%
+                abscal_err = np.sqrt(2)*abscal_rel*meas
+            else:
+                abscal_err = abscal_rel*meas
+            print("err/abscal_err", err/abscal_err)
+            err = err + abscal_err
+
             chisq_array += ((meas - grid_arrays[j])/err)**2
         count += 1
     print(f"Using {count} pixel samples")
 
     chisq_array /= np.sum(notnull_mask)
+    # Reduce chisq
+    # no action needed, dof = 1 (3 data - 2 params)
 
     extent = calc_extent(grid_reader.axis_arrays[0]) + calc_extent(grid_reader.axis_arrays[1])
 
@@ -2902,6 +2915,7 @@ def sum_chisq_to_get_masked_area_errorbars():
     solution = [grid_reader.axis_arrays[i][j] for i, j in enumerate(min_loc[::-1])]
     print(solution)
 
+    ax.contour(chisq_array, levels=[1, 2], origin='lower', extent=extent, colors='r')
     ax.contour(chisq_array, levels=[min_chisq*2], origin='lower', extent=extent, colors='white')
     ax.plot(*solution, marker='x', color='red')
 
@@ -2958,9 +2972,377 @@ def sum_chisq_to_get_masked_area_errorbars():
         pass
 
     # plt.show()
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid{tk}{extra_stub}_{region_label}.png"),
-        metadata=catalog.utils.create_png_metadata(title=f"{', '.join(measurement_keys)}",
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid{tk}{extra_stub}_{region_label}_v2_10pct-abs-err.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"+10pct abscal. {', '.join(measurement_keys)}",
             file=__file__, func="sum_chisq_to_get_masked_area_errorbars"))
+    # plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid{tk}{extra_stub}_{region_label}.png"),
+    #     metadata=catalog.utils.create_png_metadata(title=f"no abscal. {', '.join(measurement_keys)}",
+    #         file=__file__, func="sum_chisq_to_get_masked_area_errorbars"))
+
+def individual_pixel_ensemble_chisq():
+    """
+    Feb 9, 2024
+    Getting very close to the defense here, but still doing analysis!...
+    Lee suggested redoing some parts of the CO analysis.
+    Add 10% absolute calibration error, for one
+    Two, try fitting/solving individual pixels for N, n and taking the ensemble
+    stats of the N and n values. See if they agree with the summed chisq.
+    """
+    # no args gets the 30 K grid, fine for N19 ring
+    tk = 30
+    grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
+    # grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
+    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; region_label = "N19"
+    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; region_label = "BNR"
+    data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
+    # Identify the measurements to use
+    measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
+    grid_keys = ["TR_13co_32 / TR_13co_10", "TR_c18o_10", "TR_13co_32"]
+    grid_arrays = [grid_reader.get(k) for k in grid_keys]
+    notnull_mask = None
+
+    abscal_pct = 15
+
+    # Iterate thru measurements once quickly to build the notnull_mask
+    for meas_key in measurement_keys:
+        mask = data_df[meas_key].notnull()
+        if notnull_mask is None:
+            # Establish
+            notnull_mask = mask
+        else:
+            # Add on
+            notnull_mask = notnull_mask & mask
+
+    # notnull_mask = notnull_mask * data_df["column_density_c18o10"].isnull()
+
+
+    # With the completed mask in hand, iterate first through the notnull points
+    # and then through the measurement keys
+    chisq_list = []
+    count = 0
+    for i in data_df.index:
+        if not notnull_mask[i]:
+            # is null, skip
+            continue
+        chisq_array = np.zeros(grid_reader.grid_shape)
+
+        for j, k in enumerate(measurement_keys):
+            meas = data_df.loc[i, k]
+            err = data_df.loc[i, "err_"+k]
+            # err = 1
+
+            # Absolute calibration error of 10%
+            abscal_rel = abscal_pct/100.
+            if 'ratio' in k:
+                # Account for the sum of 2 10%s in the ratio, sqrt(2)*10%
+                abscal_err = np.sqrt(2)*abscal_rel*meas
+            else:
+                abscal_err = abscal_rel*meas
+            # print("err/abscal_err", err/abscal_err)
+            err = err + abscal_err
+
+            chisq_array += ((meas - grid_arrays[j])/err)**2
+        chisq_list.append(chisq_array)
+        count += 1
+    print(f"Using {count} pixel samples")
+    print(f"Len of chisq list {len(chisq_list)}")
+
+    # chisq_array /= np.sum(notnull_mask)
+    # Reduce chisq
+    # no action needed, dof = 1 (3 data - 2 params)
+
+    def _describe_error_ellipse(chi_squared_array):
+        """
+        Given a 2d reduced chisq array, describe the chisq<1 error ellipse.
+        Return (x0,x1, y0,y1) where x and y are the grid_reader.axis_array values
+        """
+        good_locations = np.where(chi_squared_array < 1)
+        xs, ys = [grid_reader.axis_arrays[param_select][coord_idxs] for param_select, coord_idxs in enumerate(good_locations[::-1])]
+        if len(xs) > 0:
+            return (np.min(xs), np.max(xs), np.min(ys), np.max(ys))
+        else:
+            return (np.nan,)*4
+
+    """ Fit each pixel's chisq grid """
+
+    extent = calc_extent(grid_reader.axis_arrays[0]) + calc_extent(grid_reader.axis_arrays[1])
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = plt.subplot(211)
+    # im = ax.imshow(np.log10(np.mean(chisq_list, axis=0)), origin='lower', extent=extent)
+    im = ax.imshow(np.log10(np.mean(chisq_list, axis=0)), origin='lower', extent=extent)
+
+    soln_x_arr = []
+    soln_y_arr = []
+    min_chisq_arr = []
+    errorbars_arr = []
+    for arr in chisq_list:
+        ax.contour(arr, levels=[1], colors='w', origin='lower', extent=extent, alpha=0.2)
+        min_chisq = np.min(arr)
+        min_chisq_arr.append(min_chisq)
+        min_loc = np.where(arr==min_chisq)
+        solution_x, solution_y = [grid_reader.axis_arrays[i][j] for i, j in enumerate(min_loc[::-1])]
+        soln_x_arr.append(solution_x)
+        soln_y_arr.append(solution_y)
+        # Estimate error bars using chisq < 1
+        errorbars_arr.append(_describe_error_ellipse(arr))
+
+    # sc = ax.scatter(soln_x_arr, soln_y_arr, c=min_chisq_arr, vmin=0, vmax=3, alpha=0.7, cmap='jet')
+    soln_x_arr = np.array(soln_x_arr).ravel()
+    soln_y_arr = np.array(soln_y_arr).ravel()
+
+    x0, x1, y0, y1 = np.array(list(zip(*errorbars_arr)))
+    x0 = soln_x_arr - x0
+    x1 = x1 - soln_x_arr
+    y0 = soln_y_arr - y0
+    y1 = y1 - soln_y_arr
+    ax.errorbar(soln_x_arr, soln_y_arr, xerr=[x0, x1], yerr=[y0, y1], color='cyan', alpha=0.5, linestyle='none', capsize=6, marker='o')
+
+    fig.colorbar(im, ax=ax)
+
+    ax = plt.subplot(223)
+    hvals, _, _ = ax.hist(soln_x_arr)
+    ax.plot([np.mean(soln_x_arr)], [np.max(hvals)*1.1], marker='+', color='k')
+    ax.plot([np.median(soln_x_arr)], [np.max(hvals)*1.1], marker='x', color='k')
+    lo, hi = misc_utils.flquantiles(soln_x_arr, 6)
+    ax.plot([lo, hi], [[np.max(hvals)*1.1]]*2, color='g', alpha=0.4)
+    ax = plt.subplot(224)
+    ax.hist(soln_y_arr)
+
+    plt.show()
+    return
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"test_individual_pix_chisq_grid{tk}{extra_stub}_{region_label}_abscal{abscal_pct}.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"+{abscal_pct}pct abscal. {', '.join(measurement_keys)}",
+            file=__file__, func="individual_pixel_ensemble_chisq"))
+
+    return
+
+    min_chisq = np.min(chisq_array)
+    min_loc = np.where(chisq_array==min_chisq)
+    print(min_chisq)
+    print(min_loc)
+
+    solution = [grid_reader.axis_arrays[i][j] for i, j in enumerate(min_loc[::-1])]
+    print(solution)
+
+    ax.contour(chisq_array, levels=[1, 2], origin='lower', extent=extent, colors='r')
+    ax.contour(chisq_array, levels=[min_chisq*2], origin='lower', extent=extent, colors='white')
+    ax.plot(*solution, marker='x', color='red')
+
+    # Find the row and column indices for the solution. min_loc is ij indexed
+    cd_min_loc, n_min_loc = [x.item() for x in min_loc]
+
+    ax = plt.subplot(223)
+    # Find the constant cd, varying n chisq curve
+    chisq_curve = chisq_array[cd_min_loc, :]
+    chisq_curve = (chisq_curve - min_chisq*2)*-1
+    print(chisq_curve)
+    xaxis = grid_reader.axis_arrays[0]
+    plt.plot(xaxis, chisq_curve, marker='x')
+    try:
+        spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
+        x0, x1 = spline.roots()
+        plt.axvline(x0, color='k')
+        plt.axvline(x1, color='k')
+        xresamp = np.linspace(x0, x1, 50)
+        plt.plot(xresamp, spline(xresamp))
+        plt.ylim((0, min_chisq*1.3))
+        print(grid_reader.axis_keys[0])
+        xsoln = xaxis[n_min_loc]
+        elo, ehi = xsoln-x0, x1-xsoln
+        print(elo, ehi)
+        xe = (elo + ehi)/2
+        plt.errorbar([xsoln], [min_chisq*1.1], xerr=xe)
+    except:
+        pass
+
+
+    ax = plt.subplot(224)
+    # Find the constant cd, varying n chisq curve
+    chisq_curve = chisq_array[:, n_min_loc]
+    chisq_curve = (chisq_curve - min_chisq*2)*-1
+    print(chisq_curve)
+    xaxis = grid_reader.axis_arrays[1]
+    plt.plot(xaxis, chisq_curve, marker='x')
+    try:
+        spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
+        x0, x1 = spline.roots()
+        plt.axvline(x0, color='k')
+        plt.axvline(x1, color='k')
+        xresamp = np.linspace(x0, x1, 50)
+        plt.plot(xresamp, spline(xresamp))
+        plt.ylim((0, min_chisq*1.3))
+        print(grid_reader.axis_keys[1])
+        xsoln = xaxis[cd_min_loc]
+        elo, ehi = xsoln-x0, x1-xsoln
+        print(elo, ehi)
+        xe = (elo + ehi)/2
+        plt.errorbar([xsoln], [min_chisq*1.1], xerr=xe)
+    except:
+        pass
+
+    # plt.show()
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"individual_pix_chisq_grid{tk}{extra_stub}_{region_label}.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"+{abscal_pct}pct abscal. {', '.join(measurement_keys)}",
+            file=__file__, func="individual_pixel_ensemble_chisq"))
+
+def unified_chisq_plotting_system(region_label="N19"):
+    """
+    Feb 9, 2024
+    Going to go a little code-heavy here to make these plots easy to reproduce
+    and compare between
+    The idea is to have a common data loading and plot formatting framework, but
+    to separate the actual plotting and analysis into two blocks of code in an
+    "if" statement or two separate functions or something.
+    This is meant to combine sum_chisq_to_get_masked_area_errorbars() and
+    individual_pixel_ensemble_chisq()
+    Oh maybe we can just combine the two methods entirely.. let's try the separate
+    plots first to see how close the answers are
+
+    For the 1d histograms on the sides, I referenced like 7 year old code lol
+    helpss.analyze_manticore.setup_scaHist()
+    There, I use the plt.axes() Axes constructor which can use a `rect` box
+    argument [x0 y0 dx dy] where the x0 and y0 define the bottom left corner
+    Continued in today's notes 2024-02-09
+    """
+    # no args gets the 30 K grid, fine for N19 ring
+    tk = 30
+    grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
+    # grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
+    if region_label == "N19":
+        data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv" # N19
+    elif region_label == "BNR":
+        data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv" # BNR
+    else:
+        raise RuntimeError(f"unknown region label {region_label}")
+    data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
+    # Identify the measurements to use
+    measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
+    grid_keys = ["TR_13co_32 / TR_13co_10", "TR_c18o_10", "TR_13co_32"]
+    grid_arrays = [grid_reader.get(k) for k in grid_keys]
+    # Set absolute calibration percentage
+    abscal_pct = 15
+
+    """ """
+    select_method = "SUM" # SUM or PIXEL
+
+    # Iterate thru measurements once quickly to build the notnull_mask
+    notnull_mask = None
+    for meas_key in measurement_keys:
+        mask = data_df[meas_key].notnull()
+        if notnull_mask is None:
+            # Establish
+            notnull_mask = mask
+        else:
+            # Add on
+            notnull_mask = notnull_mask & mask
+
+    # Make figure and define Axes
+    fig = plt.figure(figsize=(10, 8))
+    # Bottom and left edge of center Axes and full Axes width
+    # Define the rectangle arguments for the plots
+    anchor, width = 0.1, 0.62
+    # Bottom or left edge of side Axes and thin side Axes width
+    anchor_sideplot = 1.03
+    width_sideplot = 0.3
+
+    rect_center = [anchor]*2 + [width]*2
+    ax_center = fig.add_axes(rect_center)
+
+    # Define the hist axes using inset_axes
+    ax_x = ax_center.inset_axes([0, anchor_sideplot, 1, width_sideplot], sharex=ax_center)
+    ax_y = ax_center.inset_axes([anchor_sideplot+0.2, 0, width_sideplot, 1], sharey=ax_center)
+
+    ax_x.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+    ax_y.tick_params(axis='y', which='both', left=False, labelleft=False)
+
+    # # rect_x is along the top, and shares the x axis with the center
+    # rect_x = [axes_anchor, axes_anchor_sideplot, axes_width, 0.22]
+    # rect_y = [axes_anchor_sideplot, axes_anchor, 0.2, axes_width]
+    # ax_x = fig.add_axes(rect_x, sharex=ax_center)
+    # ax_y = fig.add_axes(rect_y, sharey=ax_center)
+    # For the central image
+    extent = calc_extent(grid_reader.axis_arrays[0]) + calc_extent(grid_reader.axis_arrays[1])
+    # Colorbar as another Axes. This rect is defined w.r.t. the center Axes
+    rect_cbar = [1.005, 0, 0.05, 1]
+    cbar_ax = ax_center.inset_axes(rect_cbar)
+
+
+    # Some helper functions
+    def _describe_error_ellipse(chi_squared_array, cutoff="1"):
+        """
+        Given a 2d reduced chisq array, describe the chisq<1 error ellipse.
+        :param cutoff: string "1" or "2x"
+            "1" means chisq < 1
+            "2x" means chisq < 2*min(chisq)
+        Return (x0,x1, y0,y1) where x and y are the grid_reader.axis_array values
+        """
+        if cutoff == "1":
+            cutoff_number = 1
+        elif cutoff == "2x":
+            cutoff_number = 2*np.min(chi_squared_array)
+        good_locations = np.where(chi_squared_array < 1)
+        xs, ys = [grid_reader.axis_arrays[param_select][coord_idxs] for param_select, coord_idxs in enumerate(good_locations[::-1])]
+        if len(xs) > 0:
+            return (np.min(xs), np.max(xs), np.min(ys), np.max(ys))
+        else:
+            return (np.nan,)*4
+
+    def _find_chisq_min(chi_squared_array):
+        """
+        Given 2d X2/dof, find location of minimum in data (parameter) coordinates
+        Return (x, y)
+        """
+        min_chisq = np.min(chi_squared_array)
+        min_loc = np.where(chi_squared_array == min_chisq)
+        solution_x, solution_y = [grid_reader.axis_arrays[param_select][coord_idx] for param_select, coord_idx in enumerate(min_loc[::-1])]
+        return solution_x, solution_y
+
+    def _chisq_iter_over_pixels():
+        """
+        Generator function. Good for either of the methods.
+        On each next() call, yields the chisq array for a single pixel (all measurements)
+        """
+        for i in data_df.index:
+            if not notnull_mask[i]:
+                # is null, skip
+                continue
+            # Make empty chisq array for this pixel
+            chisq_array = np.zeros(grid_reader.grid_shape)
+            for j, k in enumerate(measurement_keys):
+                meas = data_df.loc[i, k]
+                err = data_df.loc[i, "err_"+k]
+                # err = 1
+
+                # Absolute calibration error of some % close to 10
+                abscal_rel = abscal_pct/100.
+                if 'ratio' in k:
+                    # Account for the sum of 2 10%s in the ratio, sqrt(2)*10%
+                    abscal_err = np.sqrt(2)*abscal_rel*meas
+                else:
+                    abscal_err = abscal_rel*meas
+                # print("err/abscal_err", err/abscal_err)
+                # Add statistical and systematic error estimates
+                err = err + abscal_err
+
+                chisq_array += ((meas - grid_arrays[j])/err)**2
+            yield chisq_array
+
+
+    if select_method == "SUM":
+        """ Sum the chisqs """
+        chisq_list = [x for x in _chisq_iter_over_pixels()]
+        count = len(chisq_list)
+        chisq_sum = np.sum(chisq_list, axis=0)
+        del chisq_list
+        print(f"Using {count} pixels for region {region_label}")
+        solution_x, solution_y = _find_chisq_min(chisq_sum)
+        im = ax_center.imshow(np.log10(chisq_sum), origin='lower', extent=extent, cmap='viridis')
+        cbar = fig.colorbar(im, cax=cbar_ax, label="log$_10 \\chi^2 / {\\rm dof}$")
+
+    plt.show()
+
+
 
 def print_out_particle_mass_for_rho():
     """
@@ -5409,6 +5791,9 @@ def ekin_ew_vs_age_plot():
         metadata=catalog.utils.create_png_metadata(title="from Xanders 2024-01-23 email",
             file=__file__, func="ekin_ew_vs_age_plot"))
 
+"""
+Bubble diagram stuff
+"""
 
 def bubble_geometry():
     """
@@ -5494,7 +5879,7 @@ def bubble_geometry():
             file=__file__, func="bubble_geometry"))
 
 
-def bubble_cross_cut():
+def bubble_cross_cut(**kwargs):
     """
     February 1, 2024
     Try to make the shell cross cut diagram in matplotlib with fill-between
@@ -5513,11 +5898,8 @@ def bubble_cross_cut():
         second = a[0] + a[1]*rd2 + a[2]*(rd2**2)
         return first*second
 
-    fig = plt.figure()
-    ax = fig.add_subplot()
-
     def make_concentric_biconcave(diameter, a):
-        x0 = np.linspace(-diameter/2, diameter/2, 50)
+        x0 = np.linspace(-diameter/2, diameter/2, 100)
         x = np.concatenate([x0, x0[::-1]])
         z0 = biconcave_z(x0, diameter, a)
         z = np.concatenate([z0, -z0[::-1]])
@@ -5541,70 +5923,283 @@ def bubble_cross_cut():
     def _filter2(x, z, n, n2):
         z[((x > n) | (x < -n)) & (z < n2)] = np.nan
 
+    def _arrow_dxdy(length, angle_deg):
+        """ Return dx, dy from length, angle. Angle in float degrees """
+        dx = length * np.cos(np.deg2rad(angle_deg))
+        dy = length * np.sin(np.deg2rad(angle_deg))
+        return dx, dy
+
+    general_arrow_kwargs = dict(zorder=10, width=0.008, head_width=0.05)
 
     color_h2 = marcs_colors[0]
+    color_h2_preex = "SlateGray"
+    color_h2_preex_alt = "DarkSlateGray"
     color_pdr = marcs_colors[2]
-    color_hii = marcs_colors[1]
+    color_hii = "Moccasin"
+    color_hii_alt = "Goldenrod"
     color_plasma = "Lavender"
-    color_star = "Magenta"
+    color_plasma_alt = "MediumPurple"
+    color_star = "Turquoise"
+
+    """ """
+    select = kwargs.get("select", 2)
+    """ """
+
+    if select == 2:
+        fig = plt.figure(figsize=(14, 8))
+    else:
+        fig = plt.figure(figsize=(14, 8))
+    ax = fig.add_subplot()
+
+    ax.set_xlim((-1.15, 1.15))
+    ax.set_ylim((-0.53, 0.53))
+    ax.axvspan(-0.5, 0.5, color=color_h2_preex, alpha=0.8, zorder=0)
+    ax.axvspan(-0.1, 0.1, color=color_h2_preex, alpha=1, zorder=0)
+
+    if select == 0:
+        phases = {"Molecular Gas Shell (T $\sim 30$ K)": color_h2, "Atomic PDR Shell (T $\sim 100$ K)": color_pdr, "Photoionized H II (T $\sim 10^4$ K)": color_hii_alt, "Shocked Wind Plasma (T $\sim 10^6$ K)": color_plasma_alt, "Pre-existing Molecular Filament (T $\lesssim 30$ K)": color_h2_preex_alt,}
+        for i, p in enumerate(phases):
+            ax.text(0.12, 0.625 - 0.05*i, p, color=phases[p], fontsize=16, transform=ax.transAxes, zorder=11, ha='left', va='center')
 
 
-    select = 2
-    if select == 1:
+
+        # Compass
+        if False:
+            # Compass in data coords
+            ax.arrow(1.05, -0.48, *_arrow_dxdy(0.1, 90), width=0.005, color='k', zorder=11)
+            ax.arrow(1.05, -0.48, *_arrow_dxdy(0.1, 180), width=0.005, color='k', zorder=11)
+            # ax.text(1.05, -0.48+0.15, 'g lat', color='k', fontsize=12, zorder=11, ha='center', va='center')
+            # ax.text(1.05-0.15, -0.48, 'g lon', color='k', fontsize=12, zorder=11, ha='center', va='center')
+            ax.text(1.05+0.04, -0.48+0.12, 'g lat', color='k', fontsize=12, zorder=11, ha='center', va='center')
+            ax.text(1.05-0.1, -0.48+0.02, 'g lon', color='k', fontsize=12, zorder=11, ha='center', va='center')
+        else:
+            # Compass in figure inches coords
+            fx, fy = fig.get_size_inches()
+            compass_pad = 0.3 # inches
+            compass_len = 0.7
+            compass_text_pad = 0.12
+            up_arrow = mpatches.Arrow(fx - compass_pad, compass_pad, *_arrow_dxdy(compass_len, 90), width=0.1, color='k', zorder=11, transform=fig.dpi_scale_trans)
+            left_arrow = mpatches.Arrow(fx - compass_pad, compass_pad, *_arrow_dxdy(compass_len, 180), width=0.1, color='k', zorder=11, transform=fig.dpi_scale_trans)
+            fig.add_artist(up_arrow)
+            fig.add_artist(left_arrow)
+            fig.text(fx - compass_pad, compass_pad + compass_len + compass_text_pad, 'g lat', color='k', fontsize=12, zorder=11, ha='center', va='center', transform=fig.dpi_scale_trans)
+            fig.text(fx - compass_pad - compass_len + compass_text_pad, compass_pad + compass_text_pad, 'g lon', color='k', fontsize=12, zorder=11, ha='center', va='center', transform=fig.dpi_scale_trans)
+
+
+
+
+    elif select == 1:
         _filter(x1, z1, 1.6/2)
-        _filter(x2, z2, 1.7/2)
-        _filter(x3, z3, 1.8/2)
+        # _filter(x2, z2, 1.95/2)
+        # _filter(x3, z3, 1.95/2)
 
-        _filter2(x1, z1, 1.05/2, -0.3)
-        _filter2(x2, z2, 1.1/2, -0.3)
-        _filter2(x3, z3, 1.2/2, -0.3)
+        _filter2(x1, z1, 1.05/2, 0)
+        _filter2(x2, z2, 1.1/2, 0)
+        _filter2(x3, z3, 1.2/2, 0)
 
         # _filter(x4, z4, -1.9)
 
-        ax.axvspan(-0.5, 0.5, color=marcs_colors[0], alpha=0.8)
-        ax.axvspan(-0.1, 0.1, color=marcs_colors[0], alpha=0.9)
+        arrow_kwargs = dict(color=color_plasma_alt, **general_arrow_kwargs)
+        for xsign in (-1, 1):
+            ax.arrow(-0.87*xsign, -0.1, *_arrow_dxdy(0.1, 270-(xsign*75)), **arrow_kwargs)
+            ax.arrow(-0.84*xsign, -0.24, *_arrow_dxdy(0.1, 270-(xsign*50)), **arrow_kwargs)
+            ax.arrow(-0.69*xsign, -0.31, *_arrow_dxdy(0.1, 270-(xsign*20)), **arrow_kwargs)
+
+        los_arrow_kwargs = dict(**general_arrow_kwargs)
+        los_arrow_kwargs["width"] = los_arrow_kwargs["width"]*0.7
+        los_arrow_kwargs["head_width"] = los_arrow_kwargs["width"]*4
+        ax.arrow(-1.08, 0.3, 2.16, 0, **los_arrow_kwargs, color='k')
+
+        los_crossing_positions = [-0.92, -0.47, 0.47, 0.92]
+        for i, lcp in enumerate(los_crossing_positions):
+            ax.add_patch(mpatches.Circle((lcp, 0.3), 0.07, edgecolor='k', linestyle='--', linewidth=2, facecolor='none', zorder=11))
+            ax.text(lcp-0.02, 0.32, f"{i+1}", color='k', fontsize=16, fontweight='bold', ha='center', va='center', zorder=11)
 
     elif select == 2:
-        _filter(x1, z1, 1/2)
-        _filter(x2, z2, 1.05/2)
-        _filter(x3, z3, 1.1/2)
-        _filter(x4, z4, 1.1/2)
-        ax.set_xlim((-1.5, 0.1))
-        cr = 0.1
-        cpos = (-1.1, 0.3)
-        c1 = mpatches.Circle(cpos, cr*1.7, color=color_h2)
-        r1 = mpatches.Rectangle((cpos[0]-cr, cpos[1]), cr*2, cr*3, color=color_h2, alpha=0.8)
-        c2 = mpatches.Circle(cpos, cr*1.5, color=color_pdr)
-        r2_w = mpatches.Rectangle((cpos[0] - cr*2, cpos[1]-2*cr), cr, cr*5, color='w')
-        r3_w = mpatches.Rectangle((cpos[0] + cr*0.5, cpos[1]-2*cr), cr*3, cr*5, color='w')
-        c3 = mpatches.Circle(cpos, cr*1.3, color=color_hii)
-        c4 = mpatches.Circle(cpos, cr*0.9, color=color_plasma)
-        ax.add_patch(c1)
+        # _filter(x1, z1, 1/2)
+        # _filter(x2, z2, 1.05/2)
+        # _filter(x3, z3, 1.1/2)
+        # _filter(x4, z4, 1.1/2)
+        # ax.set_xlim((-1.5, 0.1))
+        # ax.set_xlim((-0.4, 0.05))
+        ax.set_xlim((-0.533, 0.183))
+        ax.set_ylim((-0.205, 0.205))
+        cr = 0.05 # "Center radius" except  none of these numbers actually use it unmodified.
+        # cpos = (-1.1, 0.3)
+        cpos = (-0.28, 0.08)
+        # c1 = mpatches.Circle(cpos, cr*1.7, color=color_h2, zorder=6)
+        # Use wedges to show partial rings
+        # Bottom wedge first. Use the old rectangle displacement (x = -cr, +cr) to find wedge theta limits
+        # Get relative theta to the horizontal (need to modify it more). use degrees, it's what wedge uses
+        theta_relative = np.rad2deg(np.arccos(1/1.7))*0.9 # cr / cr*1.7, where cr*1.7 is the outer radius of the wedge. Decrement it by a little so that it wraps around the rectangle properly
+        w1_lo = mpatches.Wedge(cpos, cr*1.7, theta1=(180+theta_relative), theta2=(360-theta_relative), color=color_h2, zorder=7)
+        w1_hi = mpatches.Wedge(cpos, cr*1.7, theta1=theta_relative, theta2=(180-theta_relative), color=color_h2, zorder=7)
+        r1 = mpatches.Rectangle((cpos[0]-cr, cpos[1]+cr*1.3), cr*2, cr*3, color=color_h2_preex, alpha=1, zorder=6)
         ax.add_patch(r1)
-        ax.add_patch(r2_w)
-        ax.add_patch(c2)
-        ax.add_patch(c3)
-        ax.add_patch(r3_w)
+        ax.add_patch(w1_lo)
+        ax.add_patch(w1_hi)
+
+        # r2_w = mpatches.Rectangle((cpos[0] - cr*2, cpos[1]-2*cr), cr, cr*5, color='w', zorder=8)
+        # c2 = mpatches.Circle(cpos, cr*1.5, color=color_pdr, zorder=9)
+        w2 = mpatches.Wedge(cpos, cr*1.5, color=color_pdr, theta1=theta_relative, theta2=(360-theta_relative), zorder=9)
+        # c3 = mpatches.Circle(cpos, cr*1.3, color=color_hii, zorder=10)
+        w3 = mpatches.Wedge(cpos, cr*1.3, color=color_hii, theta1=theta_relative, theta2=(360-theta_relative), zorder=10)
+        # r3_w = mpatches.Rectangle((cpos[0] + cr*0.5, cpos[1]-2*cr), cr*3, cr*5, color='w', zorder=11)
+        # ax.add_patch(r2_w)
+        ax.add_patch(w2)
+        ax.add_patch(w3)
+        # ax.add_patch(r3_w)
+
+        c4 = mpatches.Circle(cpos, cr*0.9, color=color_plasma, zorder=12)
         ax.add_patch(c4)
-        ax.scatter([cpos[0]], [cpos[1]], s=90, marker='*', facecolor=color_star, edgecolor='k')
+
+        ax.scatter([cpos[0]], [cpos[1]], s=90, marker='*', facecolor=color_star, edgecolor='k', zorder=13)
+
+        # scale bar with "broken" thing
+        # px implies "point x", idk, i just need to use something different than x1 because I have arrays named that
+        px0 = cpos[0]
+        px1 = 0
+        xlen = px1-px0
+        xlo, xhi = px0 + xlen*0.4, px0 + xlen*0.6
+        y = [-cpos[1]]*2
+        scalebar_kwargs = dict(color='k', linewidth=2, zorder=13)
+        ax.plot([px0, xlo], y, **scalebar_kwargs)
+        ax.plot([xhi, px1], y, **scalebar_kwargs)
+        dy = 0.01
+        for x in [px0, px1]:
+            ax.plot([x, x], [y[0]-dy, y[0]+dy], **scalebar_kwargs)
+        dx1 = 0.004 # put slashes at an angle
+        dx2 = 0.0005 # correction for a visual bug
+        dy = 0.006
+        for x in [xlo, xhi]:
+            ax.plot([x-dx1+dx2, x+dx1+dx2], [y[0]-dy, y[0]+dy], **scalebar_kwargs)
+        ax.text(px0 + 0.5*xlen, y[0], "d = ?", color='k', fontsize=14, fontweight='bold', ha='center', va='center', zorder=13)
+
+    if select > 0:
+        # fx, fy = fig.get_size_inches()
+        los_line_pad = 0.3 # inches
+        los_line_len = 1.5
+        los_line_text_pad = 0.12
+        los_line_arrow = mpatches.Arrow(los_line_pad, los_line_pad, los_line_len, 0, width=0.15, color='k', zorder=11, transform=fig.dpi_scale_trans)
+        fig.add_artist(los_line_arrow)
+        fig.text(los_line_pad, los_line_pad + los_line_text_pad, 'Observer LOS', color='k', fontsize=12, zorder=11, ha='left', va='center', transform=fig.dpi_scale_trans)
 
 
-    ax.fill_between(x1, z1, color=color_h2)
-    ax.fill_between(x2, z2, color=color_pdr)
-    ax.fill_between(x3, z3, color=color_hii)
-    ax.fill_between(x4, z4, color=color_plasma)
+    ax.fill_between(x1, z1, color=color_h2, zorder=1)
+    ax.fill_between(x2, z2, color=color_pdr, zorder=2)
+    ax.fill_between(x3, z3, color=color_hii, zorder=3)
+    ax.fill_between(x4, z4, color=color_plasma, zorder=4)
 
     # stars
     rng = np.random.default_rng(seed=77544)
     star_x = rng.uniform(low=-0.04, high=0.04, size=9)
     star_y = rng.uniform(low=-0.04, high=0.04, size=9)
     star_s = (1 - rng.power(2, size=9))*300 + 75
-    print(star_s)
-    ax.scatter(star_x, star_y, s=star_s, marker='*', facecolor=color_star, edgecolor='k')
+    ax.scatter(star_x, star_y, s=star_s, marker='*', facecolor=color_star, edgecolor='k', zorder=13)
 
     ax.set_aspect('equal')
-    ax.set_ylim((-0.53, 0.53))
-    plt.show()
+    ax.axis('off')
+    fig.subplots_adjust(top=1, bottom=0, left=0, right=1)
+    # plt.show()
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_crosscut_{select}.png"),
+        metadata=catalog.utils.create_png_metadata(title="largest shell D=2 a=(0.1, 2, 0)",
+            file=__file__, func="bubble_cross_cut"))
+
+def fake_bubble_spectra():
+    """
+    Feb 4, 2024
+    Demonstrate the spectra through the bubble_cross_cut() diagram
+    Put next to the real CII spectra from the western cavity, like
+    m16_pictures_2.m16_expanding_shell_spectra.
+    Those regions are in catalogs/m16_west_cavity_spec_regions.reg
+    """
+    reg_filename_short = "catalogs/m16_west_cavity_spec_regions.reg"
+    savename_stub = "west_cavity_3am_circles"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+
+    # Fig
+    fig = plt.figure(figsize=(16, 9))
+    # Axes
+    gs = fig.add_gridspec(1, 2)
+    img_axes = []
+    # Load cube
+    line_stub = "cii"
+    fn = get_map_filename(line_stub)
+    cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
+    co_cube_obj = cube_utils.CubeData(get_map_filename("12co32")).convert_to_K().convert_to_kms()
+    # Reference contour moment image
+    if True:
+        # Model spectra
+        gmid_1 = cps2.models.Gaussian1D()
+        gmid_2 = cps2.models.Gaussian1D()
+        x = np.linspace(-8, 8, 100)
+        ymid_1 = gmid_1(x)
+        ymid_2 = gmid_2(x)
+        gr = cps2.models.Gaussian1D(mean=4)
+        gb = cps2.models.Gaussian1D(mean=-4)
+        yr = gr(x)
+        yb = gb(x)
+        ytot = ymid_1 + ymid_2 + yr + yb
+        dy = 1.5
+        model_ax = fig.add_subplot(gs[0, 0])
+        model_ax.plot(x, yb + dy*-2, color='b', linestyle=':')
+        model_ax.plot(x, ymid_1 + dy*-1, color='green', linestyle=':')
+        model_ax.plot(x, ymid_2 + dy*1, color='green', linestyle=':')
+        model_ax.plot(x, yr + dy*2, color='r', linestyle=':')
+        model_ax.plot(x, ytot-dy*0.3, color='k', linestyle='-', linewidth=2)
+        model_ax.spines[['top', 'right', 'left']].set_visible(False)
+        model_ax.tick_params(axis='both', which='both', bottom=False, left=False, labelleft=False)
+        model_ax.set_xticks([-7, 7], labels=["Low velocity", "High velocity"])
+
+        for i, j in enumerate([-2, -1, 1, 2]):
+            model_ax.text(-8.3, dy*j, f"{i+1}", fontsize=15, color='k', fontweight='bold', ha='right', va='center')
+
+
+    def _norm_spectrum(spec):
+        return spec/np.nanmax(spec)
+
+    if True:
+        # Observed spectra
+        spec_ax = fig.add_subplot(gs[0, 1])
+        subcube = cube_obj.data.subcube_from_regions(reg_list)
+        spectrum = subcube.mean(axis=(1, 2))
+        spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color='k', linewidth=3, label='Both circles')
+        reg_labels = ["South circle", "North circle"]
+        for j, reg in enumerate(reg_list):
+            subcube = cube_obj.data.subcube_from_regions([reg])
+            spectrum = subcube.mean(axis=(1, 2))
+            spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), linewidth=1, linestyle=':', color=marcs_colors[1-j], label=reg_labels[j])
+        # Get full avg spec above 6 K
+        spectrum = cube_obj.data.mean(axis=(1, 2))
+        coeff = 3
+        spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color="grey", linewidth=3, linestyle='-.', label=f"Entire field average")
+
+        # Grab the blueshifted clump spectra
+        reg_filename_short_bc = "catalogs/m16_points_blueshifted_clump.reg"
+        reg_list_bc = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short_bc))
+
+        def _plot_blue_clump_spec(cube_object):
+            pixreg = reg_list_bc[1].to_pixel(cube_object.wcs_flat)
+            j, i = [int(round(c)) for c in pixreg.center.xy]
+            spectrum = cube_object.data[:, i, j]
+            return cube_object.data.spectral_axis.to_value(), spectrum.to_value()
+
+        coeff = 4
+        x, y = _plot_blue_clump_spec(co_cube_obj)
+        green_mask = (x > 16) & (x < 23)
+        y[green_mask] = np.nan
+        spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'CO, blue clump')
+        x, y = _plot_blue_clump_spec(cube_obj)
+        spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[1], linestyle='--', linewidth=1.5, label=f'blue clump')
+
+        spec_ax.axhline(0, color='grey', linestyle="--", alpha=0.2)
+        spec_ax.set_xlabel("V$_{\\rm LSR}$ " + f"({kms.to_string('latex_inline')})")
+        spec_ax.set_ylabel(f"{get_data_name(line_stub)} line intensity ({spectrum.unit.to_string('latex_inline')})")
+        spec_ax.set_xlim((-4, 49))
+        spec_ax.set_ylim((-0.4, 1.1))
+        spec_ax.legend(loc="lower right", ncol=2)
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"expanding_shell_diagram_spectrum.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short} {reg_filename_short_bc}", file=__file__, func="fake_bubble_spectra"))
 
 
 
@@ -5943,7 +6538,10 @@ if __name__ == "__main__":
     #             print(f"Exception from {line}", vs)
     #             print(e)
     #             print("ignoring and continuing")
-    # save_moment0(line_stub='12co32', velocity_limits=(15*kms, 21*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='cii-30', velocity_limits=(6*kms, 11*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='cii-30', velocity_limits=(15*kms, 30*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='cii-30', velocity_limits=(21*kms, 27*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='cii-30', velocity_limits=(35*kms, 40*kms), cutout_reg_stub=None)
 
 
     """ Comparing 8micron and CII """
@@ -6056,6 +6654,8 @@ if __name__ == "__main__":
     # scatter_radex_grid()
     # calc_mass_from_masked_data()
     # sum_chisq_to_get_masked_area_errorbars()
+    unified_chisq_plotting_system()
+    # individual_pixel_ensemble_chisq()
     # print_out_particle_mass_for_rho()
 
     # calculate_cii_column_density_detection_threshold()
@@ -6101,4 +6701,5 @@ if __name__ == "__main__":
     # integrate_cii_and_FIR_luminosities()
     # trim_CO_mass_to_CII_grid(velocity_limits=(21*kms, 27*kms))
     # bubble_geometry()
-    bubble_cross_cut()
+    # bubble_cross_cut(select=1)
+    # fake_bubble_spectra()
