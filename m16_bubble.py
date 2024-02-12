@@ -1817,6 +1817,20 @@ def sample_masked_map(region_name='N19'):
         print(mass)
 
 
+    save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
+
+    if False:
+        # Save mask to FITS for later reference
+        mask_float = mask.astype(float)
+        hdr = mask_wcs.to_header()
+        hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+        hdr['CREATOR'] = f"Ramsey, {__file__}.sample_masked_map"
+        hdr['COMMENT'] = f"Using PMO grid and beam"
+        hdu = fits.PrimaryHDU(data=mask_float, header=hdr)
+        save_mask_name = f"sample_mask_{region_name}_{vel_stub_simple}_regrid_mask.fits"
+        hdu.writeto(os.path.join(save_df_path, save_mask_name), overwrite=False)
+        print("Wrote to ", save_mask_name)
+
 
 
     if True:
@@ -1841,7 +1855,6 @@ def sample_masked_map(region_name='N19'):
 
         result_df = pd.DataFrame(lookup_obj.sample_all_data())
 
-        save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
         assert os.path.exists(save_df_path)
         save_df_name = f"sample_mask_{region_name}_{vel_stub_simple}_vals_regrid.csv"
         save_df_full_path = os.path.join(save_df_path, save_df_name)
@@ -2847,8 +2860,8 @@ def sum_chisq_to_get_masked_area_errorbars():
     tk = 30
     grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
     # grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
-    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; region_label = "N19"
-    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; region_label = "BNR"
+    data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; region_label = "N19"
+    # data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; region_label = "BNR"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     # Identify the measurements to use
     measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
@@ -2889,7 +2902,7 @@ def sum_chisq_to_get_masked_area_errorbars():
                 abscal_err = np.sqrt(2)*abscal_rel*meas
             else:
                 abscal_err = abscal_rel*meas
-            print("err/abscal_err", err/abscal_err)
+            # print("err/abscal_err", err/abscal_err)
             err = err + abscal_err
 
             chisq_array += ((meas - grid_arrays[j])/err)**2
@@ -3109,84 +3122,14 @@ def individual_pixel_ensemble_chisq():
     ax = plt.subplot(224)
     ax.hist(soln_y_arr)
 
-    plt.show()
-    return
+    # plt.show()
+    # return
     plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"test_individual_pix_chisq_grid{tk}{extra_stub}_{region_label}_abscal{abscal_pct}.png"),
         metadata=catalog.utils.create_png_metadata(title=f"+{abscal_pct}pct abscal. {', '.join(measurement_keys)}",
             file=__file__, func="individual_pixel_ensemble_chisq"))
 
-    return
 
-    min_chisq = np.min(chisq_array)
-    min_loc = np.where(chisq_array==min_chisq)
-    print(min_chisq)
-    print(min_loc)
-
-    solution = [grid_reader.axis_arrays[i][j] for i, j in enumerate(min_loc[::-1])]
-    print(solution)
-
-    ax.contour(chisq_array, levels=[1, 2], origin='lower', extent=extent, colors='r')
-    ax.contour(chisq_array, levels=[min_chisq*2], origin='lower', extent=extent, colors='white')
-    ax.plot(*solution, marker='x', color='red')
-
-    # Find the row and column indices for the solution. min_loc is ij indexed
-    cd_min_loc, n_min_loc = [x.item() for x in min_loc]
-
-    ax = plt.subplot(223)
-    # Find the constant cd, varying n chisq curve
-    chisq_curve = chisq_array[cd_min_loc, :]
-    chisq_curve = (chisq_curve - min_chisq*2)*-1
-    print(chisq_curve)
-    xaxis = grid_reader.axis_arrays[0]
-    plt.plot(xaxis, chisq_curve, marker='x')
-    try:
-        spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
-        x0, x1 = spline.roots()
-        plt.axvline(x0, color='k')
-        plt.axvline(x1, color='k')
-        xresamp = np.linspace(x0, x1, 50)
-        plt.plot(xresamp, spline(xresamp))
-        plt.ylim((0, min_chisq*1.3))
-        print(grid_reader.axis_keys[0])
-        xsoln = xaxis[n_min_loc]
-        elo, ehi = xsoln-x0, x1-xsoln
-        print(elo, ehi)
-        xe = (elo + ehi)/2
-        plt.errorbar([xsoln], [min_chisq*1.1], xerr=xe)
-    except:
-        pass
-
-
-    ax = plt.subplot(224)
-    # Find the constant cd, varying n chisq curve
-    chisq_curve = chisq_array[:, n_min_loc]
-    chisq_curve = (chisq_curve - min_chisq*2)*-1
-    print(chisq_curve)
-    xaxis = grid_reader.axis_arrays[1]
-    plt.plot(xaxis, chisq_curve, marker='x')
-    try:
-        spline = UnivariateSpline(xaxis[chisq_curve>(-1*min_chisq*2)], chisq_curve[chisq_curve>(-1*min_chisq*2)], s=0)
-        x0, x1 = spline.roots()
-        plt.axvline(x0, color='k')
-        plt.axvline(x1, color='k')
-        xresamp = np.linspace(x0, x1, 50)
-        plt.plot(xresamp, spline(xresamp))
-        plt.ylim((0, min_chisq*1.3))
-        print(grid_reader.axis_keys[1])
-        xsoln = xaxis[cd_min_loc]
-        elo, ehi = xsoln-x0, x1-xsoln
-        print(elo, ehi)
-        xe = (elo + ehi)/2
-        plt.errorbar([xsoln], [min_chisq*1.1], xerr=xe)
-    except:
-        pass
-
-    # plt.show()
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"individual_pix_chisq_grid{tk}{extra_stub}_{region_label}.png"),
-        metadata=catalog.utils.create_png_metadata(title=f"+{abscal_pct}pct abscal. {', '.join(measurement_keys)}",
-            file=__file__, func="individual_pixel_ensemble_chisq"))
-
-def unified_chisq_plotting_system(region_label="N19"):
+def unified_chisq_plotting_system(region_label="N19", abscal_pct=10):
     """
     Feb 9, 2024
     Going to go a little code-heavy here to make these plots easy to reproduce
@@ -3210,21 +3153,21 @@ def unified_chisq_plotting_system(region_label="N19"):
     grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
     # grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
     if region_label == "N19":
-        data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv" # N19
+        data_fn = "misc_regrids/sample_mask_N19_11.0.21.0_vals_regrid.csv"
+        # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv" # N19
     elif region_label == "BNR":
-        data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv" # BNR
+        data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
+        # data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv" # BNR
     else:
         raise RuntimeError(f"unknown region label {region_label}")
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     # Identify the measurements to use
     measurement_keys = ["ratio_32_10", "peak_c18o10", "peak_13co32"]
     grid_keys = ["TR_13co_32 / TR_13co_10", "TR_c18o_10", "TR_13co_32"]
+    official_names = ["$\\frac{^{13}{\\rm CO}(3-2)}{ ^{13}{\\rm CO}(1-0)}$", "${\\rm C^{18}O}(1-0)$", "$^{13}{\\rm CO}(3-2)$"]
     grid_arrays = [grid_reader.get(k) for k in grid_keys]
     # Set absolute calibration percentage
-    abscal_pct = 15
-
-    """ """
-    select_method = "SUM" # SUM or PIXEL
+    # abscal_pct = 10
 
     # Iterate thru measurements once quickly to build the notnull_mask
     notnull_mask = None
@@ -3250,8 +3193,9 @@ def unified_chisq_plotting_system(region_label="N19"):
     ax_center = fig.add_axes(rect_center)
 
     # Define the hist axes using inset_axes
+    colorbar_allowance = 0 # 0.2 # width allowance for colorbar
     ax_x = ax_center.inset_axes([0, anchor_sideplot, 1, width_sideplot], sharex=ax_center)
-    ax_y = ax_center.inset_axes([anchor_sideplot+0.2, 0, width_sideplot, 1], sharey=ax_center)
+    ax_y = ax_center.inset_axes([anchor_sideplot+colorbar_allowance, 0, width_sideplot, 1], sharey=ax_center)
 
     ax_x.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
     ax_y.tick_params(axis='y', which='both', left=False, labelleft=False)
@@ -3265,8 +3209,23 @@ def unified_chisq_plotting_system(region_label="N19"):
     extent = calc_extent(grid_reader.axis_arrays[0]) + calc_extent(grid_reader.axis_arrays[1])
     # Colorbar as another Axes. This rect is defined w.r.t. the center Axes
     rect_cbar = [1.005, 0, 0.05, 1]
-    cbar_ax = ax_center.inset_axes(rect_cbar)
+    # cbar_ax = ax_center.inset_axes(rect_cbar)
 
+    # Plot the average measurements and their variation
+    color_list = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    # median_meas_chisq_array = np.zeros(grid_reader.grid_shape)
+    for k_idx, k in enumerate(measurement_keys):
+        meas = data_df[k][notnull_mask]
+        mean_meas = np.mean(meas)
+        median_meas = np.median(meas)
+        lo, hi = misc_utils.flquantiles(meas, 6)
+        std_err = np.std(meas)
+        c = color_list[k_idx]
+        img = grid_reader.get(grid_keys[k_idx])
+        ax_center.contour(img, levels=[median_meas], linestyles='-', colors=c, linewidths=3, extent=extent, alpha=0.9)
+        ax_center.contour(img, levels=[mean_meas], linestyles='--', colors=c, linewidths=2, extent=extent, alpha=0.9)
+        # ax_center.contour(img, levels=[median_meas-std_err, median_meas+std_err], linestyles=':', colors=c, linewidths=2, extent=extent, alpha=0.9)
+        ax_center.contourf(img, levels=[lo, hi], colors=c, alpha=0.2, extent=extent)
 
     # Some helper functions
     def _describe_error_ellipse(chi_squared_array, cutoff="1"):
@@ -3281,7 +3240,7 @@ def unified_chisq_plotting_system(region_label="N19"):
             cutoff_number = 1
         elif cutoff == "2x":
             cutoff_number = 2*np.min(chi_squared_array)
-        good_locations = np.where(chi_squared_array < 1)
+        good_locations = np.where(chi_squared_array < cutoff_number)
         xs, ys = [grid_reader.axis_arrays[param_select][coord_idxs] for param_select, coord_idxs in enumerate(good_locations[::-1])]
         if len(xs) > 0:
             return (np.min(xs), np.max(xs), np.min(ys), np.max(ys))
@@ -3328,20 +3287,166 @@ def unified_chisq_plotting_system(region_label="N19"):
                 chisq_array += ((meas - grid_arrays[j])/err)**2
             yield chisq_array
 
+    color = 'k'
+    alt_color = color_list[len(measurement_keys)+3]
 
-    if select_method == "SUM":
-        """ Sum the chisqs """
-        chisq_list = [x for x in _chisq_iter_over_pixels()]
-        count = len(chisq_list)
-        chisq_sum = np.sum(chisq_list, axis=0)
-        del chisq_list
-        print(f"Using {count} pixels for region {region_label}")
-        solution_x, solution_y = _find_chisq_min(chisq_sum)
-        im = ax_center.imshow(np.log10(chisq_sum), origin='lower', extent=extent, cmap='viridis')
-        cbar = fig.colorbar(im, cax=cbar_ax, label="log$_10 \\chi^2 / {\\rm dof}$")
+    """ Calculate the chisqs """
+    chisq_list = [x for x in _chisq_iter_over_pixels()]
+    count = len(chisq_list)
 
-    plt.show()
+    """ Average the chisqs """
+    # chisq_avg = np.mean(chisq_list, axis=0)
+    # print(f"Using {count} pixels for region {region_label}")
+    # solution_x, solution_y = _find_chisq_min(chisq_avg)
+    # # im = ax_center.imshow(np.log10(chisq_avg), origin='lower', extent=extent, cmap='viridis')
+    # # cbar = fig.colorbar(im, cax=cbar_ax, label="log$_{10}$ average $\\chi^2 / {\\rm dof}$")
+    # ax_center.contour(chisq_avg, levels=[np.min(chisq_avg)*2], colors=alt_color, linewidths=4, origin='lower', extent=extent)
+    # ax_center.text(0.02, 0.02, "Minimum avg $\\chi^2 / {\\rm dof} = $" + f"{np.min(chisq_avg):.0f}", color=alt_color, transform=ax_center.transAxes, ha='left', va='bottom')
+    # ax_center.text(0.02, 0.07, "Red contour at 2$\\times$ min avg $\\chi^2 / {\\rm dof}$", color=alt_color, transform=ax_center.transAxes, ha='left', va='bottom')
+    #
+    # chisq_avg_errors = _describe_error_ellipse(chisq_avg, cutoff='2x')
+    # # print("soln", solution_x, solution_y)
+    # # print(chisq_avg_errors)
+    # xerr = [abs(solution_x - x) for x in chisq_avg_errors[:2]]
+    # yerr = [abs(solution_y - y) for y in chisq_avg_errors[2:]]
+    # # print(xerr, yerr)
+    # ax_center.errorbar([solution_x], [solution_y], xerr=xerr, yerr=yerr, marker='o', color=alt_color, linewidth=2)
 
+    formatter_f = [
+        lambda logn : f"{(10.**logn):.0f}",
+        lambda logNH2 : f"{(10.**logNH2):.2E}"
+    ]
+
+    text_dy = [0.2, 0.05]
+    text_x = [0.23, 0.99]
+    text_y = 0.95
+    text_kwargs = dict(ha='right', va='top')
+
+    """ Get individual pixel solutions and errors """
+    # We still have access to chisq_list from above
+    soln_tups = []
+    error_tups = []
+    for arr in chisq_list:
+        ax_center.contour(arr, levels=[1], colors=color, origin='lower', extent=extent, alpha=0.1)
+        soln_tups.append(_find_chisq_min(arr))
+        error_tups.append(_describe_error_ellipse(arr, cutoff="1"))
+    soln_arrs = np.squeeze(np.array(soln_tups)).T
+    error_arrs = np.array(error_tups).T
+    median_solns_and_lims = [] # should be in (val, lo, hi) order
+    ms = 10
+    for i in range(2):
+        # Make the error arrs into +/- instead of limits
+        soln_arr = soln_arrs[i, :]
+        error_arrs[i*2:(i+1)*2, :] = np.abs(soln_arr - error_arrs[i*2:(i+1)*2, :])
+        ax = [ax_x, ax_y][i]
+        orientation = ['vertical', 'horizontal'][i]
+        hvals, _, histp = ax.hist(soln_arr, histtype='step', align='mid', color=color, orientation=orientation, label="Pixel solutions")
+        hmax = [np.max(hvals)*0.7]
+        arg_order = [1, -1][i]
+        soln_mean, soln_median = np.mean(soln_arr), np.median(soln_arr)
+
+        # span_f = [ax.axvspan, ax.axhspan][i]
+        # line_f = [ax.axvline, ax.axhline][i]
+        lo, hi = misc_utils.flquantiles(soln_arr, 6)
+
+        median_solns_and_lims.append((soln_median, soln_median-lo, hi-soln_median)) # (val, -lo, +hi) for errorbar plotting
+
+        p1, = ax.plot(*[[soln_median], hmax][::arg_order], marker='o', markersize=ms, color=alt_color, label=('Median: '*(1-i) + formatter_f[i](soln_median)))
+        p2, = ax.plot(*[[soln_mean], hmax][::arg_order], marker='x', markersize=ms, color=alt_color, label=('Mean: '*(1-i) + formatter_f[i](soln_mean)))
+        ax.plot(*[(lo, hi), hmax*2][::arg_order], color=alt_color, linewidth=2)
+        ax.legend(handles=[p1, p2, histp[0]][:3-i], loc=['upper left', 'upper center'][i])
+
+        # ax.plot(*[[soln_mean], hmax][::arg_order], marker='x', markersize=ms, color=alt_color)
+        # ax.text(text_x[i], text_y-text_dy[i], "med " + formatter_f[i](soln_median), color=color, transform=ax.transAxes, **text_kwargs)
+        # ax.text(text_x[i], text_y-text_dy[i]*2, "mean " + formatter_f[i](soln_mean), color=color, transform=ax.transAxes, **text_kwargs)
+
+        # line_f(soln_mean, color=color, linestyle='--')
+        # line_f(soln_median, color=color)
+        # span_f(lo, hi, color=color, alpha=0.2)
+
+
+
+        # [ax_center.axvline, ax_center.axhline][i](soln_median, color='k', alpha=0.7)
+        # [ax_center.axvspan, ax_center.axhspan][i](lo, hi, color='k', alpha=0.2)
+
+        # # Add some stuff about the average solutions
+        # soln_val = [solution_x, solution_y][i]
+        # ax = [ax_x, ax_y][i]
+        # lims = chisq_avg_errors[i*2:(i+1)*2]
+        # ax.plot(*[[soln_val], hmax][::arg_order], marker='o', markersize=ms, color=alt_color)
+        # ax.plot(*[lims, hmax*2][::arg_order], color=alt_color, linewidth=2)
+        # # line_f(soln_val, color='LimeGreen')
+        # # span_f(*lims, color='LimeGreen', alpha=0.3)
+        # ax.text(text_x[i], text_y, formatter_f[i](soln_val.item()), color=alt_color, transform=ax.transAxes, **text_kwargs)
+
+
+
+    ax_center.errorbar(*soln_arrs, xerr=error_arrs[:2, :], yerr=error_arrs[2:, :], color=color, alpha=0.1, linestyle='none', capsize=0, marker='o') # capsize=6 looks nice
+    solution_x, solution_y = [median_solns_and_lims[i][0] for i in range(2)]
+    xerr, yerr = [np.array(median_solns_and_lims[i][1:]).reshape(2, 1) for i in range(2)]
+    ax_center.errorbar([solution_x], [solution_y], xerr=xerr, yerr=yerr, marker='o', color=alt_color, capsize=6, capthick=2, elinewidth=2, markersize=ms, zorder=1000)
+
+    # ax_center.text(0.01, 0.25, "Black contours at $\\chi^2 / {\\rm dof} = 1$", color=color, transform=ax_center.transAxes, ha='left', va='bottom')
+
+    # ax_center.text(0.02, 0.12, "Solid lines: median measurement", color=color, transform=ax_center.transAxes, ha='left', va='bottom')
+    # ax_center.text(0.02, 0.07, "Dashed lines: mean measurement", color=color, transform=ax_center.transAxes, ha='left', va='bottom')
+    # ax_center.text(0.02, 0.02, "Shaded: uncertainty", color=color, transform=ax_center.transAxes, ha='left', va='bottom')
+
+    bottom_left_legend = ax_center.legend(handles=[
+        ax_center.errorbar([], [], xerr=[], yerr=[], color=color, alpha=0.8, linestyle='none', capsize=0, marker='o', label='Pixel solution'),
+        Line2D([], [], color=color, linestyle='-', linewidth=1, alpha=0.8, marker='none', label="Pixel $\\chi^2 / {\\rm dof} = 1$"),
+        Line2D([], [], color='gray', linestyle='-', linewidth=3, marker='none', label='Median'),
+        Line2D([], [], color='gray', linestyle='--', linewidth=2, marker='none', label='Mean'),
+        mpatches.Patch(color='gray', alpha=0.2, label="16$^{\\rm th}$"+"$-$"+"84$^{\\rm th}$ %ile")
+    ], loc='lower left')
+    # bbox_to_anchor=[anchor_sideplot+colorbar_allowance, anchor_sideplot, width_sideplot, width_sideplot]
+    top_right_legend = ax_center.legend(loc='upper left', handles=[
+        mpatches.Patch(color=color_list[i], label=official_names[i]) for i in range(len(official_names))
+    ])
+    ax_center.add_artist(bottom_left_legend)
+
+    ax_center.set_xlabel("log$_{10}\ n$ [cm$^{-3}$]")
+    ax_center.set_ylabel("log$_{10}\ {\\rm N}(H_2)$ [cm$^{-2}$]")
+
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid_full_analysis{tk}{extra_stub}_{region_label}_abscal{abscal_pct}.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"+{abscal_pct}pct abscal. {', '.join(measurement_keys)}",
+            file=__file__, func="unified_chisq_plotting_system"))
+
+def mask_footprint_reference_plot():
+    """
+    Feb 12, 2024
+    Plot the CO pixel mask over the spitzer for a sense of reference
+    """
+
+    # Load 8 micron for reference image
+    ref_stub = "160um" # "irac4-large"
+    img_large, img_info = get_2d_map(ref_stub)
+    cutout = misc_utils.cutout2d_from_region(img_large, img_info['wcs'], get_cutout_box_filename('med'), align_with_frame='galactic')
+    img = cutout.data
+    wcs = cutout.wcs
+    del img_large
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection=wcs)
+    # ax.imshow(np.arcsinh(img), origin='lower', vmin=np.arcsinh(25), vmax=np.arcsinh(400), cmap=cmocean.cm.matter_r)
+    ax.imshow(np.arcsinh(img), origin='lower', vmin=np.arcsinh(-0.3), vmax=np.arcsinh(1.3), cmap=cmocean.cm.matter_r)
+    # ax.imshow(np.arcsinh(img), origin='lower', vmin=np.arcsinh(450), vmax=np.arcsinh(5000), cmap=cmocean.cm.matter_r)
+    # ax.imshow(img, origin='lower', vmax=200, cmap=cmocean.cm.matter_r)
+
+
+    data_fns = ["misc_regrids/sample_mask_N19_11.0.21.0_regrid_mask.fits", "misc_regrids/sample_mask_BNR_23.0.27.0_regrid_mask.fits"]
+    for i, data_fn in enumerate(data_fns):
+        mask_float, mask_hdr = fits.getdata(catalog.utils.search_for_file(data_fn), header=True)
+        mask_reproj = reproject_interp((mask_float, mask_hdr), wcs, shape_out=img.shape, return_footprint=False)
+        ax.contour(mask_reproj, levels=[0.5], colors='kw'[i], linewidths=4)
+
+
+    # ax.set_xlabel("Galactic longitude")
+    # ax.set_ylabel("Galactic latitude")
+    fig.tight_layout()
+    # plt.show()
+    # return
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"mask_overlay_BOTH_{ref_stub}.png"),
+        metadata=catalog.utils.create_png_metadata(title="mask", file=__file__, func="mask_footprint_reference_plot"))
 
 
 def print_out_particle_mass_for_rho():
@@ -6637,6 +6742,7 @@ if __name__ == "__main__":
     # sample_multiple_maps_regions(velocity_limits=velocity_limits['north_cloud_2'])
     # sample_multiple_maps_regions(velocity_limits=velocity_limits['redshifted_2'])
     # sample_masked_map("BNR")
+    # sample_masked_map("N19")
 
     # calculate_cii_column_density(mask_cutoff=3*u.K, velocity_limits=velocity_limits['north_cloud_2'])
     # calculate_cii_column_density(mask_cutoff=3*u.K, velocity_limits=velocity_limits['redshifted_2'])
@@ -6654,9 +6760,13 @@ if __name__ == "__main__":
     # scatter_radex_grid()
     # calc_mass_from_masked_data()
     # sum_chisq_to_get_masked_area_errorbars()
-    unified_chisq_plotting_system()
     # individual_pixel_ensemble_chisq()
+    # for l in ["N19", "BNR"]:
+    #     unified_chisq_plotting_system(region_label=l, abscal_pct=10)
+    #     for a in [5, 10, 15]:
+    #         unified_chisq_plotting_system(region_label=l, abscal_pct=a)
     # print_out_particle_mass_for_rho()
+    mask_footprint_reference_plot()
 
     # calculate_cii_column_density_detection_threshold()
     # calculate_co_column_density_detection_threshold()
