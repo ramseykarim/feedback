@@ -29,7 +29,7 @@ def big_average_spectrum_figure():
     swap region filenames (and labels, colors)
     """
     # Load regions
-    select = 1
+    select = 3
     if select == 0:
         reg_filename_short = "catalogs/north-south_spectrum_box.reg"
         spec_labels = ('north', 'south')
@@ -45,43 +45,112 @@ def big_average_spectrum_figure():
         spec_labels = ('ridge', 'center', 'N19')
         colors = marcs_colors[2:5]
         savename_stub = "small_avg_spectra_moreregs"
+    # New batch of regions! Circles, 10x 15.5'' CII beams across
+    elif select == 3:
+        reg_filename_short = "catalogs/m16_spectrum_samples.reg"
+        colors = marcs_colors[:8]
+        savename_stub = "circle_samples_10beam"
+
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
-    # Setup fig
-    fig = plt.figure(figsize=(13, 6))
-    # Setup axes; one for each line?
-    gs = fig.add_gridspec(3, 3, width_ratios=[1, 2, 2])
-    axes = []
+
+    if select <= 2:
+        """ Old setup """
+        # Setup fig
+        fig = plt.figure(figsize=(13, 6))
+        # Setup axes; one for each line?
+        gs = fig.add_gridspec(3, 3, width_ratios=[1, 2, 2])
+        def _index_gridspec(flatindex):
+            # Index the gridspec. Depends on the shape and number of regions
+            return gs[j, 1:]
+        # Gridspec loc for ref image
+        ref_gridspec_loc = gs[:, 0]
+
+    elif select == 3:
+        """ New setup """
+        fig = plt.figure(figsize=(8, 11))
+        mega_gs = fig.add_gridspec(3, 1, hspace=0, wspace=0, height_ratios=[1, 5, 4])
+        gs_shape = (4, 2)
+        gs = mega_gs[2, 0].subgridspec(*gs_shape, hspace=0, wspace=0)
+        legend_ax_anchor = fig.add_subplot(mega_gs[2, 0])
+        # legend_ax_anchor.set_axis_off()
+        top_gs = mega_gs[0, 0].subgridspec(1, 3, hspace=0, wspace=0, width_ratios=[1, 4, 1])
+        def _index_gridspec(flatindex):
+            # Unravel as if 4, 2
+            if flatindex < 8:
+                i_index = flatindex // 2
+                j_index = flatindex % 2
+                return gs[i_index, j_index]
+            else:
+                return top_gs[0, 1]
+        ref_gridspec_loc = mega_gs[1, 0].subgridspec(3, 1, height_ratios=(1, 17, 4), hspace=0, wspace=0)[1, 0]
+
+
+
+    axes_dict = {}
+    def _get_spec_axis(flatindex):
+        # create or grab axis for flat index
+        if flatindex not in axes_dict:
+            axes_dict[flatindex] = fig.add_subplot(_index_gridspec(flatindex))
+        return axes_dict[flatindex]
+
+
+
     reference_line_stub = "cii"
     ref_wcs, ref_shape = None, None
     line_stub_list = ("cii", "12co32", "13co32")
-    xlims = (-15, 55)
+    line_plot_colors = marcs_colors[:3]
+    xlims = (8, 37)
     noise_cutoff = 0 # sigma; set to 0 or below to turn off. good if > 5-10
+    multipliers = {'13co32': 3}
+    def _get_line_label(line_index):
+        label = f"{get_data_name(line_stub_list[line_index])}"
+        mult = multipliers.get(line_stub_list[line_index], None)
+        if mult is not None:
+            label = f"{label} $\\times${mult}"
+        return label
+    def _get_region_label(reg_idx):
+        if reg_idx < 8:
+            return f"{reg_idx+1}"
+        else:
+            return "Large"
 
+
+
+    """ Setup reference img panel """
+    ref_vel_lims = (10*kms, 27*kms)
+    ref_img_misaligned, ref_img_info = get_2d_map(reference_line_stub, velocity_limits=ref_vel_lims)
+    ref_unit = ref_img_info['unit']
+    cutout = misc_utils.cutout2d_from_region(ref_img_misaligned, ref_img_info['wcs'], get_cutout_box_filename('med'), align_with_frame='galactic')
+    ref_wcs = cutout.wcs
+    ref_img = cutout.data
+    ref_shape = ref_img.shape
+    del ref_img_misaligned
+    ref_ax = fig.add_subplot(ref_gridspec_loc, projection=ref_wcs)
+    im = ref_ax.imshow(ref_img, origin='lower', cmap=cmocean.cm.matter, vmin=0, vmax=150)
+    cax = ref_ax.inset_axes([1, 0, 0.05, 1])
+    fig.colorbar(im, cax=cax, label=f"{get_data_name(reference_line_stub)} integrated intensity between {make_vel_stub(ref_vel_lims)} ({ref_unit.to_string('latex_inline')})", orientation='vertical')
+
+    """
+    Spectra
+
+    Loop over spectral lines first (j)
+    that way we can load each file once and use it a bunch
+
+    Then loop over regions (i)
+    """
     for j, line_stub in enumerate(line_stub_list):
-        # Axis
-        ax = fig.add_subplot(gs[j, 1:])
-        axes.append(ax)
+        # if j > 0:
+        #     print("SKIPPING ", end="")
+        #     continue
         # Load cube
         fn = get_map_filename(line_stub)
         cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
 
-        if line_stub == reference_line_stub:
-            # Setup reference img panel
-            ref_wcs = cube_obj.wcs_flat
-            ref_shape = cube_obj.data.shape[1:]
-            ref_ax = fig.add_subplot(gs[:, 0], projection=ref_wcs)
-            ref_vel_lims = (0*kms, 40*kms)
-            ref_img = cube_obj.data.spectral_slab(*ref_vel_lims).moment0()
-            im = ref_ax.imshow(ref_img.to_value(), origin='lower')
-            fig.colorbar(im, ax=ref_ax, label=f"{get_data_name(line_stub)} {make_vel_stub(ref_vel_lims)} ({ref_img.unit.to_string('latex_inline')})", orientation='horizontal')
-        else:
-            # Reproject to ref wcs (which then needs to be saved) and plot footprint
-            fp = np.isfinite(cube_obj.data[0, :, :].to_value()).astype(float)
-            fp = reproject_interp((fp, cube_obj.wcs_flat), ref_wcs, shape_out=ref_shape, return_footprint=False)
-            ref_ax.contour(fp, levels=[0.5], linestyles="--", colors='grey')
-
         # Plot both sets of spectra
-        for i, label in enumerate(spec_labels):
+        for i in range(len(reg_list)):
+            # if i > 2:
+            #     print("SKIPPING ", end="")
+            #     continue
             # Setup axes
             # Extract subcube
             subcube = cube_obj.data.subcube_from_regions([reg_list[i]])
@@ -90,33 +159,71 @@ def big_average_spectrum_figure():
                 # Flip the .view() with ~, since view uses the numpy convention that "true" is masked out
                 mask = np.any(~(subcube > get_onesigma(line_stub)*noise_cutoff*u.K).view(), axis=0)
                 subcube = subcube.with_mask(mask)
-                ## useful debugging
-                # if i==1 and line_stub == '13co32':
-                #     plt.figure()
-                #     plt.imshow(subcube.moment0().to_value(), origin='lower')
-                #     plt.show()
-                #     return
+            # Axis
+            ax = _get_spec_axis(i)
             # Extract spectrum
             spectrum = subcube.mean(axis=(1, 2))
-            p = ax.plot(subcube.spectral_axis.to_value(), spectrum.to_value()/np.nanmax(spectrum.to_value()), color=colors[i], label=f"{get_data_name(line_stub)} {spec_labels[i]}")
-            if line_stub == reference_line_stub:
-                # Add box regions to reference with appropriate colors
-                pixreg = reg_list[i].to_pixel(cube_obj.wcs_flat)
-                pixreg.plot(ax=ref_ax, color=p[0].get_c(), lw=3)
+            # spec = spectrum.to_value()/np.nanmax(spectrum.to_value())
+            spec = spectrum.to_value()
+            if line_stub in multipliers:
+                spec = spec * multipliers[line_stub]
+            ax.plot(subcube.spectral_axis.to_value(), spec, color=line_plot_colors[j])
+            if j == 0:
+                # Once per region (so only on line j == 0) Add box regions to reference with appropriate colors
+                pixreg = reg_list[i].to_pixel(ref_wcs)
+                pixreg.plot(ax=ref_ax, color='w', lw=1)
+                if i < 8:
+                    ref_ax.text(*pixreg.center.xy, _get_region_label(i), ha="center", va="center", color='w', fontsize=12)
+                ax.text(0.02, 0.9, _get_region_label(i), ha="left", va="top", color='k', fontsize=14, transform=ax.transAxes)
 
-
-    for ax in axes:
-        ax.legend()
+    """ Format Axes """
+    for i, ax in axes_dict.items():
         ax.axhline(0, color='k', alpha=0.25, linestyle=':')
-        ax.axhline(0.5, color='k', alpha=0.25, linestyle=':')
+        # ax.axhline(0.5, color='k', alpha=0.25, linestyle=':')
         ax.set_xlim(xlims)
-        for v in range(10, 35, 2):
+        for v in range(12, 35, 2):
             ax.axvline(v, color='grey', alpha=0.25, linestyle='--')
         ss = ax.get_subplotspec()
-        if ss.is_last_row():
-            ax.set_xlabel(f"V ({kms.to_string('latex_inline')})")
+        if not ss.is_last_row() and i < 8:
+            ax.xaxis.set_tick_params(labelbottom=False, direction='in', top=True)
+        else:
+            ax.xaxis.set_tick_params(direction='in', top=True)
+        if ss.is_last_col() and not ss.is_first_col():
+            # no yaxis label
+            ax.yaxis.set_tick_params(labelleft=False, labelright=True, left=True, right=True, direction='in')
+        else:
+            ax.yaxis.set_tick_params(direction='in', left=True, right=True)
+        ylims = ax.get_ylim()
+        if i < 4:
+            ax.set_ylim((-1.5, 19))
+        elif i < 8:
+            ax.set_ylim((-3, 38))
+        else:
+            print(ylims)
+
+    legend_ax_anchor.set_xlabel(f"V ({kms.to_string('latex_inline')})", labelpad=17, fontsize=12)
+    legend_ax_anchor.set_ylabel("T$_{\\rm MB}$" + f" ({u.K.to_string('latex_inline')})", labelpad=22, fontsize=12)
+    legend_ax_anchor.spines[['top', 'right', 'bottom', 'left']].set_visible(False)
+    legend_ax_anchor.tick_params(axis='both', labelleft=False, labelbottom=False, left=False, bottom=False)
+
+
+    # Legend
+    legend_ax_anchor.legend(handles=[
+        mpatches.Patch(color=line_plot_colors[i], label=_get_line_label(i))
+            for i in range(len(line_stub_list))
+    ], bbox_to_anchor=[0, 1, 1, 0.1], loc='center', ncols=len(line_stub_list))
+
+    lat, lon = (ref_ax.coords[i] for i in range(2))
+    for l in (lat, lon):
+        l.set_major_formatter("d.dd")
+    lat.set_axislabel("Galactic Latitude", fontsize=12)
+    lon.set_axislabel("Galactic Longitude", fontsize=12)
+    ref_ax.tick_params(labelsize=12)
+
     savename = os.path.join(catalog.utils.todays_image_folder(),
         f"{savename_stub}.png")
+    fig.subplots_adjust(top=0.98, bottom=0.05, left=0.07, right=0.95)
+    print()
     fig.savefig(savename,
         metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short}, noise {noise_cutoff}",
             file=__file__, func="big_average_spectrum_figure"))
@@ -502,4 +609,4 @@ def m16_blue_clump():
 
 
 if __name__ == "__main__":
-    m16_blue_clump()
+    big_average_spectrum_figure()

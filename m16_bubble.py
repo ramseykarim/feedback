@@ -78,7 +78,7 @@ from .mantipython.physics import greybody, dust, instrument
 
 
 # vel_stub is for plotting (contains spaces and special characters)
-make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit}"
+make_vel_stub = lambda x : f"[{x[0].to_value():.1f}, {x[1].to_value():.1f}] {x[0].unit.to_string('latex_inline')}"
 # simple_vel_stub is for filenames (no spaces or special characters)
 make_simple_vel_stub = lambda x : ".".join(f"{y.to_value():.1f}" for y in x)
 kms = u.km/u.s
@@ -5110,6 +5110,8 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
         reg_filename_short = "catalogs/N19_points_all_across.reg"
     elif reg_set_number == 7:
         reg_filename_short = "catalogs/N19_points_all_across_2.reg"
+    elif reg_set_number == 8:
+        reg_filename_short = "catalogs/m16_spectrum_samples.reg"
     else:
         raise NotImplementedError(f"reg_set_number =/= {reg_set_number}")
 
@@ -5152,6 +5154,9 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
     elif reg_set_number in (6, 7):
         figsize = (10, 20)
         grid_shape = (len(reg_list), 1)
+    elif reg_set_number == 8:
+        figsize = (13, 8)
+        grid_shape = (4, 2)
     else:
         raise NotImplementedError
 
@@ -5213,7 +5218,11 @@ def plot_spectra(reg_set_number=1, line_set_number=1, velocities_to_mark=None):
         elif reg_set_number == 5:
             ax.set_ylim((-3, 17))
 
-        ax.text(0.06, 0.94, reg_list[reg_idx].meta['text'], transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
+        try:
+            txt = reg_list[reg_idx].meta['text']
+        except:
+            txt = f"REG {reg_idx}"
+        ax.text(0.06, 0.94, txt, transform=ax.transAxes, fontsize=15, color='k', ha='left', va='center')
         for v in range(10, 31, 2):
             # Some light velocity gridlines around the important velocities
             ax.axvline(v, color='k', alpha=0.07)
@@ -5896,6 +5905,82 @@ def ekin_ew_vs_age_plot():
         metadata=catalog.utils.create_png_metadata(title="from Xanders 2024-01-23 email",
             file=__file__, func="ekin_ew_vs_age_plot"))
 
+
+def n19_self_absorption():
+    """
+    Feb 25, 2024
+    Quick try a figure about self absorption along N19 ring. Zoom in real close.
+    use zoom box "N19-small" key
+    use regions in catalogs/N19_shell_edge_selfabs.reg
+    """
+    # Load cube
+    line_stub = 'cii'
+    fn = get_map_filename(line_stub)
+    cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
+    # Ref image, rotated
+    velocity_limits = (15*kms, 21*kms)
+    mom0 = cube_obj.data.spectral_slab(*velocity_limits).moment0()
+    unit = mom0.unit
+    cutout_name = 'N19-med'
+    cutout = misc_utils.cutout2d_from_region(mom0.to_value(), mom0.wcs, get_cutout_box_filename(cutout_name), align_with_frame='galactic')
+    ref_img = cutout.data
+    ref_wcs = cutout.wcs
+
+    # Plot setup
+    fig = plt.figure(figsize=(14, 6))
+    gs = fig.add_gridspec(1, 2, hspace=0, wspace=0.3)
+    # Plot
+    ref_ax = fig.add_subplot(gs[0, 0], projection=ref_wcs)
+    im = ref_ax.imshow(ref_img, origin='lower', cmap="Greys_r", vmin=10, vmax=60)
+    cax = ref_ax.inset_axes([1, 0, 0.05, 1])
+    fig.colorbar(im, cax=cax, label=f"{get_data_name(line_stub)} {make_vel_stub(velocity_limits)} ({unit.to_string('latex_inline')})")
+    lat, lon = (ref_ax.coords[i] for i in range(2))
+    for l in (lat, lon):
+        l.set_major_formatter("d.dd")
+    lat.set_axislabel("Galactic Latitude", fontsize=12)
+    lon.set_axislabel("Galactic Longitude", fontsize=12)
+    ref_ax.tick_params(labelsize=12)
+
+    spec_ax = fig.add_subplot(gs[0, 1])
+    spec_ax.set_xlabel(f"V ({kms.to_string('latex_inline')})")
+    spec_ax.set_ylabel(f"{get_data_name(line_stub)} " + "T$_{\\rm MB}$" + f" ({u.K.to_string('latex_inline')})")
+
+    # Load regions
+    reg_filename_short = "catalogs/N19_shell_edge_selfabs.reg"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    # Grab spectra from (0-indexed) 0, [3 or 4], and 5(circle). The rest are points.
+    xaxis = cube_obj.data.spectral_axis.to_value()
+    # First, points
+    selected_points = [3, 2, 4]
+    colors = [marcs_colors[x] for x in [0, 1, 2]]
+    for idx, reg_idx in enumerate(selected_points):
+        pixreg = reg_list[reg_idx].to_pixel(cube_obj.wcs_flat)
+        j, i = [int(round(c)) for c in pixreg.center.xy]
+        print("JI", j, i)
+        spectrum = cube_obj.data[:, i, j].to_value()
+        p = spec_ax.plot(xaxis, spectrum, color=colors[idx], label=f"{reg_idx+1}", linewidth=(3 if reg_idx==3 else 1.5), linestyle=("-" if reg_idx==3 else "--"))
+        # Remake pixreg because different WCS for image
+        reg_patch = reg_list[reg_idx].to_pixel(ref_wcs).as_artist()
+        reg_patch.set(color=p[0].get_c(), mec=p[0].get_c()) # Line2D because points!!!
+        ref_ax.add_artist(reg_patch)
+    # Next, circle
+    circ_idx = 5
+    subcube = cube_obj.data.subcube_from_regions([reg_list[circ_idx]])
+    spectrum = subcube.mean(axis=(1, 2))
+    p = spec_ax.plot(xaxis, spectrum, label="Circle", color='k')
+    reg_list[circ_idx].to_pixel(ref_wcs).plot(ax=ref_ax, color=p[0].get_c())
+
+    spec_ax.legend()
+    spec_ax.set_xlim((7, 23))
+
+
+    savename = f"{line_stub}_n19_self_absorption_spectrum.png"
+    info_txt = f"{reg_filename_short} points: {selected_points} zoom: {cutout_name}"
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
+        metadata=catalog.utils.create_png_metadata(title=info_txt, file=__file__,
+            func="n19_self_absorption"))
+
+
 """
 Bubble diagram stuff
 """
@@ -6231,7 +6316,6 @@ def fake_bubble_spectra():
     line_stub = "cii"
     fn = get_map_filename(line_stub)
     cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
-    co_cube_obj = cube_utils.CubeData(get_map_filename("12co32")).convert_to_K().convert_to_kms()
     # Reference contour moment image
     if True:
         # Model spectra
@@ -6246,6 +6330,7 @@ def fake_bubble_spectra():
         yb = gb(x)
         ytot = ymid_1 + ymid_2 + yr + yb
         dy = 1.5
+        dy2 = 0.05
         model_ax = fig.add_subplot(gs[0, 0])
         model_ax.plot(x, yb + dy*-2, color='b', linestyle=':')
         model_ax.plot(x, ymid_1 + dy*-1, color='green', linestyle=':')
@@ -6256,8 +6341,13 @@ def fake_bubble_spectra():
         model_ax.tick_params(axis='both', which='both', bottom=False, left=False, labelleft=False)
         model_ax.set_xticks([-7, 7], labels=["Low velocity", "High velocity"])
 
+        names = ["Blueshifted shell", "Filament", "Filament", "Redshifted shell"]
+        x_positions = [7, 7, -7, -7]
+        name_colors = ['b', 'g', 'g', 'r']
         for i, j in enumerate([-2, -1, 1, 2]):
             model_ax.text(-8.3, dy*j, f"{i+1}", fontsize=15, color='k', fontweight='bold', ha='right', va='center')
+            model_ax.text(x_positions[i], dy*j+dy2, names[i], fontsize=15, color=name_colors[i], ha=('left' if i > 1 else 'right'), va='bottom')
+        model_ax.text(-8.3, -dy*0.3, "Sum", fontsize=15, color='k', fontweight='bold', ha='right', va='center')
 
 
     def _norm_spectrum(spec):
@@ -6266,18 +6356,34 @@ def fake_bubble_spectra():
     if True:
         # Observed spectra
         spec_ax = fig.add_subplot(gs[0, 1])
-        subcube = cube_obj.data.subcube_from_regions(reg_list)
-        spectrum = subcube.mean(axis=(1, 2))
-        spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color='k', linewidth=3, label='Both circles')
-        reg_labels = ["South circle", "North circle"]
-        for j, reg in enumerate(reg_list):
-            subcube = cube_obj.data.subcube_from_regions([reg])
+
+        # Add the averaged spectrum from both circles
+        if False:
+            # Decided not to use this, it's not as good as North circle
+            subcube = cube_obj.data.subcube_from_regions(reg_list)
             spectrum = subcube.mean(axis=(1, 2))
-            spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), linewidth=1, linestyle=':', color=marcs_colors[1-j], label=reg_labels[j])
+            spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color='k', linewidth=3, label='Both circles')
+
+        reg_labels = ["South circle", "North circle"]
+        if False:
+            # Skip doing both, only do the north circle
+            for j, reg in enumerate(reg_list):
+                subcube = cube_obj.data.subcube_from_regions([reg])
+                spectrum = subcube.mean(axis=(1, 2))
+                spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), linewidth=1, linestyle=':', color=marcs_colors[1-j], label=reg_labels[j])
+
+        # North Circle spectrum only
+        north_circle_idx = 1
+        subcube = cube_obj.data.subcube_from_regions([reg_list[north_circle_idx]])
+        spectrum = subcube.mean(axis=(1, 2))
+        spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), linewidth=3, linestyle='-', color='k', label=reg_labels[north_circle_idx])
+
         # Get full avg spec above 6 K
-        spectrum = cube_obj.data.mean(axis=(1, 2))
-        coeff = 3
-        spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color="grey", linewidth=3, linestyle='-.', label=f"Entire field average")
+        if True:
+            # Marc says this doesn't add anything, they already know the emission is at 26 km/s
+            spectrum = cube_obj.data.mean(axis=(1, 2))
+            coeff = 3
+            spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color="grey", linewidth=3, linestyle='-.', label=f"Entire field average")
 
         # Grab the blueshifted clump spectra
         reg_filename_short_bc = "catalogs/m16_points_blueshifted_clump.reg"
@@ -6290,21 +6396,86 @@ def fake_bubble_spectra():
             return cube_object.data.spectral_axis.to_value(), spectrum.to_value()
 
         coeff = 4
-        x, y = _plot_blue_clump_spec(co_cube_obj)
-        green_mask = (x > 16) & (x < 23)
-        y[green_mask] = np.nan
-        spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'CO, blue clump')
+        if False:
+            co_cube_obj = cube_utils.CubeData(get_map_filename("12co32")).convert_to_K().convert_to_kms()
+            x, y = _plot_blue_clump_spec(co_cube_obj)
+            green_mask = (x > 16) & (x < 23)
+            y[green_mask] = np.nan
+            spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'CO, blue clump')
+
         x, y = _plot_blue_clump_spec(cube_obj)
-        spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[1], linestyle='--', linewidth=1.5, label=f'blue clump')
+        spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'Blueshifted clump')
 
         spec_ax.axhline(0, color='grey', linestyle="--", alpha=0.2)
         spec_ax.set_xlabel("V$_{\\rm LSR}$ " + f"({kms.to_string('latex_inline')})")
-        spec_ax.set_ylabel(f"{get_data_name(line_stub)} line intensity ({spectrum.unit.to_string('latex_inline')})")
+        spec_ax.set_ylabel(f"Normalized {get_data_name(line_stub)} line intensity")
         spec_ax.set_xlim((-4, 49))
         spec_ax.set_ylim((-0.4, 1.1))
         spec_ax.legend(loc="lower right", ncol=2)
     fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"expanding_shell_diagram_spectrum.png"),
         metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short} {reg_filename_short_bc}", file=__file__, func="fake_bubble_spectra"))
+
+def bubble_simulated_projection():
+    """
+    Feb 24, 2024
+    Not a good use of time but I want to know
+    Quickly
+    """
+
+    diameter_1 = 2
+    diameter_2 = 1.75
+    a_1 = (.1, 2, 0) # a0, a1, a2
+    a_2 = (.09, 1.6, 1) # a0, a1, a2
+    height_mod = 0.98
+    def biconcave_z(r, diameter, a):
+        # r is radius from 0
+        rd2 = (r/diameter)**2 # appears multiple times
+        first = diameter * np.sqrt(1 - 4*rd2)
+        second = a[0] + a[1]*rd2 + a[2]*(rd2**2)
+        return first*second
+
+    u = np.linspace(0, 2*np.pi, 30)
+    v = np.linspace(0, np.pi, 30)
+    xx = np.outer(np.cos(u), np.sin(v))
+    yy = np.outer(np.sin(u), np.sin(v))
+
+    # Use the simple grid approach
+    axis_array = np.linspace(-1.1, 1.1, 60) # 30
+    # 3D grids
+    xx, yy = np.meshgrid(axis_array, axis_array, indexing='xy')
+    # Get cylindrical r coord on xy plane
+    rr = np.sqrt(xx**2 + yy**2)
+    # Find the z heights of 2 biconcave discs as function of r plane
+    # Reshape everything to 3 dimensions but with empty z (0) axis
+    z_1 = biconcave_z(rr, diameter_1, a_1)[np.newaxis, :, :]
+    z_2 = biconcave_z(rr, diameter_2, a_2)[np.newaxis, :, :] * height_mod # make it even smaller
+    # Add an r plane
+    r = rr[np.newaxis, :, :]
+    # Reshape the axis_array
+    z = axis_array[:, np.newaxis, np.newaxis]
+    # Add an x axis array
+    x = axis_array[np.newaxis, :, np.newaxis]
+
+    # Make 3D z array (basically a meshgrid component)
+    # zzz = np.zeros((axis_array.size,)*3)
+    vol = np.zeros((axis_array.size,)*3) # zzz.copy()
+    # zzz[:] = axis_array.reshape(axis_array.size, 1, 1)
+    rmin = 0 # carve out the core
+    xmin = 0.6 # remove gas that would be travelling perpendicular to LOS (so would be in green channel maps, not red/blue)
+    xmax = 0.85 # remove gas too extreme (set to 2 or something to remove)
+    vol[(((z < z_1) & (z > 0) & (r > rmin)) | ((z > -z_1) & (z < 0) & (r > rmin))) & (((x < -xmin) & (x > -xmax)) | ((x > xmin) & (x < xmax)))] = 1.0
+    vol[((z < z_2) & (z > 0)) | ((z > -z_2) & (z < 0))] = 0.0 #  & (r > 0.5)
+
+    # Project along some axis
+    plt.subplot(221)
+    plt.imshow(np.sum(vol, axis=0), origin='lower')
+    plt.subplot(222)
+    plt.imshow(np.sum(vol, axis=1), origin='lower')
+    plt.subplot(212)
+    plt.plot(axis_array, biconcave_z(axis_array, diameter_1, a_1))
+    plt.plot(axis_array, biconcave_z(axis_array, diameter_2, a_2)*height_mod)
+    plt.show()
+
 
 
 
@@ -6552,6 +6723,44 @@ def contours_13cii():
             file=__file__, func="contours_13cii"))
 
 
+"""
+Dark / IR Clouds
+"""
+def plot_dark_clouds():
+    """
+    Feb 18, 2024
+    SCOPE 850 micron Eden et al. 2019 ([2019MNRAS.485.2895E](https://ui.adsabs.harvard.edu/abs/2019MNRAS.485.2895E))
+    """
+    full_filename = catalog.utils.search_for_file("catalogs/G016.96p00.27_SCOPE850um_clouds_2.tsv") # there is ...clouds.tsv and ...clouds_2.tsv
+    df = pd.read_csv(full_filename, skiprows=46, sep=";", header=None)
+    print(df)
+    s = SkyCoord(ra=df[2].values, dec=df[3].values, unit=(u.deg, u.deg), frame='fk5')
+    pointskyregs = regions.Regions([regions.PointSkyRegion(center=x) for x in s])
+    save_filename = os.path.join(os.path.dirname(full_filename), os.path.basename(full_filename).replace(".tsv", ".reg"))
+    pointskyregs.write(save_filename)
+
+def vizier_query_dark_clouds():
+    """
+    Feb 18, 2024
+    Try vizier querying the SCOPE SCUBA-2 850 micron catalog
+    Based on the vizier_queries_m16_g0.py code
+    """
+    from astroquery.vizier import Vizier
+    # Vizier.ROW_LIMIT = -1 # Always get all the rows
+    scope_cat_name = "J/MNRAS/485/2895"
+    # catalog_dict = Vizier.find_catalogs(scope_cat)
+    cat = Vizier(row_limit=-1).query_constraints(catalog=scope_cat_name,
+        RAJ2000="274.0 .. 275.4", DEJ2000="-13.11 .. -14.3")
+    print(cat[0].to_pandas())
+
+    # catalogs = Vizier.get_catalogs(catalog_dict[scope_cat])
+    # print(catalogs)
+    # sptype_catalog = catalogs[1] # returns 2 catalogs
+    # del catalogs, catalog_dict # save memory
+    # catalog_df = sptype_catalog.to_pandas(index='ID')
+
+
+
 if __name__ == "__main__":
     pass # in case nothing else is commented in, just so this is syntactically correct
     """
@@ -6646,7 +6855,7 @@ if __name__ == "__main__":
     # save_moment0(line_stub='cii-30', velocity_limits=(6*kms, 11*kms), cutout_reg_stub=None)
     # save_moment0(line_stub='cii-30', velocity_limits=(15*kms, 30*kms), cutout_reg_stub=None)
     # save_moment0(line_stub='cii-30', velocity_limits=(21*kms, 27*kms), cutout_reg_stub=None)
-    # save_moment0(line_stub='cii-30', velocity_limits=(35*kms, 40*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='12co32', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
 
 
     """ Comparing 8micron and CII """
@@ -6766,7 +6975,7 @@ if __name__ == "__main__":
     #     for a in [5, 10, 15]:
     #         unified_chisq_plotting_system(region_label=l, abscal_pct=a)
     # print_out_particle_mass_for_rho()
-    mask_footprint_reference_plot()
+    # mask_footprint_reference_plot()
 
     # calculate_cii_column_density_detection_threshold()
     # calculate_co_column_density_detection_threshold()
@@ -6789,7 +6998,7 @@ if __name__ == "__main__":
     #             continue
     #         print("Doing", i, j)
     # plot_spectra(reg_set_number=4, line_set_number=1, velocities_to_mark=(17.5, 19.5, 21.5))
-    # plot_spectra(reg_set_number=4, line_set_number=2, velocities_to_mark=(17.5, 19.5, 21.5))
+    # plot_spectra(reg_set_number=8, line_set_number=1, velocities_to_mark=(17.5, 19.5, 21.5))
 
     # blueshifted clump
     # plot_spectra(reg_set_number=5, line_set_number=3, velocities_to_mark=(8,))
@@ -6813,3 +7022,6 @@ if __name__ == "__main__":
     # bubble_geometry()
     # bubble_cross_cut(select=1)
     # fake_bubble_spectra()
+    # bubble_simulated_projection()
+    # vizier_query_dark_clouds()
+    n19_self_absorption()
