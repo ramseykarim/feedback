@@ -5950,31 +5950,58 @@ def n19_self_absorption():
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     # Grab spectra from (0-indexed) 0, [3 or 4], and 5(circle). The rest are points.
     xaxis = cube_obj.data.spectral_axis.to_value()
+
+    fixed_diameter = 3
+    diameter_stub = f"_{fixed_diameter}beamsacross"
+
+    # Function to change the radius of a Circle or convert a Point to a Circle
+    def _set_circle_radius(reg, beams_across):
+        radius_arcsec = beams_across * 15.5*u.arcsec / 2
+        if isinstance(reg, regions.CircleSkyRegion):
+            reg.radius = radius_arcsec
+            # print("HAS RADIUS", reg)
+        else:
+            # print("HAS NO RADIUS", reg)
+            reg = regions.CircleSkyRegion(center=reg.center, radius=radius_arcsec)
+            # print("IS NOW", reg)
+        return reg
+
     # First, points
-    selected_points = [3, 2, 4]
-    colors = [marcs_colors[x] for x in [0, 1, 2]]
+    selected_points = [3, 2, 4, 5]
+    colors = marcs_colors[:5]
     for idx, reg_idx in enumerate(selected_points):
-        pixreg = reg_list[reg_idx].to_pixel(cube_obj.wcs_flat)
-        j, i = [int(round(c)) for c in pixreg.center.xy]
-        print("JI", j, i)
-        spectrum = cube_obj.data[:, i, j].to_value()
+        # Old ways
+        # pixreg = reg_list[reg_idx].to_pixel(cube_obj.wcs_flat)
+        # j, i = [int(round(c)) for c in pixreg.center.xy]
+        # spectrum = cube_obj.data[:, i, j].to_value()
+        # New ways, only circles
+        reg = _set_circle_radius(reg_list[reg_idx], fixed_diameter)
+        try:
+            subcube = cube_obj.data.subcube_from_regions([reg])
+        except:
+            print(reg)
+            return
+        spectrum = subcube.mean(axis=(1, 2))
+        # print("JI", j, i)
         p = spec_ax.plot(xaxis, spectrum, color=colors[idx], label=f"{reg_idx+1}", linewidth=(3 if reg_idx==3 else 1.5), linestyle=("-" if reg_idx==3 else "--"))
         # Remake pixreg because different WCS for image
-        reg_patch = reg_list[reg_idx].to_pixel(ref_wcs).as_artist()
-        reg_patch.set(color=p[0].get_c(), mec=p[0].get_c()) # Line2D because points!!!
-        ref_ax.add_artist(reg_patch)
+        reg.to_pixel(ref_wcs).plot(ax=ref_ax, color=p[0].get_c())
+        # reg_patch = reg_list[reg_idx].to_pixel(ref_wcs).as_artist()
+        # reg_patch.set(color=p[0].get_c(), mec=p[0].get_c()) # Line2D because points!!!
+        # ref_ax.add_artist(reg_patch)
+
     # Next, circle
-    circ_idx = 5
-    subcube = cube_obj.data.subcube_from_regions([reg_list[circ_idx]])
-    spectrum = subcube.mean(axis=(1, 2))
-    p = spec_ax.plot(xaxis, spectrum, label="Circle", color='k')
-    reg_list[circ_idx].to_pixel(ref_wcs).plot(ax=ref_ax, color=p[0].get_c())
+    # circ_idx = 5
+    # subcube = cube_obj.data.subcube_from_regions([reg_list[circ_idx]])
+    # spectrum = subcube.mean(axis=(1, 2))
+    # p = spec_ax.plot(xaxis, spectrum, label="Circle", color='k')
+    # reg_list[circ_idx].to_pixel(ref_wcs).plot(ax=ref_ax, color=p[0].get_c())
 
     spec_ax.legend()
     spec_ax.set_xlim((7, 23))
 
 
-    savename = f"{line_stub}_n19_self_absorption_spectrum.png"
+    savename = f"{line_stub}_n19_self_absorption_spectrum{diameter_stub}.png"
     info_txt = f"{reg_filename_short} points: {selected_points} zoom: {cutout_name}"
     fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
         metadata=catalog.utils.create_png_metadata(title=info_txt, file=__file__,
@@ -5990,6 +6017,8 @@ def bubble_geometry():
     January 31, 2024
     try visualizing a biconcave disc with matplotlib 3d
     """
+    import mpl_toolkits.mplot3d.art3d as art3d
+
     def test_z(r):
         # r is radius from 0
         return np.cos(np.pi*r/2)
@@ -6015,58 +6044,150 @@ def bubble_geometry():
 
     # zz[xx < -0.8] = np.nan
 
-    fig = plt.figure(figsize=(12, 10))
+    # fig = plt.figure(figsize=(13, 6)) # 12, 10 for 3 panels
+    fig1 = plt.figure(figsize=(8, 6)) # 12, 10 for 3 panels
+    fig2 = plt.figure(figsize=(8, 5)) # 12, 10 for 3 panels
+    figs = [fig1, fig2]
 
     def _plot3d(ax_description, wire=False, alpha=1):
-        ax = fig.add_subplot(ax_description, projection='3d')
+        # ax = fig.add_subplot(ax_description, projection='3d', computed_zorder=False)
+        ax = figs[ax_description%10 - 1].add_subplot(111, projection='3d', computed_zorder=False)
         if wire:
             f = ax.plot_wireframe
         else:
             f = ax.plot_surface
-        f(xx, yy, zz, alpha=alpha)
+        f(xx, yy, zz, alpha=alpha, color="SeaGreen", zorder=50)
         ax.set_aspect("equal")
         return ax
 
     zz[(yy < -0.8) & (zz < 0.15)] = np.nan
-    ax1 = _plot3d(211)
-    ax2 = _plot3d(223, wire=True, alpha=0.7)
-    ax3 = _plot3d(224, alpha=0.7)
+    ax1 = _plot3d(121)
+    ax2 = _plot3d(122, wire=True, alpha=0.7)
+    # ax3 = _plot3d(224, alpha=0.7)
+    axes = [ax1, ax2]
 
-    publication_ready = True
-    if publication_ready:
+    publication_ready = 2
+    if publication_ready == 0:
         fig.subplots_adjust(hspace=-0.5, wspace=-0.05, top=1.2, bottom=-0.2, left=-0.1, right=1.1)
-    else:
+    elif publication_ready == 1:
         fig.subplots_adjust(hspace=0, wspace=0, top=1, bottom=0, left=0, right=1)
+    elif publication_ready == 2:
+        fig1.subplots_adjust(top=1.05, bottom=-0.05, left=-0.25, right=1.2) # solid surface
+        fig2.subplots_adjust(top=1.25, bottom=-0.45, left=-0.65, right=1.6) # wireframe with NC and N19
     # ax2 = fig.add_subplot(122)
     # ax2.imshow(rr, origin='lower')
 
-    for j, ax in enumerate([ax1, ax2, ax3]):
+    for j, ax in enumerate(axes):
         for i_axis in [ax.xaxis, ax.yaxis, ax.zaxis]:
-            i_axis.set_ticklabels([])
+            # i_axis.set_ticklabels([])
+            i_axis.set_tick_params(labelleft=False, labelbottom=False, left=False, bottom=False)
             for s in ['inward_factor', 'outward_factor']:
                 i_axis._axinfo['tick'][s] = 0.0
         ax.patch.set_alpha(0)
         ax.set_xlim((-1.1, 1.1))
         ax.set_ylim((-1.1, 1.1))
         ax.set_zlim((-0.45, 0.45))
-
+        """ Plot the filament """
         l = 1.2
         lw = 3
-        if j < 1:
-            ax.plot([0, 0], [0, 0], [-l, -biconcave_z(0)], color='k', linewidth=lw, zorder=0)
-            ax.plot([0, 0], [0, 0], [biconcave_z(0), l], color='k', linewidth=lw, zorder=100)
-        else:
-            ax.plot([0, 0], [0, 0], [-l, -biconcave_z(0)], color='k', linewidth=lw, zorder=0)
-            ax.plot([0, 0], [0, 0], [biconcave_z(0), l], color='k', linewidth=lw, zorder=0)
+        if False: # turn it off, zorder gets messed up with the diagram frames
+            if j < 1:
+                ax.plot([0, 0], [0, 0], [-l, -biconcave_z(0)], color='k', linewidth=lw, zorder=0)
+                ax.plot([0, 0], [0, 0], [biconcave_z(0), l], color='k', linewidth=lw, zorder=100)
+            else:
+                ax.plot([0, 0], [0, 0], [-l, -biconcave_z(0)], color='k', linewidth=lw, zorder=0)
+                ax.plot([0, 0], [0, 0], [biconcave_z(0), l], color='k', linewidth=lw, zorder=0)
 
 
-    ax2.view_init(elev=7, azim=270)
-    ax3.view_init(elev=2, azim=270)
+    """ Plot the diagram crosscut locations """
+    def _plot_square(ax, line_kwargs, direction="pos", dz=0.5, dx=1, loc=0, zorders=[100, 100, 0, 0]):
+        dz = 0.6
+        dx = 1
+        if direction == 'pos':
+            flip_arg = False
+        elif direction == 'los':
+            flip_arg = True
+        loc_arr = [loc, loc]
+        _flip_arg_f = lambda x : (loc_arr, x) if flip_arg else (x, loc_arr)
+        ax.plot(*_flip_arg_f([-dx, dx]), [dz, dz], zorder=zorders[0], **line_kwargs) # top
+        ax.plot(*_flip_arg_f([dx, dx]), [dz, -dz], zorder=zorders[1], **line_kwargs) # right
+        ax.plot(*_flip_arg_f([-dx, -dx]), [-dz, dz], zorder=zorders[2], **line_kwargs) # left
+        ax.plot(*_flip_arg_f([dx, -dx]), [-dz, -dz], zorder=zorders[3], **line_kwargs) # bottom
 
-    # plt.show()
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), "biconcave_disc_2.png"),
-        metadata=catalog.utils.create_png_metadata(title=f"biconcave D={diameter} a = {a}",
-            file=__file__, func="bubble_geometry"))
+    def _plot_square_split_y(ax, split_y_loc, line_kwargs, dz=0.5, dx=1, loc=0):
+        # Only for LOS squares. Fixes Zorder when something crosses at a y loc
+        loc_arr = [loc, loc]
+        _flip_arg_f = lambda x : (loc_arr, x)
+        assert -dx < split_y_loc < dx # here, x = y. Confusing, yes. Correct, yes. I'm copying code from above
+        zorders = [100, 0]
+        ax.plot(*_flip_arg_f([-dx, split_y_loc]), [dz, dz], zorder=zorders[0], **line_kwargs) # top
+        ax.plot(*_flip_arg_f([split_y_loc, dx]), [dz, dz], zorder=zorders[1], **line_kwargs) # top
+        ax.plot(*_flip_arg_f([dx, dx]), [dz, -dz], zorder=zorders[1], **line_kwargs) # right
+        ax.plot(*_flip_arg_f([-dx, -dx]), [-dz, dz], zorder=zorders[0], **line_kwargs) # left
+        ax.plot(*_flip_arg_f([dx, split_y_loc]), [-dz, -dz], zorder=zorders[1], **line_kwargs) # bottom
+        ax.plot(*_flip_arg_f([split_y_loc, -dx]), [-dz, -dz], zorder=zorders[0], **line_kwargs) # bottom
+
+    # N19 ypos
+    n19_y = -0.6
+
+    # On-sky diagram
+    line_kwargs_dict = dict(color='Orchid', linewidth=3)
+    _plot_square(ax1, line_kwargs_dict, direction='pos')
+    # _plot_square(ax2, line_kwargs_dict, direction='pos')
+    # line_kwargs_dict = dict(color='LimeGreen', linewidth=3)
+    _plot_square(ax1, line_kwargs_dict, direction='los', dx=1.1, zorders=[100, 0, 100, 0], loc=-0.1)
+    _plot_square(ax1, line_kwargs_dict, direction='los', dx=1.1, zorders=[100, 0, 100, 0], loc=0.3)
+    _plot_square_split_y(ax2, n19_y, line_kwargs_dict, dx=1.1, loc=-0.1)
+    _plot_square_split_y(ax2, n19_y, line_kwargs_dict, dx=1.1, loc=0.35)
+    ax1.text(0.8, 0, 0.6+0.02, "1", color=line_kwargs_dict['color'], zorder=101)
+    ax1.text(-0.1-0.04, -0.7, 0.6+0.03, "2", color=line_kwargs_dict['color'], zorder=101)
+    ax1.text(0.3-0.04, -0.7, 0.6+0.03, "3", color=line_kwargs_dict['color'], zorder=101)
+    ax2.text(-0.1+0.04, -0.7, 0.6+0.03, "2", color=line_kwargs_dict['color'], zorder=101)
+    ax2.text(0.3+0.04, -0.7, 0.6+0.03, "3", color=line_kwargs_dict['color'], zorder=101)
+
+
+    """ Try plotting Northern Cloud and N19 """
+    # Northern Cloud
+    u, v = np.mgrid[0:10, 0:10]
+    u = u*2.7
+    v = v*1.6
+    uv = np.array([u, v]).reshape(2, v.size)
+    northerncloud_rot = 47
+    theta = np.deg2rad(northerncloud_rot)
+    rot_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+    x, y = rot_matrix.dot(uv).reshape(2, *v.shape)*0.6/10
+    x = x-0.66
+    y = y-0.55
+    z = np.ones_like(y)*n19_y
+    northerncloud_color = "SaddleBrown"
+    ax2.plot_surface(x, z, y, zorder=90, alpha=0.4, color=northerncloud_color)
+    # N19 circle
+    circ_n19 = mpatches.Circle((-0.1, 0.3), 0.15, color='Moccasin', alpha=0.4, zorder=90)
+    ax2.add_patch(circ_n19)
+    art3d.pathpatch_2d_to_3d(circ_n19, z=n19_y, zdir='y')
+    ax2.text(-0.7, n19_y+0.01, 0.6, "Northern Cloud", (np.cos(np.deg2rad(northerncloud_rot)), 0, np.sin(np.deg2rad(northerncloud_rot))), color=northerncloud_color, fontsize=13, ha='left', va='bottom', zorder=101)
+    ax2.text(-0.04, n19_y+0.01, 0.3, "N19", color='b', fontsize=13, ha='center', va='center', zorder=101)
+
+
+    # ax2.view_init(elev=7, azim=270)
+    ax2.view_init(elev=4, azim=273)
+    # ax3.view_init(elev=2, azim=270)
+
+    ax1.yaxis.set_label_text("Observer's Line of Sight")
+    ax1.zaxis.set_label_text("Parallel to filament (Gal. $b$)")
+    ax1.xaxis.set_label_text("Perpendicular to filament (Gal. $l$)")
+
+    ax2.yaxis.set_label_text("LOS")
+    # ax2.zaxis.set_label_text("Approx. Gal $b$")
+    # ax2.xaxis.set_label_text("Approx. Gal $l$")
+    ax2.zaxis.set_label_text("Parallel to filament (Gal. $b$)")
+    ax2.xaxis.set_label_text("Perpendicular to filament (Gal. $l$)")
+
+
+    for i in range(2):
+        figs[i].savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_panel_{chr(i+65)}.pdf"),)
+            # metadata=catalog.utils.create_png_metadata(title=f"biconcave D={diameter} a = {a}",
+            #     file=__file__, func="bubble_geometry"))
 
 
 def bubble_cross_cut(**kwargs):
@@ -6074,6 +6195,9 @@ def bubble_cross_cut(**kwargs):
     February 1, 2024
     Try to make the shell cross cut diagram in matplotlib with fill-between
     """
+
+    # Editing hatch thickness
+    matplotlib.rcParams['hatch.linewidth'] = 6
 
     def biconcave_z(r, diameter, a):
         """
@@ -6121,13 +6245,15 @@ def bubble_cross_cut(**kwargs):
 
     general_arrow_kwargs = dict(zorder=10, width=0.008, head_width=0.05)
 
+    switch_color = True
     color_h2 = marcs_colors[0]
     color_h2_preex = "SlateGray"
     color_h2_preex_alt = "DarkSlateGray"
+    color_h2_preex_n19 = "SaddleBrown"
     color_pdr = marcs_colors[2]
-    color_hii = "Moccasin"
+    color_hii = "Moccasin" if switch_color else "PapayaWhip"
     color_hii_alt = "Goldenrod"
-    color_plasma = "Lavender"
+    color_plasma = "AliceBlue" if switch_color else "Lavender"
     color_plasma_alt = "MediumPurple"
     color_star = "Turquoise"
 
@@ -6217,35 +6343,76 @@ def bubble_cross_cut(**kwargs):
         cr = 0.05 # "Center radius" except  none of these numbers actually use it unmodified.
         # cpos = (-1.1, 0.3)
         cpos = (-0.28, 0.08)
+
+        r_white = mpatches.Rectangle((cpos[0], cpos[1]-cr*1.5), -cr*20, cr*20, zorder=5, color='w')
         # c1 = mpatches.Circle(cpos, cr*1.7, color=color_h2, zorder=6)
         # Use wedges to show partial rings
         # Bottom wedge first. Use the old rectangle displacement (x = -cr, +cr) to find wedge theta limits
         # Get relative theta to the horizontal (need to modify it more). use degrees, it's what wedge uses
         theta_relative = np.rad2deg(np.arccos(1/1.7))*0.9 # cr / cr*1.7, where cr*1.7 is the outer radius of the wedge. Decrement it by a little so that it wraps around the rectangle properly
+        # Bottom molecular gas wedge
         w1_lo = mpatches.Wedge(cpos, cr*1.7, theta1=(180+theta_relative), theta2=(360-theta_relative), color=color_h2, zorder=7)
+        # Top molecular gas wedge
         w1_hi = mpatches.Wedge(cpos, cr*1.7, theta1=theta_relative, theta2=(180-theta_relative), color=color_h2, zorder=7)
-        r1 = mpatches.Rectangle((cpos[0]-cr, cpos[1]+cr*1.3), cr*2, cr*3, color=color_h2_preex, alpha=1, zorder=6)
+        # Northern Cloud
+        r1 = mpatches.Rectangle((cpos[0]-cr, cpos[1]+cr*1.3), cr*2, cr*3, color=color_h2_preex_n19, alpha=1, zorder=6)
+        ax.add_patch(r_white)
         ax.add_patch(r1)
         ax.add_patch(w1_lo)
         ax.add_patch(w1_hi)
 
+        # r_h2_compressed = mpatches.Rectangle((cpos[0]+cr*0.27, cpos[1]-cr*1.6), cr*2, -cr, angle=45, color=color_h2, zorder=8)
+        # ax.add_patch(r_h2_compressed)
+
         # r2_w = mpatches.Rectangle((cpos[0] - cr*2, cpos[1]-2*cr), cr, cr*5, color='w', zorder=8)
         # c2 = mpatches.Circle(cpos, cr*1.5, color=color_pdr, zorder=9)
-        w2 = mpatches.Wedge(cpos, cr*1.5, color=color_pdr, theta1=theta_relative, theta2=(360-theta_relative), zorder=9)
-        # c3 = mpatches.Circle(cpos, cr*1.3, color=color_hii, zorder=10)
-        w3 = mpatches.Wedge(cpos, cr*1.3, color=color_hii, theta1=theta_relative, theta2=(360-theta_relative), zorder=10)
-        # r3_w = mpatches.Rectangle((cpos[0] + cr*0.5, cpos[1]-2*cr), cr*3, cr*5, color='w', zorder=11)
-        # ax.add_patch(r2_w)
+        # Partial
+        if False:
+            w2 = mpatches.Wedge(cpos, cr*1.5, color=color_pdr, theta1=0, theta2=360, zorder=9)
+        else:
+            w2 = mpatches.Wedge(cpos, cr*1.5, color=color_pdr, theta1=theta_relative, theta2=(360-theta_relative), zorder=9)
+        w2_1 = mpatches.Wedge(cpos, cr*1.9, color=color_pdr, theta1=(180+(theta_relative*1)), theta2=(360-(theta_relative*0.9)), zorder=6)
         ax.add_patch(w2)
-        ax.add_patch(w3)
-        # ax.add_patch(r3_w)
-
+        ax.add_patch(w2_1)
+        # c3 = mpatches.Circle(cpos, cr*1.3, color=color_hii, zorder=10)
+        if False:
+            w3 = mpatches.Wedge(cpos, cr*1.3, color=color_hii, theta1=theta_relative, theta2=(360-theta_relative), zorder=10)
+            ax.add_patch(w3)
+        elif False:
+            w3 = mpatches.Wedge(cpos, cr*1.3, color=color_hii, theta1=0, theta2=360, zorder=10)
+            ax.add_patch(w3)
+        else:
+            # Partial circle, opening to NGC 6611
+            w3 = mpatches.Wedge(cpos, cr*1.3, color=color_hii, theta1=theta_relative, theta2=(360-(theta_relative*0.8)), zorder=10)
+            # Wedge at the bottom
+            w4 = mpatches.Wedge(cpos, cr*2.1, color=color_hii, theta1=(180+(theta_relative*1)), theta2=(360-(theta_relative*0.8)), zorder=5)
+            # Hatched side towards 6611
+            w5 = mpatches.Wedge(cpos, cr*1.3, ec=color_hii, fill=False, linewidth=0, theta2=theta_relative, theta1=(360-(theta_relative*0.8)), hatch="-", zorder=10)
+            w6 = mpatches.Wedge(cpos, cr*1.5, ec=color_pdr, fill=False, linewidth=0, theta2=theta_relative, theta1=(360-(theta_relative*0.9)), hatch="-", zorder=9)
+            ax.add_patch(w3)
+            ax.add_patch(w4)
+            ax.add_patch(w5)
+            ax.add_patch(w6)
         c4 = mpatches.Circle(cpos, cr*0.9, color=color_plasma, zorder=12)
         ax.add_patch(c4)
 
+
+
+        """ Text labels """
+        # W584 and N19
+        ax.text(cpos[0] + cr*0.1, cpos[1] + cr*0.15, "W584 (O9 V)", ha='center', va='center', color='k', fontsize=13, zorder=13)
+        ax.text(cpos[0] + cr*0.0, cpos[1] - cr*0.5, "N19", ha='center', va='center', color='k', fontsize=17, fontweight='bold', zorder=13)
+        # NGC 6611
+        ax.text(0.007, 0.04, "NGC 6611", ha='center', va='center', color='k', fontsize=17, fontweight='bold', zorder=13)
+        # Northern Cloud
+        ax.text(cpos[0] + cr*0.0, cpos[1] + cr*2, "Northern Cloud", ha='center', va='center', color='w', fontsize=13, zorder=13)
+        # Filament
+        # ax.text(0, 0.17, "Filament", ha='center', va='center', color='k', fontsize=13, zorder=13)
+
+        # One star
         ax.scatter([cpos[0]], [cpos[1]], s=90, marker='*', facecolor=color_star, edgecolor='k', zorder=13)
 
-        # scale bar with "broken" thing
+        """ Scale bar with "broken" thing """
         # px implies "point x", idk, i just need to use something different than x1 because I have arrays named that
         px0 = cpos[0]
         px1 = 0
@@ -6264,6 +6431,7 @@ def bubble_cross_cut(**kwargs):
         for x in [xlo, xhi]:
             ax.plot([x-dx1+dx2, x+dx1+dx2], [y[0]-dy, y[0]+dy], **scalebar_kwargs)
         ax.text(px0 + 0.5*xlen, y[0], "d = ?", color='k', fontsize=14, fontweight='bold', ha='center', va='center', zorder=13)
+
 
     if select > 0:
         # fx, fy = fig.get_size_inches()
@@ -6291,7 +6459,7 @@ def bubble_cross_cut(**kwargs):
     ax.axis('off')
     fig.subplots_adjust(top=1, bottom=0, left=0, right=1)
     # plt.show()
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_crosscut_{select}.png"),
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_crosscut_{select}{'altcolor' if switch_color else ''}.png"),
         metadata=catalog.utils.create_png_metadata(title="largest shell D=2 a=(0.1, 2, 0)",
             file=__file__, func="bubble_cross_cut"))
 
@@ -6483,7 +6651,29 @@ def bubble_simulated_projection():
 13 CII
 """
 
-def spectra_13cii():
+def set_circle_radius(reg_list, fixed_diameter_beams):
+    """
+    Feb 28, 2024
+    Set the radius of circles in reg_list to be fixed_diameter_beams across
+    15.5 arcsec is beamwidth
+    Meant for use with the 13CII circles in the two functions below
+    :returns: string stub with info about circle diameter
+    """
+    if fixed_diameter_beams is None:
+        diameter_stub = ""
+    else:
+        diameter_stub = f"_{fixed_diameter_beams}beamsacross"
+
+    for reg in reg_list:
+        print(reg.radius/15.5 * 2, " beams across")
+        if fixed_diameter_beams is not None:
+            fixed_radius_arcsec = 15.5*u.arcsec * fixed_diameter_beams / 2
+            reg.radius = fixed_radius_arcsec
+    return diameter_stub
+
+
+
+def spectra_13cii(fixed_diameter=None):
     """
     January 15, 2024
     Compare 13CII spectra to 12CII
@@ -6527,6 +6717,9 @@ def spectra_13cii():
     reg_filename_short = "sofia/13cii_spots.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_list = reg_list[:2] # just the two Circles
+    # Set circle radius
+    diameter_stub = set_circle_radius(reg_list, fixed_diameter)
+
     reg_dict = {reg.meta['text']: reg for reg in reg_list}
     print(reg_dict)
     # Load CII
@@ -6664,12 +6857,13 @@ def spectra_13cii():
 
     plt.subplots_adjust(wspace=0.3, left=0.07, right=0.93, top=0.96)
     # plt.show()
-    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"cii_13cii_tau_{assumed_13cii_dv:.1f}_circles.png"),
+    # Formerly: cii_13cii_tau_{assumed_13cii_dv:.1f}_circles.png (added "spectra_" 2024-02-28)
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"spectra_cii_13cii_tau_{assumed_13cii_dv:.1f}_circles{diameter_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title="Guevara 2020 plot inspiration",
             file=__file__, func="spectra_13cii"))
 
 
-def contours_13cii():
+def contours_13cii(fixed_diameter=None):
     """
     January 17, 2024
     Going to see what the zoomed-in contours of 13CII look like
@@ -6677,6 +6871,9 @@ def contours_13cii():
     reg_filename_short = "sofia/13cii_spots.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     reg_list = reg_list[:2] # just the two Circles
+
+    diameter_stub = set_circle_radius(reg_list, fixed_diameter)
+
     # Load CII
     cii_stub = "cii"
     cii_cube_obj = cube_utils.CubeData(get_map_filename(cii_stub)).convert_to_kms().convert_to_K()
@@ -6718,7 +6915,7 @@ def contours_13cii():
     plt.tight_layout()
 
     # plt.show()
-    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"contours_13cii_{cii_stub}_{make_simple_vel_stub(velocity_limits)}.png"),
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"contours_13cii_{cii_stub}_{make_simple_vel_stub(velocity_limits)}{diameter_stub}.png"),
         metadata=catalog.utils.create_png_metadata(title=f"13cii contours 2,3,4 sigma {onesigma_mom0:.2f}",
             file=__file__, func="contours_13cii"))
 
@@ -7014,14 +7211,15 @@ if __name__ == "__main__":
     # peak_T_velocity_map()
     # peak_T_and_moment_maps_CO(isotope='13', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
     # peak_T_and_moment_maps_CO(isotope='12', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
-    # contours_13cii()
+    # contours_13cii(x)
+    # spectra_13cii(x)
     # spitzer_expansion_plot()
     # ekin_ew_vs_age_plot()
     # integrate_cii_and_FIR_luminosities()
     # trim_CO_mass_to_CII_grid(velocity_limits=(21*kms, 27*kms))
     # bubble_geometry()
-    # bubble_cross_cut(select=1)
+    bubble_cross_cut(select=2)
     # fake_bubble_spectra()
     # bubble_simulated_projection()
     # vizier_query_dark_clouds()
-    n19_self_absorption()
+    # n19_self_absorption()
