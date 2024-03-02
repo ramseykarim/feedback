@@ -7070,6 +7070,15 @@ if __name__ == "__main__":
     # fast_pv(reg_filename_or_idx="catalogs/N19_pv_2.reg", line_stub_list=['ciiAPEX', '12co32'])
     # fast_pv(reg_filename_or_idx=("catalogs/m16_west_cavity_pvs.reg", 0), line_stub_list=['cii-30', '12co32'])
 
+    # error = False
+    # i = 1
+    # while not error:
+    #     try:
+    #         fast_pv(reg_filename_or_idx=("catalogs/N19_pv_paths_4.reg", i), line_stub_list=['ciiAPEX', '12co32'])
+    #         i += 1
+    #     except:
+    #         error = True
+
     # blue clump large PV
     # fast_pv(reg_filename_or_idx=("catalogs/m16_pvs_blueshifted_clump.reg", 0), line_stub_list=['ciiAPEX', '12co32'], velocity_limits=(-5*kms, 50*kms))
 
@@ -7218,7 +7227,7 @@ if __name__ == "__main__":
     # integrate_cii_and_FIR_luminosities()
     # trim_CO_mass_to_CII_grid(velocity_limits=(21*kms, 27*kms))
     # bubble_geometry()
-    bubble_cross_cut(select=2)
+    # bubble_cross_cut(select=2)
     # fake_bubble_spectra()
     # bubble_simulated_projection()
     # vizier_query_dark_clouds()

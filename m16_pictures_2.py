@@ -608,5 +608,127 @@ def m16_blue_clump():
     # plt.show()
 
 
+def pv_n19():
+    """
+    March 1, 2024
+    copying framework form m16_bubble.fast_pv
+    """
+    reg_filename_tup = ("catalogs/N19_pv_paths_5.reg", 1)
+    pv_path, point_reg_list, reg_fn_stub = get_pv_and_regions(reg_filename_tup)
+    velocity_limits = (8*kms, 35*kms)
+
+    def _get_levels(line_stub):
+        """
+        OLD <Get levels from the above dictionary. Return None if not present.>
+        NEW Get levels from the vlim memo functions
+            future: get levels from vlim memo only if not specified in function call
+        """
+        return get_levels(line_stub)
+
+    def _get_pv_vmax(line_stub):
+        """
+        Get vmax from vlim memo functions
+            future: get from vlim memo only if not specified in function call
+        """
+        return get_generic_vlim(line_stub).get("vmax", None)
+
+
+    fig = plt.figure(figsize=(10, 8))
+    line_stub_list = ['ciiAPEX', '12co32']
+    pv_slices = []
+    for line_stub in line_stub_list:
+        cube_filename_short = get_map_filename(line_stub)
+        cube = cube_utils.CubeData(cube_filename_short).convert_to_K()
+        pv_slices.append(pvextractor.extract_pv_slice(cube.data.spectral_slab(*velocity_limits), pv_path))
+    ls0, ls1 = line_stub_list
+    sl0, sl1_raw = pv_slices
+    aspect_ratio = sl0.data.shape[1]/(1.2*sl0.data.shape[0])
+    sl0.header['CTYPE2'] = sl1_raw.header['CTYPE2'] = "VRAD"
+    sl1_raw.header['RESTFRQ'] = sl0.header['RESTFRQ']
+    sl1_reproj = reproject_interp((sl1_raw.data, sl1_raw.header), sl0.header, return_footprint=False)
+    ax = plt.subplot(111, projection=WCS(sl0.header))
+    image_cmap = cmocean.cm.matter #'plasma'
+    im = ax.imshow(sl0.data, origin='lower', cmap=image_cmap, vmin=0, vmax=_get_pv_vmax(ls0), aspect=aspect_ratio)
+    levels =_get_levels(ls0)
+    e0 = get_onesigma(ls0)
+    print(ls0, e0)
+    levels = np.arange(e0*2, 35, e0*4)
+    print(ls0, levels)
+    cs = ax.contour(sl0.data, colors='k', linewidths=1, linestyles=':', levels=levels)
+    cax = ax.inset_axes([1, 0, 0.05, 1])
+    pv_cbar = fig.colorbar(im, cax=cax)
+    pv_cbar.set_label("T$_{\\rm MB}$ "+f"({cube.data.unit.to_string('latex_inline')})", fontsize=13)
+    for l in cs.levels:
+        pv_cbar.ax.axhline(l, color='k', linewidth=1.5, linestyle=':')
+    image_color = im.cmap(0.8) #matplotlib.colormaps[image_cmap](0.9)
+    # Overlay [1]
+    contour_cmap = cmocean.cm.algae_r #'cool_r'
+    levels = _get_levels(ls1)
+    e1 = get_onesigma(ls1)
+    levels = np.arange(e1*4, 28, e1*9)
+    pvvmax = _get_pv_vmax(ls1)
+    print(ls1, e1)
+    print(ls1, levels)
+    cs = ax.contour(sl1_reproj, cmap=contour_cmap, linewidths=1.5, levels=levels, vmax=pvvmax)
+    for l in cs.levels:
+        pv_cbar.ax.axhline(l, color=cs.cmap(cs.norm(l)), linewidth=2)
+    contour_color = cs.cmap(0.3) #matplotlib.colormaps[contour_cmap](0.05)
+    """ Text """
+    text_x, dx = 0.01, 0
+    text_y, dy = 0.02 + 0.03*2, -0.03
+    ax.text(text_x + 0*dx, text_y + 0*dy, get_data_name(ls1)+": solid contour", fontsize=13, fontweight='bold', color=contour_color, va='center', ha='left', transform=ax.transAxes)
+    ax.text(text_x + 1*dx, text_y + 1*dy, get_data_name(ls0.replace("APEX", ""))+": image & dotted contour", fontsize=13, fontweight='bold', color=image_color, va='center', ha='left', transform=ax.transAxes)
+    ax.text(text_x + 2*dx, text_y + 2*dy, "Both data on the $\sim$20"+u.arcsec.to_string('latex_inline')+" CO beam", fontsize=13, fontweight='bold', color='k', va='center', ha='left', transform=ax.transAxes)
+    text_x, dx = 0.01, 0.55
+    text_y, dy = 0.02, 0
+    ax.text(text_x + 1*dx, text_y + 0*dy, "N19 expanding shell: half-ellipse", fontsize=13, fontweight='bold', color='k', va='center', ha='left', transform=ax.transAxes)
+    ax.coords[1].set_format_unit(kms)
+    ax.coords[1].set_major_formatter('x')
+    ax.coords[1].set_axislabel(f"Velocity ({kms.to_string('latex_inline')})", fontsize=13)
+    ax.coords[0].set_format_unit(u.arcsec)
+    ax.coords[0].set_major_formatter('x')
+    ax.coords[0].set_axislabel(f"Offset, east to west ({u.arcsec.to_string('latex_inline')})", fontsize=13)
+
+    # Mark the shell
+    transform = ax.get_transform('world')
+    dtheta = np.pi*0.15 * 0
+    t = np.linspace(np.pi - dtheta, 2*np.pi + dtheta, 20)
+    st, ct = np.sin(t), np.cos(t)
+    shell_center = 400*u.arcsec.to(u.deg) # arcsec offset
+    exp_shell_setting = 2
+    if exp_shell_setting == 0:
+        systematic_velocity = 19*1e3
+    elif exp_shell_setting == 1:
+        systematic_velocity = 20*1e3
+    elif exp_shell_setting == 2:
+        systematic_velocity = 21*1e3
+    def _make_shell_xy(exp_vel_kms, radius_pc):
+        shell_radius = ((radius_pc*u.pc)/(los_distance_M16/u.radian)).to(u.deg).to_value()
+        expansion_velocity = exp_vel_kms*1e3
+        x = shell_radius * ct + shell_center
+        y = expansion_velocity * st + systematic_velocity
+        return x, y
+    if exp_shell_setting == 0:
+        ax.plot(*_make_shell_xy(4, 2.3), color='w', linewidth=3, transform=transform)
+    elif exp_shell_setting == 1:
+        ax.plot(*_make_shell_xy(5, 2.35), color='w', linewidth=3, transform=transform)
+    elif exp_shell_setting == 2:
+        ax.plot(*_make_shell_xy(6, 2.4), color='w', linewidth=3, transform=transform)
+    # ax.plot(*_make_shell_xy(3, 2.0), color='w', linewidth=2, linestyle="--", transform=transform)
+    # ax.plot(*_make_shell_xy(6, 2.7), color='w', linewidth=2, linestyle="--", transform=transform)
+
+    fig.subplots_adjust(left=0.06, right=0.9, bottom=0.08, top=0.97)
+    # 2023-05-06,11, 06-30
+    savename = os.path.join(catalog.utils.todays_image_folder(), f"n19_pv_{ls1}_on_{ls0}_along_{reg_fn_stub}_expshell{chr(65+exp_shell_setting)}.png")
+    fig.savefig(savename, metadata=catalog.utils.create_png_metadata(title='pv',
+        file=__file__, func="pv_n19"))
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
-    big_average_spectrum_figure()
+    pv_n19()
