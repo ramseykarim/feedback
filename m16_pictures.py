@@ -1255,8 +1255,10 @@ def jwst3um_to_fir_figure():
     # wcs_kwargs['pixel_scale'] = 0.5 * u.arcsec
     wcs_kwargs['pixel_scale'] = 1 * u.arcsec # 14m dish
 
-    # new_resolution = 1.5 * u.arcsec
-    new_resolution = 2.5 * u.arcsec # 14m dish
+    new_resolution = 1.5 * u.arcsec; beamstub = "1p5"
+    # new_resolution = 2.5 * u.arcsec; beamstub = "2p5" # 14m dish
+
+    extra_stub = ""
 
     wcs_kwargs['ref_coord'] = footprint_box_reg.center
     wcs_kwargs['grid_shape'] = tuple(int(round((x / wcs_kwargs['pixel_scale']).decompose().to_value())) for x in (footprint_box_reg.height, footprint_box_reg.width))
@@ -1269,8 +1271,8 @@ def jwst3um_to_fir_figure():
         fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/jw02739-o001_t001_nircam_clear-f335m_i2d.fits")
         reproj_kwargs = {}
         # Set up kernel for reprojection from 0.13'' to 1.5''
-        # new_resolution = 1.5 * u.arcsec
-        new_resolution = 2.5 * u.arcsec # 14m dish
+        new_resolution = 1.5 * u.arcsec; beamstub = "1p5"
+        # new_resolution = 2.5 * u.arcsec; beamstub = "2p5" # 14m dish
         kernel_fwhm = np.sqrt(new_resolution.to_value()**2 - 0.13**2) * u.arcsec
         # Function needs width between +/- sigma, so 2*FWHM/2.355
         # Also convert to pixels by dividing by pixel_scale (0.5''). The result is around 2.5 pixels (output image). For 14m dish (2.5'' beam, 1'' pixel), like 2.1 pixels
@@ -1313,7 +1315,7 @@ def jwst3um_to_fir_figure():
         I am following irac8um_to_cii_figure() pretty closely here
         """
         # Already reproj and conv filename
-        fn_3um = catalog.utils.search_for_file("jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_conv_2p5as.fits")
+        fn_3um = catalog.utils.search_for_file(f"jwst/nircam/jw02739-o001_t001_nircam_clear-f335m/f335m_conv_{beamstub}as.fits")
         img, hdr = fits.getdata(fn_3um, header=True)
         f335m_bandwidth_wl = 0.347 * u.micron # https://jwst-docs.stsci.edu/jwst-near-infrared-camera/nircam-instrumentation/nircam-filters
         ### WRONG!!!! # f335m_bandwidth = f335m_bandwidth.to(u.Hz, equivalencies=u.spectral()) ### WRONG
@@ -1412,6 +1414,7 @@ def jwst3um_to_fir_figure():
 
         fig = plt.figure(figsize=(15, 5))
         cii_vmax = 0.003
+        cii_vmax = 0.0016; extra_stub += "_lowvlim"
         matplotlib.rcParams['mathtext.fontset'] = 'stix'
         matplotlib.rcParams['font.family'] = 'STIXGeneral'
         cmap = 'jet'
@@ -1459,7 +1462,7 @@ def jwst3um_to_fir_figure():
         savedir = catalog.utils.todays_image_folder()
         if not os.path.exists(savedir):
             os.makedirs(savedir)
-        fig.savefig(os.path.join(savedir, "cii_fir_3um_figure_2p5as.png"),
+        fig.savefig(os.path.join(savedir, f"cii_fir_3um_figure_{beamstub}as{extra_stub}.png"),
             metadata=catalog.utils.create_png_metadata(title='NIRCAM F335M used to predict cii,FIR. next to upGREAT CII',
                 file=__file__, func="jwst3um_to_fir_figure"))
 
@@ -3500,3 +3503,5 @@ if __name__ == "__main__":
     print("Did you mean m16_pictures_2?")
 
     # irac8um_to_cii_figure_2p5beam()
+
+    jwst3um_to_fir_figure()

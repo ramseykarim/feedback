@@ -2825,7 +2825,7 @@ def calc_mass_from_masked_data():
     Using the 12co32 mask, PMO-grid data, find the mass for all the column density measurements.
     0.06404582 pc2 is the pixel area
     """
-    # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv"; reg_stub = "N19"
+    # data_fn = "misc_regrids/sample_mask_N19_11.0.21.0_vals_regrid.csv"; reg_stub = "N19"
     data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; reg_stub = "BNR"
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     cd_colnames = [colname for colname in data_df.columns if "column_density" in colname]
@@ -2843,8 +2843,8 @@ def calc_mass_from_masked_data():
         cdtot = np.sum(col) * u.cm**-2 # works even though there are nans!
         pixel_area_physical = 0.06404582 * u.pc**2 # see notes 2023-12-30
         mass = (cdtot * pixel_area_physical * 2 * Hmass * mean_molecular_weight_neutral).to(u.solMass)
-        print(f"mean, std cd {cdavg:.2E} +/- {cdstd:.2E}")
-        print(f"mass {mass:.2f}")
+        print(f"mean, std cd {cdavg:.1E} +/- {cdstd:.1E}")
+        print(f"mass {mass:.2f}\n\t({mass:.1E})")
         print()
 
 def sum_chisq_to_get_masked_area_errorbars():
@@ -3323,6 +3323,7 @@ def unified_chisq_plotting_system(region_label="N19", abscal_pct=10):
     text_kwargs = dict(ha='right', va='top')
 
     """ Get individual pixel solutions and errors """
+    print(f"REGION: {region_label}")
     # We still have access to chisq_list from above
     soln_tups = []
     error_tups = []
@@ -3363,8 +3364,17 @@ def unified_chisq_plotting_system(region_label="N19", abscal_pct=10):
         # line_f(soln_mean, color=color, linestyle='--')
         # line_f(soln_median, color=color)
         # span_f(lo, hi, color=color, alpha=0.2)
-
-
+        param_linear = lambda lx : 10.**lx
+        param_fmt = lambda x : f"{x:.1E}"
+        param_fmt_l = lambda lx : f"{lx:.2f}"
+        param_linear_diff_from_log = lambda med_lx, lim_lx : param_linear(lim_lx) - param_linear(med_lx)
+        print(f"\t param {i}")
+        print("\t abs")
+        print("\t"*2, tuple(param_fmt_l(x) for x in (soln_median, lo, hi)))
+        print("\t"*2, tuple(param_fmt(param_linear(x)) for x in (soln_median, lo, hi)))
+        print("\t rel")
+        print("\t"*2, tuple(param_fmt_l(x) for x in (soln_median, soln_median-lo, hi-soln_median)))
+        print("\t"*2, param_fmt(param_linear(soln_median)), param_fmt(param_linear_diff_from_log(soln_median, lo)), "+", param_fmt(param_linear_diff_from_log(soln_median, hi)))
 
         # [ax_center.axvline, ax_center.axhline][i](soln_median, color='k', alpha=0.7)
         # [ax_center.axvspan, ax_center.axhspan][i](lo, hi, color='k', alpha=0.2)
@@ -3440,8 +3450,11 @@ def mask_footprint_reference_plot():
         ax.contour(mask_reproj, levels=[0.5], colors='kw'[i], linewidths=4)
 
 
-    # ax.set_xlabel("Galactic longitude")
-    # ax.set_ylabel("Galactic latitude")
+    ax.coords[0].set_major_formatter("d.d")
+    ax.coords[1].set_major_formatter("d.d")
+    ax.set_xlabel("Galactic Longitude")
+    ax.set_ylabel("Galactic Latitude")
+    ax.text(0.02, 0.98, get_data_name(ref_stub), color='white', fontsize=15, transform=ax.transAxes, ha='left', va='top')
     fig.tight_layout()
     # plt.show()
     # return
@@ -3488,9 +3501,9 @@ def trim_CO_mass_to_CII_grid(velocity_limits=None):
     pmo_mass_sum_subset = np.nansum(pmo_mass_pixel_subset) * u.solMass
 
     print("velocity", make_vel_stub(velocity_limits))
-    print(f"CII {cii_mass_sum:.0f}")
-    print(f"PMO full {pmo_mass_sum:.0f}")
-    print(f"PMO subset {pmo_mass_sum_subset:.0f}")
+    print(f"CII {cii_mass_sum:.0f}\n\t{cii_mass_sum:.1E}")
+    print(f"PMO full {pmo_mass_sum:.0f}\n\t{pmo_mass_sum:.1E}")
+    print(f"PMO subset {pmo_mass_sum_subset:.0f}\n\t{pmo_mass_sum_subset:.1E}")
 
     plt.subplot(221)
     plt.imshow(mask_reproj, origin='lower')
@@ -5750,26 +5763,48 @@ def spitzer_expansion_plot():
     Spitzer expansion plot from Xander's data.
     Data in misc_data/spitzer_expansion.txt
     """
+    def _calc_normalized_mass(shell_mass, q0):
+        """ See 2024-01-23 notes for details; M_norm is in cgs with units cm3 """
+        particle_mass = Hmass * 1.33
+        beta = 2.6e-13 * u.cm**3 / u.s
+        Mnorm = (beta * shell_mass / particle_mass / q0).decompose()
+        return Mnorm.to(u.cm**3).to_value()
+
+    m16_params = {
+        # shell mass, Q0
+        'm16': (1e4*u.solMass, 8.43e49 / u.s),
+        'n19': (650*u.solMass, 7.43e47 / u.s),
+    }
+    m16_velocities = {'m16': 10, 'n19': 4}
+
+    m16_vel_errors = {'m16': 2, 'n19': 1} # absolute
+    m16_mass_errors = {'m16': 0.5, 'n19': 0.5} # fractional
+
     data_fn = os.path.join(catalog.utils.misc_data_path, "spitzer_expansion.txt")
     data = np.loadtxt(data_fn, skiprows=3)
     with open(data_fn, 'r') as f:
         densities = [float(x) for x in f.readline().split()[1:]]
     colors = {1e5: 'orange', 1e4: 'red', 1e3: 'green', 1e2: 'blue'}
+    colors = {n: marcs_colors[i] for n, i in zip((1e5, 1e4, 1e3, 1e2), (2, 3, 4, 5))}
     v_array = data[:, 0]
     fig = plt.figure(figsize=(8, 8))
-    for i in range(1, data.shape[1]):
-        plt.plot(v_array, data[:, i], label=densities[i-1], color=colors[densities[i-1]])
+    for i in list(range(1, data.shape[1]))[::-1]:
+        exp_str = f"{int(np.log10(densities[i-1]))}"
+        label = "$10^{" + exp_str + "}$ " + (u.cm**-3).to_string('latex_inline')
+        plt.plot(v_array, 1./data[:, i], color=colors[densities[i-1]], zorder=3)
+        plt.text(v_array[v_array.size*(30+i)//48]/1.02, 1./data[:, i][v_array.size*(30+i)//48]*1.005, label, color=colors[densities[i-1]], rotation=-54, rotation_mode='anchor')
+        # plt.plot([v_array[v_array.size*2//3]], [1./data[:, i][v_array.size*2//3]], marker='D')
 
     data_table = """| region | v | M | Nlyc | M_nor |
 | ---- | ---- | ---- | ---- | ---- |
-| 1977 | 1.5 | 700 | 1 | 9.89E-01 |
-| m43 | 6 | 7 | 1.5 | 6.59E-03 |
-| Veil | 13 | 1500 | 70 | 3.03E-02 |
-| RCW36 | - | 1000 | 6 | 2.36E-01 |
+| NGC 1977 | 1.5 | 700 | 1 | 9.89E-01 |
+| M43 | 6 | 7 | 1.5 | 6.59E-03 |
+| Orion Veil | 13 | 1500 | 70 | 3.03E-02 |
+| RCW 36 | - | 1000 | 6 | 2.36E-01 |
 | RCW 120 | 15 | 500 | 38 | 1.86E-02 |
-| RCW 49 | 13 | 24000 | 3900 | 8.70E-03 |
-| 30 Dor | 25 | 4.50E+05 | 1.20E+05 | 5.30E-03 |
-| N19_X | 5 | 700 | 18 | 5.50E-02 |"""
+| RCW 49 | 13 | 24000 | 3900 | 8.70E-03 |"""
+# | 30 Dor | 25 | 4.50E+05 | 1.20E+05 | 5.30E-03 | # 30 Dor goes way off the page
+# | N19_X | 5 | 700 | 18 | 5.50E-02 |
     # colnames = [x.strip() for x in [0].split('|') if x.strip()]
     rows = [[x.strip() for x in line.split('|') if x.strip()] for line in data_table.split('\n')]
     colnames = rows[0]
@@ -5781,11 +5816,57 @@ def spitzer_expansion_plot():
             continue
         df[col] = df[col].astype('float')
 
+    source_vel_errors = {
+        "NGC 1977": 0.3, "M43": 0.3, "Orion Veil": 0.3, "RCW 36": 0.1, "RCW 120": 0.1, "RCW 49": 0.3,
+    } # fractional
+    source_mass_errors = {
+        "NGC 1977": 0.5, "M43": 0.5, "Orion Veil": 0.5, "RCW 36": 0.3, "RCW 120": ((500-40.)/500, (520.-500)/500), "RCW 49": 0.3,
+    } # fractional
+
+    def _get_vel_errors(name, vel):
+        if name in m16_vel_errors:
+            verr = m16_vel_errors[name]
+            # These are absolute
+        else:
+            verr = source_vel_errors[name]
+            verr = vel * verr # these are fractional
+        return verr
+
+    def _get_mass_errors(name, mass):
+        if name in m16_mass_errors:
+            merr = m16_mass_errors[name]
+        else:
+            merr = source_mass_errors[name]
+        # All fractional. One is asymmetric
+        if isinstance(merr, tuple):
+            # asymmetric
+            merr = mass * np.array(merr)[::-1][:, np.newaxis]
+        else:
+            merr = mass * merr
+        return merr
+
     # adjust approximately by my N19 Q0 value
-    df.loc[df['region']=='N19', 'M_nor'] = 2 * df[df['region']=='N19']['M_nor']
+    # df.loc[df['region']=='N19', 'M_nor'] = 2 * df[df['region']=='N19']['M_nor']
     # essentially doesn't matter, only pushes the point up a tiny bit, stays within the same two density contours
 
-    plt.plot(df['v'], df['M_nor'], linestyle='none', marker='o', color=marcs_colors[0])
+    x_text_adjust = 1.06
+    y_text_adjust = 1.19
+    text_kwargs = dict(ha='center', fontsize=15)
+
+    xy_text_adjust = {
+        "NGC 1977": (1/1.05, 1.7),
+        "M43": (1, 1.6),
+        "Orion Veil": (1.1, 1/2.9),
+        "RCW 36": (1, 1),
+        "RCW 120": (1.02, 1.14),
+        "RCW 49": (1, 1.4),
+        "m16": (1/1.5, 1/1.1),
+        "n19": (1.2, 1.2),
+    }
+
+
+    # plt.plot(df['v'], 1./df['M_nor'], linestyle='none', marker='o', markersize=10, color=marcs_colors[0])
+    # plt.plot(df['v'], 1./df['M_nor'], linestyle='none', marker='o', markersize=10, color=marcs_colors[0])
     for i in df.index:
         row = df.loc[i]
         name = row['region']
@@ -5793,23 +5874,46 @@ def spitzer_expansion_plot():
         mnorm = row['M_nor']
         if np.isnan(v):
             continue
-        plt.text(v, mnorm, name, ha='center')
+        plt.errorbar(v, 1./mnorm, xerr=_get_vel_errors(name, v), yerr=_get_mass_errors(name, 1./mnorm), linestyle='none', marker='s', markersize=10, color=marcs_colors[0], capsize=5)
+        x_text_adjust, y_text_adjust = xy_text_adjust[name]
+        plt.text(v*x_text_adjust, 1./mnorm*y_text_adjust, name, **text_kwargs, zorder=15)
 
-    new_data = {
-        'N19': (4, 0.204), 'M16': (10, 0.0275)
-    }
-    for name in new_data:
-        v, mnorm = new_data[name]
-        plt.plot(v, mnorm, 'o', color=marcs_colors[1])
-        plt.text(v, mnorm, name, ha='center')
+    for name in m16_velocities:
+        v = m16_velocities[name]
+        mnorm = _calc_normalized_mass(*m16_params[name])
+        # plt.plot(v, 1./mnorm, 'D', markersize=10, color=marcs_colors[1], zorder=10)
+        plt.errorbar(v, 1./mnorm, xerr=_get_vel_errors(name, v), yerr=_get_mass_errors(name, 1./mnorm), linestyle='none', marker='s', markersize=10, color=marcs_colors[1], capsize=5)
+        x_text_adjust, y_text_adjust = xy_text_adjust[name]
+        plt.text(v*x_text_adjust, 1./mnorm*y_text_adjust, name.capitalize(), **text_kwargs, zorder=15)
 
-    plt.legend()
+    if False:
+        """ Test out an error bar or limit thing for N19 considering H2 mass """
+        n19_mass, n19_q0 = m16_params['n19']
+        n19_mass_2 = 4200*u.solMass + n19_mass
+        n19_mnorm_both = np.array([_calc_normalized_mass(x, n19_q0) for x in [n19_mass, n19_mass_2]])
+        n19_v_both = [m16_velocities['n19']]*2
+        plt.plot(n19_v_both, 1./(n19_mnorm_both), marker='_', linestyle='-', markersize=10, color=marcs_colors[1], zorder=5)
+
+        n19_mass, n19_q0 = m16_params['m16']
+        n19_mass_2 = 100*u.solMass
+        n19_mnorm_both = np.array([_calc_normalized_mass(x, n19_q0) for x in [n19_mass, n19_mass_2]])
+        n19_v_both = ([m16_velocities['m16']]*2)
+        plt.plot(n19_v_both, 1./(n19_mnorm_both), marker='_', linestyle='-', markersize=10, color=marcs_colors[1], zorder=5)
+
+
+    plt.legend(handles=[
+        mpatches.Patch(color=marcs_colors[i], label=["Literature", "This work"][i]) for i in range(2)
+    ], loc='lower left')
     plt.xscale('log')
     plt.yscale('log')
     plt.xlim((1, 20))
-    plt.ylim((1e-3, 10))
-    plt.xlabel("Expansion Velocity (km s$^{-1}$)")
-    plt.ylabel("M$_{\\rm norm}$")
+    plt.gca().invert_xaxis()
+    # plt.ylim((1e-3, 10))
+    plt.ylim((0.1, 1e3))
+    plt.xlabel(f"Expansion Velocity [{kms.to_string('latex_inline')}]", fontsize=15)
+    # plt.ylabel("M$_{\\rm norm}$" + f" ({(u.cm**3).to_string('latex_inline')})", fontsize=15)
+    plt.ylabel("\"Equivalent\" density " + f" [{(u.cm**-3).to_string('latex_inline')}]", fontsize=15)
+    plt.tight_layout()
     plt.savefig(os.path.join(catalog.utils.todays_image_folder(), "spitzer_expansion.png"),
         metadata=catalog.utils.create_png_metadata(title="both n19 Q0 values",
             file=__file__, func="spitzer_expansion_plot"))
@@ -5850,30 +5954,57 @@ def integrate_cii_and_FIR_luminosities():
     print(f"FIR (40-500 from 70,160,250) {fir_lum}")
 
 
-def ekin_ew_vs_age_plot():
+def ekin_ew_vs_age_plot(setting=0):
     """
     January 29, 2024
     Recreate the figure from Xander's 2024-01-23 email
     Ekin/Ew vs Age
     """
     existing_data = {
-        'RCW 36\n(bipolar)': (0.7, 7.38e-3),
+        'RCW 36\n(bipolar)': (0.45, 7.38e-3), # old age was 0.7 which was the "constant velocity" age
         'RCW 120': (0.15, 8.21e-1),
         'M42': (0.2, 4.89e-1),
-        'RCW 49': (2, 6.57e-2),
+        'RCW 49': (2*0.97, 6.7e-3),
+    }
+    data_errs = {
+        'RCW 36\n(bipolar)': 0.36, # 36% KE error per 2024-03-29 calculation
+        'RCW 120': (1./12, 1), # see 2024-03-29 and 2024-04-01
+        'M42': 0.78,
+        'RCW 49': 0.67,
+        'N19': 0.71,
+        'M16': (0.001, 1.4),
+    }
+
+    age_errors = {
+        'RCW 36\n(bipolar)': (0.3, 0.6), # 0.3-0.6
+        'RCW 120': (0.15, 0.4),
+        'M42': (0.15, 0.25), # 0.2 +/- 0.05
+        'RCW 49': (0.5, 2.0),
+        'N19': (0.2, 0.7),
+        'M16': (1, 3),
+    }
+
+    age_type = {
+        'RCW 36\n(bipolar)': 'k',
+        'RCW 120': 'k',
+        'M42': 'k',
+        'RCW 49': 's',
+        'N19': 'k',
+        'M16': 's',
     }
 
     new_data = {
         'N19': {
-            'age': 0.5, 'v': 4, 'mshell': 700, 'Ew': 1.1e47,
+            'age': 0.5, 'v': 4, 'mshell': 650, 'Ew': 1.1e47,
         },
         'M16': {
-            'age': 2, 'v': 10, 'mshell': 1e4, 'Ew': 9.8e50,
+            'age': 2*1.03, 'v': 10, 'mshell': 1e4, 'Ew': 9.8e50,
         },
     }
     units = {'age': u.Myr, 'v': kms, 'mshell': u.solMass, 'Ew': u.erg}
     def _get_age(name):
         return new_data[name]['age'] #* units['age']
+
     def _get_ekin_ew(name):
         m = new_data[name]['mshell'] * units['mshell']
         v = new_data[name]['v'] * units['v']
@@ -5882,24 +6013,146 @@ def ekin_ew_vs_age_plot():
         kinetic_to_wind = (kinetic_energy / wind_energy).decompose()
         return kinetic_to_wind.to_value()
 
+    def _calc_energy_error_existing(name, ratio):
+        error_pct = data_errs[name]
+        # Let the Ew error be 0
+        if isinstance(error_pct, tuple):
+            ratio_err = np.abs(ratio * (1 - np.array(error_pct)[:, np.newaxis])) # these are expressed as limit values, fractions of the actual value
+        else:
+            ratio_err = ratio * error_pct
+        return ratio_err
+
+    def _get_age_errors(name, age):
+        # Simpler version, can be used for horizontal errors
+        age_lims = age_errors[name]
+        age_err = np.abs(age - np.array(age_lims)[:, np.newaxis])
+        return age_err
+
+    def _make_age_error_line(name, age, ratio):
+        # Diagonal error bars
+        age_lims = age_errors[name]
+        x_vals = np.array(age_lims)
+        y_vals = ratio * age / x_vals
+        return x_vals, y_vals
+
+    marker_key = {'k': 's', 's': 'D'}
+    def _get_marker(name):
+        return marker_key[age_type[name]]
+
+    xy_text_adjust = {
+        # "NGC 1977": (1/1.05, 1.7),
+        # "M43": (1, 1.6),
+        "M42": (1.2, 1.2),
+        "RCW 36\n(bipolar)": (1/1.5, 1.2),
+        "RCW 120": (1, 1.3),
+        "RCW 49": (1/1.4, 1/1.4),
+        "M16": (1/1.3, 1.1),
+        "N19": (1.3, 1.3),
+    }
+
+    if setting == 0:
+        fontsize = 15
+    elif setting == 1:
+        fontsize = 25
+    text_kwargs = dict(ha='center', fontsize=fontsize)
+    if setting == 0:
+        # x_text_adjust, y_text_adjust = 1.1, 1.18
+        markersize = 10
+    elif setting == 1:
+        # x_text_adjust, y_text_adjust = 1.34, 1.18
+        markersize = 15
+    horizontal_errors = True
     plt.figure(figsize=(8, 8))
     for name in existing_data:
         t, ratio = existing_data[name]
-        plt.plot(t, ratio, marker='o', color=marcs_colors[0])
-        plt.text(t, ratio, name, ha='center')
+        ratio_err = _calc_energy_error_existing(name, ratio)
+        if horizontal_errors:
+            age_err = _get_age_errors(name, t)
+            plt.errorbar(t, ratio, yerr=ratio_err, xerr=age_err, marker=_get_marker(name), markersize=markersize, color=marcs_colors[0], capsize=5)
+        else:
+            plt.errorbar(t, ratio, yerr=ratio_err, marker=_get_marker(name), markersize=markersize, color=marcs_colors[0], capsize=5)
+            age_x, age_y = _make_age_error_line(name, t, ratio)
+            plt.plot(age_x, age_y, marker='|', markersize=markersize, linestyle='-', color=marcs_colors[0])
+        x_text_adjust, y_text_adjust = xy_text_adjust[name]
+        plt.text(t*x_text_adjust, ratio*y_text_adjust, name, **text_kwargs)
     for name in new_data:
         t = _get_age(name)
         ratio = _get_ekin_ew(name)
-        plt.plot(t, ratio, marker='o', color=marcs_colors[1])
-        plt.text(t, ratio, name, ha='center')
+        ratio_err = _calc_energy_error_existing(name, ratio)
+        if horizontal_errors:
+            age_err = _get_age_errors(name, t)
+            plt.errorbar(t, ratio, yerr=ratio_err, xerr=age_err, marker=_get_marker(name), markersize=markersize, color=marcs_colors[1], capsize=5)
+        else:
+            plt.errorbar(t, ratio, yerr=ratio_err, marker=_get_marker(name), markersize=markersize, color=marcs_colors[1], capsize=5)
+            age_x, age_y = _make_age_error_line(name, t, ratio)
+            plt.plot(age_x, age_y, marker='|', markersize=markersize, linestyle='-', color=marcs_colors[1])
+        x_text_adjust, y_text_adjust = xy_text_adjust[name]
+        plt.text(t*x_text_adjust, ratio*y_text_adjust, name, **text_kwargs)
 
+    if False:
+        """ Add limit thing for N19 """
+        name = 'N19'
+        mass = new_data[name]['mshell']
+        mass_2 = 4200 + mass
+        mass_both = [mass, mass_2] * units['mshell']
+        def _ke_w_f(n, mass):
+            v = new_data[n]['v'] * units['v']
+            ke = 0.5 * mass * v**2
+            wind = new_data[n]['Ew'] * units['Ew']
+            return (ke/wind).decompose().to_value()
+        kew_both = [_ke_w_f(name, m) for m in mass_both]
+        age_both = [_get_age(name)]*2
+        plt.plot(age_both, kew_both, marker='_', linestyle='-', color=marcs_colors[1])
+
+        """ Same for M16 """
+        if False:
+            name = 'M16'
+            mass = new_data[name]['mshell']
+            mass_2 = 100
+            mass_both = [mass, mass_2] * units['mshell']
+            def _ke_w_f(n, mass):
+                v = new_data[n]['v'] * units['v']
+                ke = 0.5 * mass * v**2
+                wind = new_data[n]['Ew'] * units['Ew']
+                return (ke/wind).decompose().to_value()
+            kew_both = [_ke_w_f(name, m) for m in mass_both]
+            age_both = [_get_age(name)]*2
+            plt.plot(age_both, kew_both, marker='_', linestyle='-', color=marcs_colors[1])
+
+    """ Draw a line which shows a theoretical bubble perfectly coupled for 100,000 yrs and then bursting and having 0 coupling after """
+    linestyles = ['-', '--', '-.', ':']
+    burst_times = [0.03, 0.1, 0.3, 1]
+    ratio_0s = [1]
+    if True:
+        t_arr = np.arange(0.1, 10, 0.1)
+        colors = marcs_colors
+        for i, t_burst in enumerate(burst_times):
+            for j, ratio_0 in enumerate(ratio_0s):
+                ratio_arr = np.ones(t_arr.size) * ratio_0
+                ratio_arr[t_arr > t_burst] = ratio_0 * t_burst / t_arr[t_arr > t_burst]
+                # labeltext = (f"{t_burst} Myr" if j==0 else None)
+                plt.plot(t_arr, ratio_arr, color='grey', linestyle=linestyles[i])
 
     plt.xlim((0.1, 10))
-    plt.ylim((3e-3, 3))
+    # plt.ylim((3e-3, 3))
+    plt.ylim((3e-3, 9))
     plt.xscale('log')
     plt.yscale('log')
-    plt.xlabel("age [Myr]")
-    plt.ylabel("E$_{\\rm kin}$ / E$_{\\rm w}$")
+    if setting == 0:
+        fontsizes = [16, 17]
+    elif setting == 1:
+        fontsizes = [22, 22]
+        plt.gca().tick_params(axis='both', labelsize=20)
+    plt.xlabel("age [Myr]", fontsize=fontsizes[0])
+    plt.ylabel("E$_{\\rm kin}$ / E$_{\\rm w}$", fontsize=fontsizes[1])
+    plt.legend(handles=[
+        Line2D([], [], color='grey', linestyle=linestyles[i], label=f"{burst_times[i]} Myr") for i in range(len(burst_times))
+    ] + [
+        Line2D([], [], color='grey', marker=marker_key[x], markersize=markersize, linestyle='none', label={'s': "Stellar age", 'k': "Kinematic age"}[x])  for x in 'ks'
+    ] + [
+        mpatches.Patch(color=marcs_colors[i], label=["Literature", "This work"][i]) for i in range(2)
+    ], ncols=2)
+    plt.tight_layout()
 
     plt.savefig(os.path.join(catalog.utils.todays_image_folder(), "ekin_ew_vs_age.png"),
         metadata=catalog.utils.create_png_metadata(title="from Xanders 2024-01-23 email",
@@ -5913,10 +6166,13 @@ def n19_self_absorption():
     use zoom box "N19-small" key
     use regions in catalogs/N19_shell_edge_selfabs.reg
     """
+    use_CO = False
     # Load cube
     line_stub = 'cii'
     fn = get_map_filename(line_stub)
     cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
+    if use_CO:
+        co_cube_obj = cube_utils.CubeData(get_map_filename("13co32")).convert_to_K().convert_to_kms()
     # Ref image, rotated
     velocity_limits = (15*kms, 21*kms)
     mom0 = cube_obj.data.spectral_slab(*velocity_limits).moment0()
@@ -5927,13 +6183,16 @@ def n19_self_absorption():
     ref_wcs = cutout.wcs
 
     # Plot setup
-    fig = plt.figure(figsize=(14, 6))
-    gs = fig.add_gridspec(1, 2, hspace=0, wspace=0.3)
+    fig_ref = plt.figure(figsize=(7, 6))
+    fig_spec = plt.figure(figsize=(7, 6))
+    # gs = fig.add_gridspec(1, 2, hspace=0, wspace=0.3)
+
     # Plot
-    ref_ax = fig.add_subplot(gs[0, 0], projection=ref_wcs)
+    # ref_ax = fig.add_subplot(gs[0, 0], projection=ref_wcs)
+    ref_ax = fig_ref.add_subplot(111, projection=ref_wcs)
     im = ref_ax.imshow(ref_img, origin='lower', cmap="Greys_r", vmin=10, vmax=60)
     cax = ref_ax.inset_axes([1, 0, 0.05, 1])
-    fig.colorbar(im, cax=cax, label=f"{get_data_name(line_stub)} {make_vel_stub(velocity_limits)} ({unit.to_string('latex_inline')})")
+    fig_ref.colorbar(im, cax=cax, label=f"{get_data_name(line_stub)} {make_vel_stub(velocity_limits)} ({unit.to_string('latex_inline')})")
     lat, lon = (ref_ax.coords[i] for i in range(2))
     for l in (lat, lon):
         l.set_major_formatter("d.dd")
@@ -5941,21 +6200,23 @@ def n19_self_absorption():
     lon.set_axislabel("Galactic Longitude", fontsize=12)
     ref_ax.tick_params(labelsize=12)
 
-    spec_ax = fig.add_subplot(gs[0, 1])
+    # spec_ax = fig.add_subplot(gs[0, 1])
+    spec_ax = fig_spec.add_subplot(111)
     spec_ax.set_xlabel(f"V ({kms.to_string('latex_inline')})")
     spec_ax.set_ylabel(f"{get_data_name(line_stub)} " + "T$_{\\rm MB}$" + f" ({u.K.to_string('latex_inline')})")
 
     # Load regions
-    reg_filename_short = "catalogs/N19_shell_edge_selfabs.reg"
+    reg_filename_short = "catalogs/N19_shell_edge_selfabs_2.reg"
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
     # Grab spectra from (0-indexed) 0, [3 or 4], and 5(circle). The rest are points.
     xaxis = cube_obj.data.spectral_axis.to_value()
 
     fixed_diameter = 3
-    diameter_stub = f"_{fixed_diameter}beamsacross"
+    diameter_stub = "_default" # f"_{fixed_diameter}beamsacross"
 
     # Function to change the radius of a Circle or convert a Point to a Circle
     def _set_circle_radius(reg, beams_across):
+        return reg
         radius_arcsec = beams_across * 15.5*u.arcsec / 2
         if isinstance(reg, regions.CircleSkyRegion):
             reg.radius = radius_arcsec
@@ -5967,28 +6228,32 @@ def n19_self_absorption():
         return reg
 
     # First, points
-    selected_points = [3, 2, 4, 5]
-    colors = marcs_colors[:5]
+    selected_points = [0, 1]
+    colors = ['k', marcs_colors[2]]
+    names = ["N19 shell edge", "Off position toward\nNorthern Cloud"]
     for idx, reg_idx in enumerate(selected_points):
         # Old ways
         # pixreg = reg_list[reg_idx].to_pixel(cube_obj.wcs_flat)
         # j, i = [int(round(c)) for c in pixreg.center.xy]
         # spectrum = cube_obj.data[:, i, j].to_value()
         # New ways, only circles
-        reg = _set_circle_radius(reg_list[reg_idx], fixed_diameter)
-        try:
-            subcube = cube_obj.data.subcube_from_regions([reg])
-        except:
-            print(reg)
-            return
+        # reg = _set_circle_radius(reg_list[reg_idx], fixed_diameter)
+        reg = reg_list[reg_idx]
+        subcube = cube_obj.data.subcube_from_regions([reg])
         spectrum = subcube.mean(axis=(1, 2))
         # print("JI", j, i)
-        p = spec_ax.plot(xaxis, spectrum, color=colors[idx], label=f"{reg_idx+1}", linewidth=(3 if reg_idx==3 else 1.5), linestyle=("-" if reg_idx==3 else "--"))
+        p = spec_ax.step(xaxis, spectrum, color=colors[idx], label=names[idx], linewidth=3, linestyle='-', where='mid', zorder=5 - idx)
         # Remake pixreg because different WCS for image
         reg.to_pixel(ref_wcs).plot(ax=ref_ax, color=p[0].get_c())
         # reg_patch = reg_list[reg_idx].to_pixel(ref_wcs).as_artist()
         # reg_patch.set(color=p[0].get_c(), mec=p[0].get_c()) # Line2D because points!!!
         # ref_ax.add_artist(reg_patch)
+
+        #### CO
+        if use_CO:
+            subcube = co_cube_obj.data.subcube_from_regions([reg])
+            spectrum = subcube.mean(axis=(1, 2))
+            spec_ax.step(co_cube_obj.data.spectral_axis.to_value(), spectrum.to_value(), color=colors[idx], linewidth=1, where='mid')
 
     # Next, circle
     # circ_idx = 5
@@ -5997,15 +6262,388 @@ def n19_self_absorption():
     # p = spec_ax.plot(xaxis, spectrum, label="Circle", color='k')
     # reg_list[circ_idx].to_pixel(ref_wcs).plot(ax=ref_ax, color=p[0].get_c())
 
-    spec_ax.legend()
+    spec_ax.legend(loc='upper left')
     spec_ax.set_xlim((7, 23))
 
+    fig_spec.subplots_adjust(left=0.1, right=0.99, bottom=0.1, top=0.99)
 
-    savename = f"{line_stub}_n19_self_absorption_spectrum{diameter_stub}.png"
+
+    co_stub = "_withCO" if use_CO else ""
+    savename = f"{line_stub}_n19_self_absorption_spectrum{diameter_stub}{co_stub}"
     info_txt = f"{reg_filename_short} points: {selected_points} zoom: {cutout_name}"
-    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
-        metadata=catalog.utils.create_png_metadata(title=info_txt, file=__file__,
-            func="n19_self_absorption"))
+    for fig, stub in zip([fig_ref, fig_spec], ["REF", "SPEC"]):
+        fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"{savename}_{stub}.png"),
+            metadata=catalog.utils.create_png_metadata(title=info_txt, file=__file__,
+                func="n19_self_absorption"))
+
+
+def energetics_calculations():
+    """
+    March 4, 2024
+    Run thru all the energetics calculations in one place.
+    These have been spread throughout my notes and I want to consolidate,
+    particularly in case I have to redo them with different numbers (again)
+
+    This will be a long function
+    """
+    txt = "Calculations"
+    txt2 = '-'*len(txt) + " " + txt + " " + '-'*len(txt)
+    dashes = '-' * len(txt2)
+    print(dashes)
+    print(txt2)
+    print(dashes)
+    print()
+
+    """ Part 1: M16 shell dimensions, surface area, energy """
+    def _estimate_ellipsoid_dimensions():
+        """
+        Estimate the dimensions of the M16 cavity
+        From 2024-01-14 notes
+        """
+        reg_label = ['right', 'left']
+        size_label = ['tall', 'wide']
+        x_sky = [[26, 36], [22, 45]] * u.arcmin
+        x_phys = (x_sky * 1740*u.pc / u.radian).to(u.pc)
+        for i, reg in enumerate(reg_label):
+            for j, dimension in enumerate(size_label):
+                print(reg, dimension)
+                print(x_sky[i, j])
+                print(x_phys[i, j])
+                print()
+        print(x_sky)
+        print(x_phys)
+        print(f"Averages are {np.mean(x_phys, axis=0)}")
+        print("Calling it 12 pc tall (total) and 20 pc wide (each)")
+        semimajor, semiminor = [20, 6] * u.pc
+        print(f"Which means {semimajor} semimajor and {semiminor} semiminor.")
+        return semimajor, semiminor
+
+    def _ellipsoidal_surface_area(a, b):
+        """
+        From 2024-01-14 notes
+        Both a, b are "semi" i.e. half width
+        :param a: the repeated axis (major in our case)
+        :param b: the different axis (minor for ours)
+        """
+        # a = repeated axis
+        p = 1.6075
+        first = a**p * b**p
+        second = a**(2*p)
+        inner = (2*first + second) / 3
+        return 4 * np.pi * inner**(1./p)
+
+    m16_shell_v = 10 * kms
+    nh_detection_limit = 1e21 * u.cm**-2
+    m16_shell_thickness = 0.5 * u.pc
+    def _m16_shell_mass_energy(a):
+        """
+        From 2024-01-14 notes (but that's not the final version)
+        :param a: surface area
+        """
+        surface_mass_density = nh_detection_limit * Hmass * mean_molecular_weight_neutral
+        mass = a * surface_mass_density
+        mass = (mass).to(u.solMass)
+        print(f"M16 shell mass {mass:.1E} ~ 10^{np.round(np.log10(mass/u.solMass))}")
+        energy = 0.5 * mass * m16_shell_v**2.
+        energy = energy.to(u.erg)
+        print(f"M16 shell energy {energy:.1E} ~ 10^{np.round(np.log10(energy/u.erg))}")
+        density = nh_detection_limit / m16_shell_thickness
+        density = density.to(u.cm**-3)
+        print(f"M16 shell density < {density:.1f} ~ {np.round(density, -2):.0f}")
+        return mass, density
+
+    amaj, bmin = _estimate_ellipsoid_dimensions()
+    surface_area = _ellipsoidal_surface_area(amaj, bmin)
+    m16_shell_mass, density = _m16_shell_mass_energy(surface_area)
+    pdr_temp = 100*u.K
+    m16_shell_therm_e = ((m16_shell_mass / (Hmass * mean_molecular_weight_neutral)) * (3./2) * (const.k_B * pdr_temp)).to(u.erg)
+    print(f"M16 PDR thermal energy {m16_shell_therm_e:.1E} -> {m16_shell_therm_e:.0E}")
+
+
+    print(dashes)
+    print()
+
+    """ Part 2: M16 shell pressures """
+    p_unit = u.K * u.cm**-3
+    p_conv = lambda p : (p/const.k_B).to(p_unit)
+    def _m16_shell_therm_p(dens):
+        therm_p = dens * pdr_temp
+        print(f"M16 shell thermal pressure {therm_p:.2E} -> {therm_p:.0E}")
+        return therm_p
+    def _m16_shell_tot_p(therm_p):
+        tot_p = 3*therm_p
+        print(f"M16 shell total pressure {tot_p:.2E} -> {tot_p:.0E}")
+        return tot_p
+    cgs_to_gauss = (u.Gauss / (u.cm**(-1/2) * u.g**(1/2) * u.s**-1))
+    def _reverse_engineer_B_field(p):
+    	print(f"For pressure P = {p:.1E}, ", end='')
+    	b = ((p*8*np.pi*const.k_B)**(1/2) * cgs_to_gauss).to(u.microGauss)
+    	print(f"B = {b:.2f}")
+
+    therm_p = _m16_shell_therm_p(density)
+    _m16_shell_tot_p(therm_p)
+    _reverse_engineer_B_field(therm_p)
+    _reverse_engineer_B_field(np.round(therm_p, -int(np.log10(therm_p/p_unit))))
+    print(dashes)
+    print()
+
+    """ Part 3: M16 HII pressures """
+    higgs_1d_turb = 7*kms # Down from 12, which was the 3D turb vel
+    hester_n = 58 * u.cm**-3
+    hii_temp = 8000 * u.K
+    def _m16_hii_therm_p():
+        therm_p = hester_n * hii_temp
+        print(f"M16 HII thermal pressure {therm_p:.2E} -> {therm_p:.1E}")
+        return therm_p
+    def _m16_hii_turb_p():
+        particle_mass = Hmass * mean_molecular_weight_neutral / 2
+        rho = hester_n * particle_mass
+        turb_p = p_conv(rho * higgs_1d_turb**2)
+        print(f"M16 HII turbulent pressure {turb_p:.2E} -> {turb_p:.1E}")
+    _m16_hii_therm_p()
+    _m16_hii_turb_p()
+    print(dashes)
+    print()
+
+
+    """ Part 4: N19 PDR """
+    print('-'*17 + " N19 " + '-'*16)
+    def _generic_shell_volume(r1, r2):
+        """ r1 < r2, both in distance units """
+        return (4./3)*np.pi * (r2**3 - r1**3)
+    def _limb_brightening_path(r1, r2):
+        """ r1 < r2, both in distance units """
+        return 2 * np.sqrt(r2**2 - r1**2)
+    n19_shell_v = 4 * kms
+    n19_cii_col = 1e22 * u.cm**-2
+    n19_size = [1.8, 2.3] * u.pc
+    l = _limb_brightening_path(*n19_size)
+    print(f"PDR limb brightening l: {l:.1f}, l/2: {l/2:.1f}")
+    l = l/2 # Half shell limb brightened path
+    n19_cii_n_1 = (n19_cii_col / l).to(u.cm**-3) # atomic dens via coldens / distance
+    print(f"N19 PDR shell density via N(H)/limb bright {n19_cii_n_1:.0f} -> {np.round(n19_cii_n_1, -2):.0f}")
+    # 0.5 pc shell thickness, 5e21 upper limit coldens thru FG shell
+    n19_cii_col_fg = 5e21 * u.cm**-2
+    n19_cii_n_fg = (n19_cii_col_fg / (n19_size[1] - n19_size[0])).to(u.cm**-3)
+    print(f"N19 PDR shell density via N(H) upper limit / foreground shell thickness {n19_cii_n_fg:.0f} -> {np.round(n19_cii_n_fg, -2):.0f}")
+    n19_cii_n = 1500 * u.cm**-3
+    n19_fg_col_estimate = (n19_cii_n * (n19_size[1] - n19_size[0])).to(u.cm**-2)
+    print(f"N19 PDR shell N(H) 1500cm-3 x foreground shell thickness {n19_fg_col_estimate:2E} -> {n19_fg_col_estimate:.1E}")
+    vol = _generic_shell_volume(*n19_size) / 2
+    print(f"vol: {vol:.1f} -> {vol:.0f}")
+    n19_cii_mass = 650 * u.solMass
+    n19_cii_n_2 = (n19_cii_mass / (Hmass * mean_molecular_weight_neutral * vol)).to(u.cm**-3)
+    print(f"N19 PDR shell density via mass/vol {n19_cii_n_2:.0f} -> {np.round(n19_cii_n_2, -2):.0f}")
+    n19_cii_n_2 = (700*u.solMass / (Hmass * mean_molecular_weight_neutral * vol)).to(u.cm**-3)
+    print(f"(if I use 700 solMass) N19 PDR shell density via mass/vol {n19_cii_n_2:.0f} -> {np.round(n19_cii_n_2, -2):.0f}")
+    print(dashes)
+    print()
+
+    """ Part 4: N19 Molecular """
+    n19_h2_n = 5.6e3 * u.cm**-3
+    n19_h2_col = 1.1e22 * u.cm**-2
+    n19_h2_mass = 4200 * u.solMass
+    n19_size_mol = [2, 3] * u.pc
+    l_mol = _limb_brightening_path(*n19_size_mol)
+    print(f"Molecular limb brightening l: {l_mol:.1f}, l/2: {l_mol/2:.1f}")
+    s_mol = (n19_h2_col / n19_h2_n).to(u.pc)
+    print(f"Molecular col/n = s: {s_mol:.1f} -> {s_mol:.0f}")
+    print(dashes)
+    print()
+
+    """ Part 4: N19 PDR Energetics """
+    n19_cii_n = 1500 * u.cm**-3
+    n19_pdr_t = 100 * u.K
+    def _generic_therm_p(t, n):
+        therm_p = t * n
+        return therm_p, f"{therm_p:.2E} -> {therm_p:.1E}"
+    fwhm_conv = 2*np.sqrt(2*np.log(2))
+    print(f"fwhm conv {fwhm_conv:.3f}")
+    def _generic_turb_p(fwhm, n, mmw_mod):
+        particle_mass = Hmass * mean_molecular_weight_neutral * mmw_mod
+        rho = n * particle_mass
+        turb_p = p_conv(rho * (fwhm/fwhm_conv)**2)
+        return turb_p, f"{turb_p:.2E} -> {turb_p:.1E}"
+    pdr_therm_p, txt = _generic_therm_p(n19_pdr_t, n19_cii_n)
+    print(f"N19 PDR shell thermal pressure {txt}")
+    pdr_turb_p, txt = _generic_turb_p(3.5*kms, n19_cii_n, 1)
+    print(f"N19 PDR shell turbulent pressure {txt}")
+    print("N19 PDR magnetic:")
+    _reverse_engineer_B_field(pdr_turb_p)
+    _reverse_engineer_B_field(np.round(pdr_turb_p, -int(np.log10(pdr_turb_p/p_unit))))
+    pdr_tot_p = pdr_therm_p + 2*pdr_turb_p
+    print(f"total pressure {pdr_tot_p:.2E} -> {pdr_tot_p:.1E}")
+    ke_f = lambda m : (0.5 * m * n19_shell_v**2).to(u.erg)
+    # n19_pdr_ke = (0.5 * n19_cii_mass * n19_shell_v**2).to(u.erg)
+    n19_pdr_ke = ke_f(n19_cii_mass)
+    print(f"N19 PDR kinetic energy {n19_pdr_ke:.2E} -> {n19_pdr_ke:.0E}")
+    n19_pdr_therm_e = ((n19_cii_mass/(Hmass * mean_molecular_weight_neutral)) * (3./2) * (const.k_B * n19_pdr_t)).to(u.erg)
+    print(f"N19 PDR thermal energy {n19_pdr_therm_e:.1E} -> {n19_pdr_therm_e:.0E}")
+    print(dashes)
+    print()
+
+    """ Part 4: N19 PDR Energetics """
+    h2_t = 30 * u.K
+    h2_therm_p, txt = _generic_therm_p(h2_t, n19_h2_n)
+    print(f"N19 H2 shell thermal pressure {txt}")
+    h2_turb_p, txt = _generic_turb_p(1*kms * fwhm_conv, n19_h2_n, 2)
+    print(f"N19 H2 shell turbulent pressure {txt}")
+    print("N19 H2 magnetic:")
+    _reverse_engineer_B_field(h2_turb_p)
+    _reverse_engineer_B_field(np.round(h2_turb_p, -int(np.log10(h2_turb_p/p_unit))))
+    h2_tot_p = h2_therm_p + 2*h2_turb_p
+    print(f"total pressure {h2_tot_p:.2E} -> {h2_tot_p:.1E}")
+    # n19_h2_ke = (0.5 * n19_h2_mass * n19_shell_v**2).to(u.erg)
+    n19_h2_ke = ke_f(n19_h2_mass)
+    print(f"N19 H2 kinetic energy {n19_h2_ke:.2E} -> {n19_h2_ke:.0E}")
+    n19_h2_therm_e = ((n19_h2_mass/(Hmass * 2 * mean_molecular_weight_neutral)) * (const.k_B * h2_t)).to(u.erg)
+    print(f"N19 H2 thermal energy {n19_h2_therm_e:.1E} -> {n19_h2_therm_e:.0E}")
+    print(dashes)
+    print()
+
+    print(f"Mass ratio {n19_h2_mass}/{n19_cii_mass} = {(n19_h2_mass/n19_cii_mass).decompose()} and ke ratio {(n19_h2_ke/n19_pdr_ke).decompose()}")
+    print()
+
+    """ Part 5: N19 HII density and energy """
+    n19_tot_p = 3e6 * p_unit
+    def _hii_density_from_pressure(p):
+        ntot = (n19_tot_p / (8000*u.K)).to(u.cm**-3)
+        return ntot/2
+    n19_hii_n = _hii_density_from_pressure(n19_tot_p)
+    print(f"N19 HII density {n19_hii_n:.0f} -> {np.round(n19_hii_n, -int(np.log10(n19_hii_n*u.cm**3))):.0f}")
+    n19_hii_vol = (2*u.pc)**3 * (4*np.pi/3)
+    n19_hii_eth = (n19_tot_p*const.k_B*n19_hii_vol).to(u.erg)
+    print(f"N19 HII E_therm {n19_hii_eth:.1E}")
+    print(dashes)
+    print()
+
+
+    """ Part 6: Xray plasma """
+    src_area = 886837.460929 * u.arcsec**2
+    Y = 1.54 * 10**58 * u.m**-3
+    em = Y * src_area.to_value()
+    print(f"Y = {em:.4E} = {em.to(u.cm**-3):.1E}")
+
+    src_area_phys = (src_area * (1740*u.pc/u.radian)**2).decompose()
+    eff_circle_radius = np.sqrt(src_area_phys/np.pi)
+    eff_circle_vol = (4./3) * np.pi * eff_circle_radius**3
+
+    n = np.sqrt(em/eff_circle_vol).to(u.cm**-3)
+    tkev = 0.150 * u.keV
+    t = (tkev/const.k_B).to(u.K)
+    p = (t*n).to(u.K * u.cm**-3)
+    # First, observed volume approximation
+    eth = (n*tkev*eff_circle_vol).to(u.erg)
+
+    # Now big ellipsoid!
+    a, b = [20, 6]*u.pc
+    ell_vol = (4.*np.pi/3) * a**2 * b
+    ell_eth = (n*tkev*ell_vol).to(u.erg)
+
+    print(f"SRC AREA {src_area.to(u.arcmin**2):.2f}")
+    print(f"SRC AREA {src_area_phys.to(u.pc**2):.2f}")
+    print(f"EFF RADIUS {eff_circle_radius.to(u.pc):.2f}")
+    print(f"EFF VOL {eff_circle_vol.to(u.pc**3):.0f}")
+    print(f"plasma n   {n:.2f}")
+    print(f"plasma T   {t:.2E}")
+    print(f"plasma Pth {p:.2E} -> {p:.1E}")
+    print(f"E_therm obs {eth:.2E} -> {eth:.1E}")
+    print(f"BIG VOL {ell_vol.to(u.pc**3):.0f}")
+    print(f"E_therm est {ell_eth:.2E} -> {ell_eth:.1E}")
+
+
+
+def n19_time_calculation():
+    """
+    March 7, 2024
+    Day my thesis is due!! and here i am doing analysis
+    """
+    beta = 2.6e-13 * u.cm**3 / u.s
+    q0 = 7.43e47 / u.s
+    n = [200, 300, 400, 1000] * u.cm**-3
+    def _stromgren(density):
+        return (((3./(4*np.pi)) * q0 / (density**2 * beta))**(1./3)).to(u.pc)
+    r0 = _stromgren(n)
+    if True:
+        print("Stromgren")
+        print([f"{x:.0f}" for x in n])
+        print([f"{x:.3f}" for x in r0])
+
+    r_shell = 2*u.pc
+    cs = 10*kms
+    v = 4*kms
+    def _age_from_r(density):
+        # recalculating R0 inside here, no need to do it outside
+        r = _stromgren(density)
+        coeff = (4*r)/(7*cs)
+        brackets = (r_shell/r)**(7./4) - 1
+        return (coeff*brackets).to(u.Myr)
+    def _age_from_v(density):
+        # recalculating R0 inside here, no need to do it outside
+        coeff = (4*_stromgren(density))/(7*cs)
+        brackets = (v/cs)**(-7./3) - 1
+        return (coeff*brackets).to(u.Myr)
+    def _vel_from_r(density):
+        t = _age_from_r(density)
+        return cs * (1 + (7*t*cs)/(4*_stromgren(density)))**(-3./7)
+    if True:
+        print([f"{x:.3f}" for x in _age_from_r(n)])
+        print([f"{x:.3f}" for x in _age_from_v(n)])
+        print([f"{x:.3f}" for x in _vel_from_r(n)])
+
+    print("Weaver")
+    lmech = 2.23e47 * u.erg/u.Myr
+    l36 = (lmech/(1e36*u.erg/u.s)).decompose()
+    def _w77_t_from_r(density):
+        dens = density.to(u.cm**-3).to_value()
+        first = (1./27)**(5./3)
+        mid = (dens/l36)**(1./3)
+        last = r_shell.to(u.pc).to_value()**(5./3)
+        return (first*mid*last).decompose() * u.Myr
+    def _w77_t_from_v(density):
+        dens = density.to(u.cm**-3).to_value()
+        first = 16**(5./2)
+        mid = (l36/dens)**(1./2)
+        last = v.to(kms).to_value()**(-5./2)
+        return (first*mid*last).decompose() * u.Myr
+    def _w77_v_from_r(density):
+        dens = density.to(u.cm**-3).to_value()
+        t = _w77_t_from_r(density).to(u.Myr).to_value()
+        return 16 * (l36/(dens * t**2))**(1./5) * kms
+    print([f"{x:.3f}" for x in _w77_t_from_r(n)])
+    print([f"{x:.3f}" for x in _w77_t_from_v(n)])
+    print([f"{x:.3f}" for x in _w77_v_from_r(n)])
+
+
+def cii_channel_maps_photoseries_slides_animation():
+    """
+    March 26, 2024
+    Defense day! going to see if I can pull this quick visualization off
+    make a movie (no coordinates) of CII every 1 km/s (mom0s) between 10 and 35 or so
+    """
+    cube = cube_utils.CubeData(get_map_filename('cii')).convert_to_K().convert_to_kms()
+    v_start, v_stop, v_step = 10, 37, 2
+    fig = plt.figure(figsize=(9, 10))
+    ax = fig.add_subplot(111)
+    for v in np.arange(v_start, v_stop+v_step, v_step):
+        v0 = v*kms
+        v1 = (v+v_step)*kms
+        mom0 = cube.data.spectral_slab(v0, v1).moment0()
+        img_raw = mom0.to_value()
+        cutout = misc_utils.cutout2d_from_region(img_raw, mom0.wcs, get_cutout_box_filename('med'), align_with_frame='galactic')
+        img = cutout.data
+        ax.imshow(img, origin='lower', vmin=0, vmax=40, cmap='Greys_r')
+        ax.text(0.1, 0.9, f"{v+1:2d} km / s", color='k', fontsize=25, ha='left', va='top', transform=ax.transAxes)
+        ax.text(0.1, 0.95, "[C II]", color='k', fontsize=25, ha='left', va='top', transform=ax.transAxes)
+        ax.set_axis_off()
+        fig.subplots_adjust(left=-0.1, right=1.1, top=1.1, bottom=-0.1)
+        fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"anim/cii_mom0_{v:02d}.png"))
+        ax.clear()
+
+
+
+
+
 
 
 """
@@ -6066,12 +6704,17 @@ def bubble_geometry():
     # ax3 = _plot3d(224, alpha=0.7)
     axes = [ax1, ax2]
 
-    publication_ready = 2
+    """
+    publication_ready = 2 is good for the paper
+    publication_ready = 3 is good for the presentation (took out some of the pink boxes)
+    """
+    publication_ready = 3
+    """ """
     if publication_ready == 0:
         fig.subplots_adjust(hspace=-0.5, wspace=-0.05, top=1.2, bottom=-0.2, left=-0.1, right=1.1)
     elif publication_ready == 1:
         fig.subplots_adjust(hspace=0, wspace=0, top=1, bottom=0, left=0, right=1)
-    elif publication_ready == 2:
+    elif publication_ready >= 2:
         fig1.subplots_adjust(top=1.05, bottom=-0.05, left=-0.25, right=1.2) # solid surface
         fig2.subplots_adjust(top=1.25, bottom=-0.45, left=-0.65, right=1.6) # wireframe with NC and N19
     # ax2 = fig.add_subplot(122)
@@ -6132,18 +6775,23 @@ def bubble_geometry():
 
     # On-sky diagram
     line_kwargs_dict = dict(color='Orchid', linewidth=3)
-    _plot_square(ax1, line_kwargs_dict, direction='pos')
+    if publication_ready < 3:
+        _plot_square(ax1, line_kwargs_dict, direction='pos')
     # _plot_square(ax2, line_kwargs_dict, direction='pos')
     # line_kwargs_dict = dict(color='LimeGreen', linewidth=3)
-    _plot_square(ax1, line_kwargs_dict, direction='los', dx=1.1, zorders=[100, 0, 100, 0], loc=-0.1)
+    if publication_ready < 3:
+        _plot_square(ax1, line_kwargs_dict, direction='los', dx=1.1, zorders=[100, 0, 100, 0], loc=-0.1)
     _plot_square(ax1, line_kwargs_dict, direction='los', dx=1.1, zorders=[100, 0, 100, 0], loc=0.3)
     _plot_square_split_y(ax2, n19_y, line_kwargs_dict, dx=1.1, loc=-0.1)
-    _plot_square_split_y(ax2, n19_y, line_kwargs_dict, dx=1.1, loc=0.35)
-    ax1.text(0.8, 0, 0.6+0.02, "1", color=line_kwargs_dict['color'], zorder=101)
-    ax1.text(-0.1-0.04, -0.7, 0.6+0.03, "2", color=line_kwargs_dict['color'], zorder=101)
-    ax1.text(0.3-0.04, -0.7, 0.6+0.03, "3", color=line_kwargs_dict['color'], zorder=101)
-    ax2.text(-0.1+0.04, -0.7, 0.6+0.03, "2", color=line_kwargs_dict['color'], zorder=101)
-    ax2.text(0.3+0.04, -0.7, 0.6+0.03, "3", color=line_kwargs_dict['color'], zorder=101)
+    if publication_ready < 3:
+        _plot_square_split_y(ax2, n19_y, line_kwargs_dict, dx=1.1, loc=0.35)
+
+    if publication_ready < 3:
+        ax1.text(0.8, 0, 0.6+0.02, "1", color=line_kwargs_dict['color'], zorder=101)
+        ax1.text(-0.1-0.04, -0.7, 0.6+0.03, "2", color=line_kwargs_dict['color'], zorder=101)
+        ax1.text(0.3-0.04, -0.7, 0.6+0.03, "3", color=line_kwargs_dict['color'], zorder=101)
+        ax2.text(-0.1+0.04, -0.7, 0.6+0.03, "2", color=line_kwargs_dict['color'], zorder=101)
+        ax2.text(0.3+0.04, -0.7, 0.6+0.03, "3", color=line_kwargs_dict['color'], zorder=101)
 
 
     """ Try plotting Northern Cloud and N19 """
@@ -6185,9 +6833,16 @@ def bubble_geometry():
 
 
     for i in range(2):
-        figs[i].savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_panel_{chr(i+65)}.pdf"),)
-            # metadata=catalog.utils.create_png_metadata(title=f"biconcave D={diameter} a = {a}",
-            #     file=__file__, func="bubble_geometry"))
+        if publication_ready < 3:
+            figs[i].savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_panel_{chr(i+65)}.pdf"),)
+                # metadata=catalog.utils.create_png_metadata(title=f"biconcave D={diameter} a = {a}",
+                #     file=__file__, func="bubble_geometry"))
+            print("SAVED AS PDF")
+        else:
+            figs[i].savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_panel_{chr(i+65)}_{publication_ready}.png"),
+                metadata=catalog.utils.create_png_metadata(title=f"biconcave D={diameter} a = {a}",
+                    file=__file__, func="bubble_geometry"))
+            print("SAVED AS PNG")
 
 
 def bubble_cross_cut(**kwargs):
@@ -6248,7 +6903,7 @@ def bubble_cross_cut(**kwargs):
     switch_color = True
     color_h2 = marcs_colors[0]
     color_h2_preex = "SlateGray"
-    color_h2_preex_alt = "DarkSlateGray"
+    color_h2_preex_alt = "#282828"
     color_h2_preex_n19 = "SaddleBrown"
     color_pdr = marcs_colors[2]
     color_hii = "Moccasin" if switch_color else "PapayaWhip"
@@ -6259,6 +6914,7 @@ def bubble_cross_cut(**kwargs):
 
     """ """
     select = kwargs.get("select", 2)
+    # Select == 3 now means "broken open with labels" because I need it for the presentation
     """ """
 
     if select == 2:
@@ -6272,13 +6928,31 @@ def bubble_cross_cut(**kwargs):
     ax.axvspan(-0.5, 0.5, color=color_h2_preex, alpha=0.8, zorder=0)
     ax.axvspan(-0.1, 0.1, color=color_h2_preex, alpha=1, zorder=0)
 
+    if select == 0 or select >= 3:
+        """ Gas Phase Labels """
+        phases = [
+            ("Molecular Gas Shell (T $\sim 30$ K)", color_h2, (-0.85, 0.5), ('left', 0.02, 'normal')),
+            ("Atomic PDR Shell (T $\sim 100$ K)", color_pdr, (-0.55, 0.36), ('left', 0.32, 'normal')),
+            ("Photoionized H II (T $\sim 10^4$ K)", color_hii_alt, (0.79, 0.378), ('right', 0.98, 'normal')),
+            ("Shocked Wind Plasma\n(T $\sim 10^6$ K)", color_plasma_alt, (0.8, 0.0), ('right', None, 'normal')),
+            ("Pre-existing Molecular\nFilament (T $\lesssim 30$ K)", color_h2_preex_alt, (0.0, 0.4), ('center', None, 'normal'))]
+        def annotate_phase_arrow(index):
+            ptext, pcolor, xy, (ha, tx, fw) = phases[index]
+            ax.annotate(ptext, xy=xy, xycoords='data', xytext=(tx, 0.96), textcoords='figure fraction', arrowprops=dict(facecolor=pcolor), color=pcolor, fontsize=16, fontweight=fw, ha=ha, va='bottom', zorder=11)
+        def annote_phase_inplace(index):
+            ptext, pcolor, xy, (ha, tx, fw) = phases[index]
+            ax.text(*xy, ptext, color=pcolor, fontsize=16, fontweight=fw, ha=ha, va='center', zorder=11)
+
+        for i in range(3):
+            annotate_phase_arrow(i)
+        for i in range(3, 5):
+            annote_phase_inplace(i)
+        ax.text(0.007, 0.06, "NGC 6611", ha='center', va='center', color='k', fontsize=13, fontweight='bold', zorder=13)
+        # for i, p in enumerate(phases):
+        #     ax.text(0.12, 0.625 - 0.05*i, p, color=phases[p], fontsize=16, transform=ax.transAxes, zorder=11, ha='left', va='center')
+
+
     if select == 0:
-        phases = {"Molecular Gas Shell (T $\sim 30$ K)": color_h2, "Atomic PDR Shell (T $\sim 100$ K)": color_pdr, "Photoionized H II (T $\sim 10^4$ K)": color_hii_alt, "Shocked Wind Plasma (T $\sim 10^6$ K)": color_plasma_alt, "Pre-existing Molecular Filament (T $\lesssim 30$ K)": color_h2_preex_alt,}
-        for i, p in enumerate(phases):
-            ax.text(0.12, 0.625 - 0.05*i, p, color=phases[p], fontsize=16, transform=ax.transAxes, zorder=11, ha='left', va='center')
-
-
-
         # Compass
         if False:
             # Compass in data coords
@@ -6304,7 +6978,7 @@ def bubble_cross_cut(**kwargs):
 
 
 
-    elif select == 1:
+    elif select == 1 or select >= 3:
         _filter(x1, z1, 1.6/2)
         # _filter(x2, z2, 1.95/2)
         # _filter(x3, z3, 1.95/2)
@@ -6321,15 +6995,20 @@ def bubble_cross_cut(**kwargs):
             ax.arrow(-0.84*xsign, -0.24, *_arrow_dxdy(0.1, 270-(xsign*50)), **arrow_kwargs)
             ax.arrow(-0.69*xsign, -0.31, *_arrow_dxdy(0.1, 270-(xsign*20)), **arrow_kwargs)
 
-        los_arrow_kwargs = dict(**general_arrow_kwargs)
-        los_arrow_kwargs["width"] = los_arrow_kwargs["width"]*0.7
-        los_arrow_kwargs["head_width"] = los_arrow_kwargs["width"]*4
-        ax.arrow(-1.08, 0.3, 2.16, 0, **los_arrow_kwargs, color='k')
+        if select == 1 or select > 3:
+            los_arrow_kwargs = dict(**general_arrow_kwargs)
+            los_arrow_kwargs["width"] = los_arrow_kwargs["width"]*0.7
+            los_arrow_kwargs["head_width"] = los_arrow_kwargs["width"]*4
+            ax.arrow(-1.08, 0.3, 2.16, 0, **los_arrow_kwargs, color='k')
 
-        los_crossing_positions = [-0.92, -0.47, 0.47, 0.92]
-        for i, lcp in enumerate(los_crossing_positions):
-            ax.add_patch(mpatches.Circle((lcp, 0.3), 0.07, edgecolor='k', linestyle='--', linewidth=2, facecolor='none', zorder=11))
-            ax.text(lcp-0.02, 0.32, f"{i+1}", color='k', fontsize=16, fontweight='bold', ha='center', va='center', zorder=11)
+            if select == 1 or select > 3.1:
+                los_crossing_positions = [-0.92, -0.47, 0.47, 0.92]
+                for i, lcp in enumerate(los_crossing_positions):
+                    if select == 1: # for the paper
+                        ax.add_patch(mpatches.Circle((lcp, 0.3), 0.07, edgecolor='k', linestyle='--', linewidth=2, facecolor='none', zorder=11))
+                    else:
+                        ax.add_patch(mpatches.Circle((lcp, 0.3), 0.07, edgecolor='k', linestyle='--', linewidth=2, facecolor=['b', 'g', 'g', 'r'][i], alpha=0.5, zorder=11))
+                    ax.text(lcp-0.02, 0.32, f"{i+1}", color='k', fontsize=16, fontweight='bold', ha='center', va='center', zorder=11)
 
     elif select == 2:
         # _filter(x1, z1, 1/2)
@@ -6455,21 +7134,34 @@ def bubble_cross_cut(**kwargs):
     star_s = (1 - rng.power(2, size=9))*300 + 75
     ax.scatter(star_x, star_y, s=star_s, marker='*', facecolor=color_star, edgecolor='k', zorder=13)
 
+    if select <= 2:
+        # Add "Frame label" from bubble_geometry(), the pink frames
+        frame_number = [1, 3, 2][select]
+        fig.text(0.02, 0.9, str(frame_number), color='Orchid', fontsize=21, ha='left', va='center')
+
     ax.set_aspect('equal')
     ax.axis('off')
     fig.subplots_adjust(top=1, bottom=0, left=0, right=1)
-    # plt.show()
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_crosscut_{select}{'altcolor' if switch_color else ''}.png"),
-        metadata=catalog.utils.create_png_metadata(title="largest shell D=2 a=(0.1, 2, 0)",
-            file=__file__, func="bubble_cross_cut"))
+    if select >= 3:
+        plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_crosscut_{select}.png"),
+            metadata=catalog.utils.create_png_metadata(title="largest shell D=2 a=(0.1, 2, 0)",
+                file=__file__, func="bubble_cross_cut"))
+        print("SAVED AS PNG")
+    else:
+        plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"biconcave_disc_crosscut_{select}.pdf"),)
+            # metadata=catalog.utils.create_png_metadata(title="largest shell D=2 a=(0.1, 2, 0)",
+            #     file=__file__, func="bubble_cross_cut"))
+        print("SAVED AS PDF")
 
-def fake_bubble_spectra():
+
+def fake_bubble_spectra(setting=1):
     """
     Feb 4, 2024
     Demonstrate the spectra through the bubble_cross_cut() diagram
     Put next to the real CII spectra from the western cavity, like
     m16_pictures_2.m16_expanding_shell_spectra.
     Those regions are in catalogs/m16_west_cavity_spec_regions.reg
+    setting: 1 for paper, 2 for presentation
     """
     reg_filename_short = "catalogs/m16_west_cavity_spec_regions.reg"
     savename_stub = "west_cavity_3am_circles"
@@ -6532,7 +7224,7 @@ def fake_bubble_spectra():
             spectrum = subcube.mean(axis=(1, 2))
             spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color='k', linewidth=3, label='Both circles')
 
-        reg_labels = ["South circle", "North circle"]
+        reg_labels = ["South circle", "Western cavity circle"]
         if False:
             # Skip doing both, only do the north circle
             for j, reg in enumerate(reg_list):
@@ -6547,41 +7239,50 @@ def fake_bubble_spectra():
         spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), linewidth=3, linestyle='-', color='k', label=reg_labels[north_circle_idx])
 
         # Get full avg spec above 6 K
-        if True:
+        if setting == 0:
             # Marc says this doesn't add anything, they already know the emission is at 26 km/s
             spectrum = cube_obj.data.mean(axis=(1, 2))
             coeff = 3
             spec_ax.plot(subcube.spectral_axis.to_value(), _norm_spectrum(spectrum.to_value()), color="grey", linewidth=3, linestyle='-.', label=f"Entire field average")
 
-        # Grab the blueshifted clump spectra
-        reg_filename_short_bc = "catalogs/m16_points_blueshifted_clump.reg"
-        reg_list_bc = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short_bc))
+            # Grab the blueshifted clump spectra
+            reg_filename_short_bc = "catalogs/m16_points_blueshifted_clump.reg"
+            reg_list_bc = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short_bc))
 
-        def _plot_blue_clump_spec(cube_object):
-            pixreg = reg_list_bc[1].to_pixel(cube_object.wcs_flat)
-            j, i = [int(round(c)) for c in pixreg.center.xy]
-            spectrum = cube_object.data[:, i, j]
-            return cube_object.data.spectral_axis.to_value(), spectrum.to_value()
+            def _plot_blue_clump_spec(cube_object):
+                pixreg = reg_list_bc[1].to_pixel(cube_object.wcs_flat)
+                j, i = [int(round(c)) for c in pixreg.center.xy]
+                spectrum = cube_object.data[:, i, j]
+                return cube_object.data.spectral_axis.to_value(), spectrum.to_value()
 
-        coeff = 4
-        if False:
-            co_cube_obj = cube_utils.CubeData(get_map_filename("12co32")).convert_to_K().convert_to_kms()
-            x, y = _plot_blue_clump_spec(co_cube_obj)
-            green_mask = (x > 16) & (x < 23)
-            y[green_mask] = np.nan
-            spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'CO, blue clump')
+            coeff = 4
+            if False:
+                co_cube_obj = cube_utils.CubeData(get_map_filename("12co32")).convert_to_K().convert_to_kms()
+                x, y = _plot_blue_clump_spec(co_cube_obj)
+                green_mask = (x > 16) & (x < 23)
+                y[green_mask] = np.nan
+                spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'CO, blue clump')
 
-        x, y = _plot_blue_clump_spec(cube_obj)
-        spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'Blueshifted clump')
+            x, y = _plot_blue_clump_spec(cube_obj)
+            spec_ax.plot(x, _norm_spectrum(y), color=marcs_colors[0], linestyle='-', linewidth=1.5, label=f'Blueshifted clump')
 
+        spec_ax.spines[['top', 'right']].set_visible(False)
         spec_ax.axhline(0, color='grey', linestyle="--", alpha=0.2)
         spec_ax.set_xlabel("V$_{\\rm LSR}$ " + f"({kms.to_string('latex_inline')})")
         spec_ax.set_ylabel(f"Normalized {get_data_name(line_stub)} line intensity")
         spec_ax.set_xlim((-4, 49))
         spec_ax.set_ylim((-0.4, 1.1))
-        spec_ax.legend(loc="lower right", ncol=2)
-    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"expanding_shell_diagram_spectrum.png"),
-        metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short} {reg_filename_short_bc}", file=__file__, func="fake_bubble_spectra"))
+        if setting == 0:
+            spec_ax.legend(loc="lower center", ncol=2)
+    fig.subplots_adjust(bottom=0.1, left=0.05, top=0.95, right=0.95)
+    if setting == 0:
+        fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"expanding_shell_diagram_spectrum.pdf"),)
+            # metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short} {reg_filename_short_bc}", file=__file__, func="fake_bubble_spectra"))
+        print("SAVED AS PDF")
+    elif setting == 1:
+        fig.savefig(os.path.join(catalog.utils.todays_image_folder(), f"expanding_shell_diagram_spectrum.png"),
+            metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short}", file=__file__, func="fake_bubble_spectra"))
+        print("SAVED AS PNG")
 
 def bubble_simulated_projection():
     """
@@ -7140,17 +7841,18 @@ if __name__ == "__main__":
         'co32_red': (23.3*kms, 28*kms),
         'big_molecular_cloud': (22*kms, 27*kms), # the greenish-red molecular cloud that crosses over M16 east of the pillars/spire
         'super-red-stuff': (27*kms, 30*kms), # probably not useful but CO 3-2 has the MYSO and then a small bright rim close to the cluster.
+        'north_cloud_2': (11*kms, 21*kms),
         ### the good stuff
-        'north_cloud_2': (11*kms, 21*kms), 'redshifted_2': (21*kms, 27*kms), # the originals
+        'redshifted_2': (21*kms, 27*kms), # the originals
         'green-cloud': (21*kms, 23*kms), 'red-cloud': (23*kms, 27*kms), # the main green/red stuff, split more finely
+        'north_cloud_3': (10*kms, 21*kms),
         ### new wave experimental 2024-01-15
         'blue_clump': (6*kms, 11*kms), 'high_velocity': (35*kms, 40*kms),
     }
     # for s in ['green-cloud', 'red-cloud', 'redshifted_2', 'north_cloud_2']:
     # for s in ['redshifted_2', 'north_cloud_2']:
-    # for s in ['red-cloud']:
+    # for s in ['north_cloud_3']:
     #     co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
-        # co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
         # get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
 
@@ -7163,7 +7865,7 @@ if __name__ == "__main__":
     # calculate_cii_column_density(mask_cutoff=3*u.K, velocity_limits=velocity_limits['redshifted_2'])
     # calculate_cii_column_density(mask_cutoff=3*u.K, velocity_limits=velocity_limits['green-cloud'])
 
-    # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_2'])
+    # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['north_cloud_3'])
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['redshifted_2'])
     # calculate_cii_column_density(mask_cutoff=6*u.K, velocity_limits=velocity_limits['red-cloud'])
     # get_co_spectra_for_radex()
@@ -7223,12 +7925,15 @@ if __name__ == "__main__":
     # contours_13cii(x)
     # spectra_13cii(x)
     # spitzer_expansion_plot()
-    # ekin_ew_vs_age_plot()
+    ekin_ew_vs_age_plot()
     # integrate_cii_and_FIR_luminosities()
-    # trim_CO_mass_to_CII_grid(velocity_limits=(21*kms, 27*kms))
+    # trim_CO_mass_to_CII_grid(velocity_limits=(11*kms, 21*kms))
     # bubble_geometry()
-    # bubble_cross_cut(select=2)
+    # bubble_cross_cut(select=3.2)
     # fake_bubble_spectra()
     # bubble_simulated_projection()
     # vizier_query_dark_clouds()
     # n19_self_absorption()
+    # energetics_calculations()
+    # n19_time_calculation()
+    # cii_channel_maps_photoseries_slides_animation()

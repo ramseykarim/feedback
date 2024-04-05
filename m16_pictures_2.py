@@ -47,9 +47,10 @@ def big_average_spectrum_figure():
         savename_stub = "small_avg_spectra_moreregs"
     # New batch of regions! Circles, 10x 15.5'' CII beams across
     elif select == 3:
-        reg_filename_short = "catalogs/m16_spectrum_samples.reg"
+        subselect = "_5" # or "" empty string
+        reg_filename_short = f"catalogs/m16_spectrum_samples{subselect}.reg"
         colors = marcs_colors[:8]
-        savename_stub = "circle_samples_10beam"
+        savename_stub = f"circle_samples_10beam{subselect}"
 
     reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
 
@@ -69,19 +70,19 @@ def big_average_spectrum_figure():
         """ New setup """
         fig = plt.figure(figsize=(8, 11))
         mega_gs = fig.add_gridspec(3, 1, hspace=0, wspace=0, height_ratios=[1, 5, 4])
-        gs_shape = (4, 2)
+        gs_shape = (5, 2)
         gs = mega_gs[2, 0].subgridspec(*gs_shape, hspace=0, wspace=0)
         legend_ax_anchor = fig.add_subplot(mega_gs[2, 0])
         # legend_ax_anchor.set_axis_off()
         top_gs = mega_gs[0, 0].subgridspec(1, 3, hspace=0, wspace=0, width_ratios=[1, 4, 1])
         def _index_gridspec(flatindex):
             # Unravel as if 4, 2
-            if flatindex < 8:
-                i_index = flatindex // 2
-                j_index = flatindex % 2
-                return gs[i_index, j_index]
-            else:
+            if flatindex == 0:
                 return top_gs[0, 1]
+            else:
+                i_index = (flatindex - 1) // 2
+                j_index = (flatindex - 1) % 2
+                return gs[i_index, j_index]
         ref_gridspec_loc = mega_gs[1, 0].subgridspec(3, 1, height_ratios=(1, 17, 4), hspace=0, wspace=0)[1, 0]
 
 
@@ -109,8 +110,8 @@ def big_average_spectrum_figure():
             label = f"{label} $\\times${mult}"
         return label
     def _get_region_label(reg_idx):
-        if reg_idx < 8:
-            return f"{reg_idx+1}"
+        if reg_idx > 0:
+            return f"{reg_idx}"
         else:
             return "Large"
 
@@ -172,7 +173,7 @@ def big_average_spectrum_figure():
                 # Once per region (so only on line j == 0) Add box regions to reference with appropriate colors
                 pixreg = reg_list[i].to_pixel(ref_wcs)
                 pixreg.plot(ax=ref_ax, color='w', lw=1)
-                if i < 8:
+                if i > 0:
                     ref_ax.text(*pixreg.center.xy, _get_region_label(i), ha="center", va="center", color='w', fontsize=12)
                 ax.text(0.02, 0.9, _get_region_label(i), ha="left", va="top", color='k', fontsize=14, transform=ax.transAxes)
 
@@ -181,7 +182,7 @@ def big_average_spectrum_figure():
         ax.axhline(0, color='k', alpha=0.25, linestyle=':')
         # ax.axhline(0.5, color='k', alpha=0.25, linestyle=':')
         ax.set_xlim(xlims)
-        for v in range(12, 35, 2):
+        for v in range(17, 28, 2):
             ax.axvline(v, color='grey', alpha=0.25, linestyle='--')
         ss = ax.get_subplotspec()
         if not ss.is_last_row() and i < 8:
@@ -194,12 +195,15 @@ def big_average_spectrum_figure():
         else:
             ax.yaxis.set_tick_params(direction='in', left=True, right=True)
         ylims = ax.get_ylim()
-        if i < 4:
-            ax.set_ylim((-1.5, 19))
-        elif i < 8:
-            ax.set_ylim((-3, 38))
+        if i == 0:
+            pass
+        elif i == 7:
+            ax.set_ylim((-0.5, 4.99))
+            # ax.set_ylim((-1., 9.5))
+        elif i <= 4 or i == 9 or i == 6:
+            ax.set_ylim((-1.5, 19.9))
         else:
-            print(ylims)
+            ax.set_ylim((-3, 38))
 
     legend_ax_anchor.set_xlabel(f"V ({kms.to_string('latex_inline')})", labelpad=17, fontsize=12)
     legend_ax_anchor.set_ylabel("T$_{\\rm MB}$" + f" ({u.K.to_string('latex_inline')})", labelpad=22, fontsize=12)
@@ -221,12 +225,12 @@ def big_average_spectrum_figure():
     ref_ax.tick_params(labelsize=12)
 
     savename = os.path.join(catalog.utils.todays_image_folder(),
-        f"{savename_stub}.png")
+        f"{savename_stub}")
     fig.subplots_adjust(top=0.98, bottom=0.05, left=0.07, right=0.95)
     print()
-    fig.savefig(savename,
-        metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short}, noise {noise_cutoff}",
-            file=__file__, func="big_average_spectrum_figure"))
+    fig.savefig(savename+".pdf",)
+        # metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short}, noise {noise_cutoff}",
+        #     file=__file__, func="big_average_spectrum_figure"))
 
 
 def full_picture_integrated_intensity():
@@ -357,7 +361,9 @@ def m16_blue_clump():
     This function uses dictionaries to save info for reuse.
     """
     # plot defaults
-    default_label_text_size = 12
+    default_label_text_size = 17
+
+    include_zoomouts = False
 
     # Select the blue clump field
     cutout_reg_stub = "blueclump-large2"
@@ -408,6 +414,18 @@ def m16_blue_clump():
             info['wcs'] = WCS(hdr)
             info['img'] = data
             info['unit'] = u.Unit(hdr['BUNIT'])
+        # Convert units from anything / px to anything / sr
+        try:
+            info['unit'].to(u.MJy/u.sr)
+        except:
+            try:
+                pixel_area = misc_utils.get_pixel_scale(info['wcs'])**2
+                mjysr = u.MJy/u.sr
+                # print((info['unit'] * u.pixel/pixel_area).to(mjysr))
+                info['img'] = (info['img'] * info['unit'] * u.pixel/pixel_area).to(mjysr).to_value()
+                info['unit'] = mjysr
+            except:
+                raise RuntimeError("Unit issue!!! Don't know what's wrong with this one, can't convert to MJy/sr from: "+info['unit'].to_string())
         return info
 
     # The info dicts will carry lots of info in this function. Keep them somewhere accessible
@@ -419,8 +437,12 @@ def m16_blue_clump():
     img2_stub = "160um"
     img_info_dicts[img2_stub] = _load_helper(img2_stub)
     # Figure, Axes
-    fig = plt.figure(figsize=(14, 6))
-    gs = fig.add_gridspec(6, 3)
+    if include_zoomouts:
+        fig = plt.figure(figsize=(14, 6))
+        gs = fig.add_gridspec(6, 3)
+    else:
+        fig = plt.figure(figsize=(13, 8))
+        gs = fig.add_gridspec(3, 12, hspace=0.25, wspace=0.1)
     def _make_fig_and_plot(stub, grid_loc, vlims=None, key_suffix=""):
         """
         Generalized helper for turning arrays into figures in this function.
@@ -428,16 +450,18 @@ def m16_blue_clump():
         """
         info = img_info_dicts[stub]
         ax = fig.add_subplot(gs[grid_loc], projection=info['wcs'+key_suffix])
+        cax = ax.inset_axes([1, 0, 0.05, 1])
         if vlims is None:
             vlims_dict = {}
         else:
             vlims_dict = {k: v for k, v in zip(('vmin', 'vmax'), vlims)}
         im = ax.imshow(info['img'+key_suffix], origin='lower', **vlims_dict, cmap=cmocean.cm.matter)
-        cbar = fig.colorbar(im, ax=ax)
+        cbar = fig.colorbar(im, cax=cax, label=info['unit'].to_string('latex_inline'))
         info['ax'+key_suffix] = ax
 
-    _make_fig_and_plot(ref_img_stub, (slice(0, 3), 0), vlims=(25, 200))
-    _make_fig_and_plot(img2_stub, (slice(3, 6), 0), vlims=(-0.15, 0.8))  # (0, 2500) # (0, 0.8)
+    if include_zoomouts:
+        _make_fig_and_plot(ref_img_stub, (slice(0, 3), 0), vlims=(25, 200))
+        _make_fig_and_plot(img2_stub, (slice(3, 6), 0), vlims=(-0.15*4166, 0.8*4166))  # (0, 2500) # (0, 0.8)
 
     # Zoom in again with another cutout
     cutout_reg_stub_zoom = "blueclump-zoom"
@@ -445,7 +469,10 @@ def m16_blue_clump():
         info = img_info_dicts[stub]
         img = info['img']
         # no need to align again
-        info['cutout-zoom'] = misc_utils.cutout2d_from_region(img, info['wcs'], get_cutout_box_filename(cutout_reg_stub_zoom))
+        extra_kw = {}
+        if not include_zoomouts:
+            extra_kw['align_with_frame'] = "galactic"
+        info['cutout-zoom'] = misc_utils.cutout2d_from_region(img, info['wcs'], get_cutout_box_filename(cutout_reg_stub_zoom), **extra_kw)
         # don't write over the first cutout, use -zoom suffix to differentiate
         info['img-zoom'] = info['cutout-zoom'].data
         info['wcs-zoom'] = info['cutout-zoom'].wcs
@@ -453,8 +480,14 @@ def m16_blue_clump():
     _cutout_helper(ref_img_stub)
     _cutout_helper(img2_stub)
 
-    _make_fig_and_plot(ref_img_stub, (slice(0, 3), 1), vlims=(40, 120), key_suffix="-zoom")
-    _make_fig_and_plot(img2_stub, (slice(3, 6), 1), vlims=(-0.025, 0.3), key_suffix="-zoom")
+    if include_zoomouts:
+        gs_loc1 = (slice(0, 3), 1)
+        gs_loc2 = (slice(3, 6), 1)
+    else:
+        gs_loc1 = (slice(0, 2), slice(0, 5))
+        gs_loc2 = (slice(0, 2), slice(7, 12))
+    _make_fig_and_plot(ref_img_stub, gs_loc1, vlims=(40, 120), key_suffix="-zoom")
+    _make_fig_and_plot(img2_stub, gs_loc2, vlims=(-0.025*4166, 0.3*4166), key_suffix="-zoom")
 
     # Overlay regions on zoomed figure and also zoom boxes on larger figure
     reg_color = "k"
@@ -475,7 +508,7 @@ def m16_blue_clump():
         # Gotta mess around with the lines vs other patches (from m16_bubble.overlay_moment)
         if isinstance(reg_patch, Line2D):
             # Point!!!
-            reg_patch.set(mec=color, marker='o')
+            reg_patch.set(mec=color, marker='o', mew=3)
             ax.add_artist(reg_patch)
         else:
             # Anything besides Point
@@ -483,18 +516,19 @@ def m16_blue_clump():
             ax.add_patch(reg_patch)
         if label:
             center = reg.center
-            cra, cdec = center.ra.deg, center.dec.deg
-            dx = (20*u.arcsec).to(u.deg).to_value()
-            dy = (-10*u.arcsec).to(u.deg).to_value()
+            cra, cdec = center.galactic.l.deg, center.galactic.b.deg
+            dx = (-20*u.arcsec).to(u.deg).to_value()
+            dy = (20*u.arcsec).to(u.deg).to_value()
             x, y = info['wcs'+key_suffix].world_to_pixel_values(cra + dx, cdec + dy)
-            ax.text(x, y, reg.meta['text'], ha='center', va='center', fontsize=default_label_text_size, color=color)
+            ax.text(x, y, reg.meta['text'], ha='center', va='center', fontsize=default_label_text_size+0, fontweight='bold', color=color)
 
     for stub in img_info_dicts.keys():
         for reg in reg_list:
             # spectrum samples
             _plot_reg(stub, reg, key_suffix="-zoom", color=reg_color, label=True)
         # zoom box
-        _plot_reg(stub, box_reg, color=box_reg_color)
+        if include_zoomouts:
+            _plot_reg(stub, box_reg, color=box_reg_color)
 
     """
     Load lines and plot spectra
@@ -563,7 +597,7 @@ def m16_blue_clump():
         if key not in spec_axes:
             spec_axes[key] = fig.add_subplot(gs[grid_loc])
         ax = spec_axes[key]
-        ax.plot(cube_obj.data.spectral_axis.to_value(), spectrum.to_value(), color=line_info['color'], label=get_data_name(line_stub))
+        ax.plot(cube_obj.data.spectral_axis.to_value(), spectrum.to_value(), color=line_info['color'], label=get_data_name(line_stub.replace("APEX", "")))
 
     contour_vel_lims = (7, 10)
 
@@ -575,32 +609,44 @@ def m16_blue_clump():
             img_stub_for_overlay = [ref_img_stub, img2_stub][i]
             _plot_contours(line_stub, img_stub_for_overlay, key_suffix="-zoom", velocity_limits=contour_vel_lims, levels=5)
         for j, reg in enumerate(reg_list):
-            _extract_and_plot_spectra(line_stub, reg, grid_loc=(slice(2*j, 2*(j+1)), 2))
+            if include_zoomouts:
+                gs_loc = (slice(2*j, 2*(j+1)), 2)
+            else:
+                gs_loc = (2, slice(4*j, 4*(j+1)))
+            _extract_and_plot_spectra(line_stub, reg, grid_loc=gs_loc)
 
     # Mark up the spectrum plots
     for i, key in enumerate(spec_axes):
         ax = spec_axes[key]
         ax.text(0.1, 0.9, key, color='k', transform=ax.transAxes, fontsize=default_label_text_size, ha='center', va='center')
         ax.set_xlabel("V$_{\\rm LSR}$ " + f"({kms.to_string('latex_inline')})")
-        ax.set_ylabel(f"Line intensity ({u.K.to_string('latex_inline')})")
+        if int(key) == 1:
+            ax.set_ylabel(f"Line intensity ({u.K.to_string('latex_inline')})")
+        else:
+            ax.yaxis.set_tick_params(labelleft=False, direction='in')
         ax.axvspan(*contour_vel_lims, color='grey', alpha=0.3)
         ax.axhline(0, color='grey', linestyle="--", alpha=0.2)
-        if i == 0:
-            ax.legend()
-        ax.set_xlim((-5, 30))
+        if int(key) == 2:
+            ax.legend(bbox_to_anchor=[0, 1, 1, 1.1], ncols=3, loc='lower center')
+        ax.set_xlim((-4, 28))
         ax.set_ylim((-3, 15))
 
     # Mark up the image plots
     for stub in img_info_dicts.keys():
-        ax = img_info_dicts[stub]['ax']
-        ax.text(0.95, 0.9, get_data_name(stub), color='k', transform=ax.transAxes, fontsize=default_label_text_size, ha='right', va='center')
+        # ax = img_info_dicts[stub]['ax']
         ax = img_info_dicts[stub]['ax-zoom']
+        ax.text(0.1, 0.1, "Image: "+get_data_name(stub), color='k', transform=ax.transAxes, fontsize=default_label_text_size, ha='left', va='center')
         line_stub = img_info_dicts[stub]['overlaystub-zoom']
-        ax.text(0.95, 0.9, get_data_name(line_stub), color='w', transform=ax.transAxes, fontsize=default_label_text_size-2, ha='right', va='center')
+        ax.text(0.95, 0.9, "Contour: "+get_data_name(line_stub.replace("APEX", "")), color='w', transform=ax.transAxes, fontsize=default_label_text_size, ha='right', va='center')
+        # General coord formatting
+        ax.coords[0].set_major_formatter('d.dd')
+        ax.coords[1].set_major_formatter('d.dd')
+        ax.set_xlabel("Galactic Longitude")
+        ax.set_ylabel("Galactic Latitude")
 
-    plt.tight_layout()
+    fig.subplots_adjust(top=1, bottom=0.1, left=0.08, right=0.9)
     levels_string = levels_string.rstrip()
-    save_text = f"large:{cutout_reg_stub}. {levels_string}"
+    save_text = f"vellims{contour_vel_lims}. large:{cutout_reg_stub}. {levels_string}"
     savename = f"spectra_{cutout_reg_stub_zoom}" + "-".join(line_stub_list) + ".png"
     fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
         metadata=catalog.utils.create_png_metadata(title=save_text, file=__file__, func="m16_blue_clump"))
@@ -731,4 +777,4 @@ def pv_n19():
 
 
 if __name__ == "__main__":
-    pv_n19()
+    m16_blue_clump()
