@@ -4,12 +4,15 @@ This file is intended to create a publication-quality image for the paper,
 and it follows directly from work in the color_temperature_comparison.ipynb
 notebook (and related notebooks)
 Created: March 23, 2021
+
+Used June 11, 2024 to make Lars a dust map for RCW 49 (solve_opt_thin)
 """
 __author__ = "Ramsey Karim"
 
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import datetime
 
 from scipy.interpolate import UnivariateSpline
 from astropy.io import fits
@@ -146,6 +149,53 @@ def solve_opt_thin(p70_img, p160_img, savename=None):
     return T_img, tau160_img
 
 
+def convert_tau_to_column_density_and_save(tau160, T, wcs_obj):
+    """
+    June 11, 2024
+    Big time skip from the rest of this file. Lars requested the dust map from
+    RCW 49 and I realized I have not recreated/saved a final map, I just
+    calculated stuff in memory and saved an image.
+
+    Here I will follow the shortcuts from M16. For RCW 49, I had a lengthy
+    procedure in dust_mass.py, but a lot of that code isn't necessary.
+    I think some of it had to do with the way I saved the optimization fit?
+    I also just had way too many things hidden away in functions, so the code
+    is hard to read, and I am loading Cext from a data file which is unnecessary
+    for just one number.
+
+    Following the conversion in m16_bubble.convert_pacs_tau_to_coldens
+    """
+    cexth = 1.9e-25 * u.cm**2
+    nhtot = (tau160 / cexth).to(u.cm**-2)
+
+    # Template for header
+    hdr = wcs_obj.to_header()
+    hdr['DATE'] = f"Created: {datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()}"
+    hdr['CREATOR'] = f"rkarim, via {__file__}.convert_tau_to_column_density_and_save"
+    hdr['AUTHOR'] = "Ramsey Karim"
+    hdr['OBJECT'] = "RCW 49"
+    hdr['HISTORY'] = "Herschel PACS 70 and 160, obsID 1342255009, 160 grid and beam"
+    hdr['HISTORY'] = f"Zero-point offsets in MJy/sr: +80 (70), +370 (160)"
+
+    # NH header
+    hdr1 = hdr.copy()
+    hdr1['EXTNAME'] = "N_H"
+    hdr1['COMMENT'] = "Total H column density N_H = N(H2) + 2 N(H)"
+    hdr['HISTORY'] = f"tau160 converted to N_H using Cext(160)/H = 1.9e-25 cm2"
+    hdr1['BUNIT'] = nhtot.unit.to_string()
+
+    # Temperature header
+    hdr2 = hdr.copy()
+    hdr2['EXTNAME'] = "T"
+    hdr2['BUNIT'] = "K"
+
+    hdu1 = fits.ImageHDU(data=nhtot.to_value(), header=hdr1)
+    hdu2 = fits.ImageHDU(data=T, header=hdr2)
+
+    hdul = fits.HDUList([fits.PrimaryHDU(), hdu1, hdu2])
+    hdul.writeto(os.path.join(herschel_dir, "rcw49_dust_coldens.fits"), overwrite=False)
+
+
 
 if False:
     # # PACS 70 and 160 micron; transform to wavelengths
@@ -170,7 +220,10 @@ b0, r0 = p70_img[i0, j0], p160_img[i0, j0]
 original_T, original_tau = load_original_fit()
 orig_T0, orig_tau0 = original_T[i0, j0], original_tau[i0, j0]
 
-T_img, tau160_img = solve_opt_thin(p70_img, p160_img, savename='colorsoln_1.fits')
+T_img, tau160_img = solve_opt_thin(p70_img, p160_img, savename='colorsoln_1-duplicate.fits')
+# Tau is made log10 in solve_opt_thin, so need to undo that here
+convert_tau_to_column_density_and_save(10.**tau160_img, T_img, wcs_obj)
+
 
 plt.subplot(121)
 plt.imshow(100.*(original_T - T_img)/original_T, origin='lower', vmin=-5, vmax=5)

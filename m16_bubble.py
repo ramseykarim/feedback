@@ -7753,7 +7753,8 @@ if __name__ == "__main__":
     # save_moment0(line_stub='cii-30', velocity_limits=(6*kms, 11*kms), cutout_reg_stub=None)
     # save_moment0(line_stub='cii-30', velocity_limits=(15*kms, 30*kms), cutout_reg_stub=None)
     # save_moment0(line_stub='cii-30', velocity_limits=(21*kms, 27*kms), cutout_reg_stub=None)
-    # save_moment0(line_stub='12co32', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
+    save_moment0(line_stub='12co10-pmo', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
+    save_moment0(line_stub='12co10-nob', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
 
 
     """ Comparing 8micron and CII """
@@ -7925,7 +7926,7 @@ if __name__ == "__main__":
     # contours_13cii(x)
     # spectra_13cii(x)
     # spitzer_expansion_plot()
-    ekin_ew_vs_age_plot()
+    # ekin_ew_vs_age_plot()
     # integrate_cii_and_FIR_luminosities()
     # trim_CO_mass_to_CII_grid(velocity_limits=(11*kms, 21*kms))
     # bubble_geometry()
