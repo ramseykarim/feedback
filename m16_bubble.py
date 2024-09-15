@@ -7659,8 +7659,107 @@ def vizier_query_dark_clouds():
 
 
 
+"""
+RRLs from Loren
+"""
+
+def plot_rrls():
+    """
+    Just basic plotting, try a spectrum, see if the data axes are messed up
+    """
+    # RRL filename
+    fn_short = "greenbank/M16_halpha_2pol_average.fits"
+    cube_obj = cube_utils.CubeData(fn_short).convert_to_K().convert_to_kms()
+    spec = cube_obj.data[:, 40, 40].to_value()
+    spectral_axis = cube_obj.data.spectral_axis.to_value()
+    plt.plot(spectral_axis, spec)
+    plt.show()
+
+
+
+def shell_expansion_rrls_and_cii():
+    """
+    greenbank/M16_halpha_2pol_average.fits
+    Following m16_pictures_2.m16_expanding_shell_spectra
+    """
+    # RRL filename
+    rrl_fn_short = "greenbank/M16_halpha_2pol_average.fits"
+    # Copy-paste-edited from m16_expanding_shell_spectra
+    reg_filename_short = "catalogs/m16_west_cavity_spec_regions.reg"
+    spec_labels = ("1", "2")
+    colors = marcs_colors[:2][::-1]
+    savename_stub = "west_cavity_3am_circles"
+    reg_list = regions.Regions.read(catalog.utils.search_for_file(reg_filename_short))
+    # Fig
+    fig = plt.figure(figsize=(13, 6))
+    # Axes
+    gs = fig.add_gridspec(2, 3)
+    img_axes = []
+    # Load cube
+    line_stub = "cii"
+    fn = get_map_filename(line_stub)
+    cube_obj = cube_utils.CubeData(fn).convert_to_K().convert_to_kms()
+    # Reference contour moment image
+    ref_vel_lims = (12*kms, 30*kms)
+    ref_mom0 = cube_obj.data.spectral_slab(*ref_vel_lims).moment0()
+    # Moment images
+    # velocity_intervals = [(2, 12), (35, 45)]
+    velocity_intervals = [(5, 15), (30, 40)]
+    for i, vel_lims in enumerate(velocity_intervals):
+        vel_lims = tuple(v*kms for v in vel_lims)
+        mom0 = cube_obj.data.spectral_slab(*vel_lims).moment0()
+        ax = fig.add_subplot(gs[i, 0], projection=cube_obj.wcs_flat)
+        im = ax.imshow(mom0.to_value(), origin='lower', vmin=-10, vmax=45, cmap='plasma')
+        fig.colorbar(im, ax=ax, label=f"{get_data_name(line_stub)} {make_vel_stub(vel_lims)} ({mom0.unit.to_string('latex_inline')})")
+        ax.contour(ref_mom0.to_value(), levels=np.arange(75, 400, 75), colors='k', linewidths=0.7)
+        # Plot circles
+        for j, reg in enumerate(reg_list):
+            reg.to_pixel(cube_obj.wcs_flat).plot(ax=ax, color=colors[j])
+        img_axes.append(ax)
+    # Load RRL data and use all same settings
+    rrl_cube_obj = cube_utils.CubeData(rrl_fn_short).convert_to_K().convert_to_kms()
+    # spectrum multiplier to highlight RRL data
+    rrl_mult = 10.
+    # Spectra, both on same figure
+    spec_ax = fig.add_subplot(gs[:, 1:])
+    for j, reg in enumerate(reg_list):
+        # CII
+        subcube = cube_obj.data.subcube_from_regions([reg])
+        spectrum = subcube.mean(axis=(1, 2))
+        spec_ax.plot(subcube.spectral_axis.to_value(), spectrum.to_value(), color=colors[j], linestyle='-', linewidth=1, label=spec_labels[j])
+        # RRL spectra on the figure too
+        subcube = rrl_cube_obj.data.subcube_from_regions([reg])
+        spectrum = subcube.mean(axis=(1, 2)) * rrl_mult
+        spec_ax.plot(subcube.spectral_axis.to_value(), spectrum.to_value(), color=colors[j], linestyle='-', linewidth=2)
+
+
+
+    # Mark moment velocities on spectrum plot
+    for vel_lims in velocity_intervals:
+        plt.axvspan(*vel_lims, color='grey', alpha=0.3)
+    # Extra plot dressing
+    spec_ax.axhline(0, color='grey', linestyle="--", alpha=0.2)
+    spec_ax.set_xlabel("V$_{\\rm LSR}$ " + f"({kms.to_string('latex_inline')})")
+    spec_ax.set_ylabel(f"{get_data_name(line_stub)} line intensity ({spectrum.unit.to_string('latex_inline')})")
+    spec_ax.set_xlim([-10, 60])
+    plt.subplots_adjust(left=0.09, right=0.97, top=0.95, wspace=0.45, bottom=0.09)
+    vel_stub = "-and-".join([make_simple_vel_stub(tuple(v*kms for v in vel_lims)) for vel_lims in velocity_intervals])
+
+    savename = f"expanding_shell_spectra_{line_stub}_{vel_stub}.png"
+    fig.savefig(os.path.join(catalog.utils.todays_image_folder(), savename),
+        metadata=catalog.utils.create_png_metadata(title=f"{reg_filename_short}",
+            file=__file__, func="m16_expanding_shell_spectra"))
+
+
+
 if __name__ == "__main__":
     pass # in case nothing else is commented in, just so this is syntactically correct
+
+    """
+    RRLs
+    """
+    shell_expansion_rrls_and_cii()
+
     """
     Moment 0 examples
     """
@@ -7753,8 +7852,8 @@ if __name__ == "__main__":
     # save_moment0(line_stub='cii-30', velocity_limits=(6*kms, 11*kms), cutout_reg_stub=None)
     # save_moment0(line_stub='cii-30', velocity_limits=(15*kms, 30*kms), cutout_reg_stub=None)
     # save_moment0(line_stub='cii-30', velocity_limits=(21*kms, 27*kms), cutout_reg_stub=None)
-    save_moment0(line_stub='12co10-pmo', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
-    save_moment0(line_stub='12co10-nob', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='12co10-pmo', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
+    # save_moment0(line_stub='12co10-nob', velocity_limits=(10*kms, 27*kms), cutout_reg_stub=None)
 
 
     """ Comparing 8micron and CII """
