@@ -31,6 +31,7 @@ import time
 import warnings
 import math
 import itertools
+import bisect
 
 # from math import ceil
 # from scipy import signal
@@ -5574,6 +5575,9 @@ def n19_shell_dust_mass():
     """
     ...
 
+"""
+CHANNEL MAPS
+"""
 
 def cii_channel_maps():
     """
@@ -5624,6 +5628,217 @@ def co_channel_maps():
     print("done")
 
 
+def channel_maps_scratchpad():
+    """
+    February 17, 2025
+    I'm like past 6 months working at SDGR and here I am making new function
+
+    The idea here is to identify indices for cropping the Gal-oriented CII/CO
+
+    Following m16_pictures_2.py::big_average_spectrum_figure for the regridding
+    """
+    fn = get_map_filename("cii-30")
+    cube = cube_utils.CubeData(fn)
+    i_27kms = bisect.bisect_right(cube.data.spectral_axis.to(kms).to_value(), 27) - 1
+
+    fn_co = get_map_filename("12co32-2kms")
+    cube_co = cube_utils.CubeData(fn_co)
+    i_27kms_co = bisect.bisect_right(cube_co.data.spectral_axis.to(kms).to_value(), 27) - 1
+
+    cutout = misc_utils.cutout2d_from_region(cube.data[i_27kms].to_value(), cube.wcs_flat, get_cutout_box_filename('med'), align_with_frame='galactic')
+    ref_wcs = cutout.wcs
+    ref_img = cutout.data
+    ref_shape = ref_img.shape
+
+    co_reproj = reproject_interp((cube_co.data[i_27kms_co].to_value(), cube_co.wcs_flat), ref_wcs, shape_out=ref_shape, return_footprint=False)
+
+    crop_slices = (slice(4, 146), slice(21, 138))
+    # crop_slices = (slice(None), slice(None))
+
+    ref_wcs = ref_wcs[crop_slices]
+
+    fig = plt.figure()
+    ref_ax = fig.add_subplot(121, projection=ref_wcs)
+    im = ref_ax.imshow(ref_img[crop_slices], origin='lower', cmap=cmocean.cm.matter)
+
+    co_ax = fig.add_subplot(122, projection=ref_wcs)
+    im_co = co_ax.imshow(co_reproj[crop_slices], origin='lower', cmap=cmocean.cm.algae)
+
+    plt.show()
+
+
+def cii_co_combined_channel_maps():
+    """
+    February 17, 2025
+    Ambitious attempt to put CII and CO side-by-side channel-by-channel.
+    This will have to be split into two images. I can fit 10 channels on each
+    image, and I have 19.
+    """
+    # Config
+    line_names = ['cii-30', '12co32-2kms']
+    velocity_limits = [7, 41] * kms
+    channel_grid_shape = (6, 3)
+    line_vlims = {'cii-30': [0, 25], '12co32-2kms': [0, 25]}
+    dpi = 100
+
+    # Load data
+    cube_fns = [get_map_filename(line_name) for line_name in line_names]
+    cubes = [cube_utils.CubeData(fn).convert_to_K().convert_to_kms() for fn in cube_fns]
+    # Get the wcs_flat and slices
+    def calc_wcs_flat():
+        # Start with an arbitrary CII slice to get the ref wcs
+        cutout = misc_utils.cutout2d_from_region(cubes[0].data[0].to_value(), cubes[0].wcs_flat, get_cutout_box_filename('med'), align_with_frame='galactic')
+        uncropped_wcs = cutout.wcs
+        crop_slices = (slice(4, 146), slice(21, 138))
+        ref_wcs = uncropped_wcs[crop_slices]
+        ref_img = cutout.data[crop_slices]
+        """ :return: WCS, shape """
+        return ref_wcs, ref_img.shape
+    ref_wcs, ref_shape = calc_wcs_flat()
+
+    fig = plt.figure(figsize=(13.5, 14.5))
+    mega_gridspec = fig.add_gridspec(right=0.89, left=0.07, top=0.98, bottom=0.06)
+    # Create an axis so we can anchor the colorbar(s)
+    mega_axis = mega_gridspec.subplots()
+    mega_axis.set_axis_off()
+    # Make a "channel" gridspec; this will be 5x2. Each frame is one channel.
+    channel_gridspec = mega_gridspec[0,0].subgridspec(*channel_grid_shape, hspace=0.02, wspace=0.05)
+
+    # Make the frame gridspecs. Should be 5x2 of them, and they should each contain 1x2 grids
+    frame_gridspecs = []
+    # the subplotspecs have more information about the frame position in the channel grid
+    frame_subplotspecs = []
+    for frame_idx in range(channel_grid_shape[0] * channel_grid_shape[1]):
+        frame_subplotspec = channel_gridspec[np.unravel_index(frame_idx, channel_grid_shape)]
+        frame_subplotspecs.append(frame_subplotspec)
+        frame_gridspec = frame_subplotspec.subgridspec(1, len(line_names), wspace=0, hspace=0)
+        frame_gridspecs.append(frame_gridspec)
+    # Create and organize the axes
+    def get_ax_stub(line_name, frame_idx):
+        return f"{line_name}_{frame_idx:02d}"
+    axes_lookup = {}
+    def get_axis(line_name, frame_idx):
+        stub = get_ax_stub(line_name, frame_idx)
+        if stub not in axes_lookup:
+            frame_gridspec = frame_gridspecs[frame_idx]
+            ax = fig.add_subplot(frame_gridspec[0, line_names.index(line_name)], projection=ref_wcs)
+            axes_lookup[stub] = ax
+        return axes_lookup[stub]
+
+    # Map velocities to channels
+    channel_indices = [[cube.data.closest_spectral_channel(v) for v in velocity_limits] for cube in cubes]
+    """ Below here, heavily copied from the regular channel maps script """
+
+    # Text defaults
+    text_x = 0.05
+    text_y = 0.92
+    # ha/va are horizontal and vertical alignment
+    ha = 'left'
+    # the color I use there is from Marc's collection of colorblind-friendly colors and works well against "plasma"
+    default_text_kwargs = dict(fontsize=14, color='k', ha=ha, va='center')
+    tick_labelsize = 14
+    tick_labelrotation = 40
+    tick_labelpad = 20
+
+    # Colors
+    cmaps = [cmocean.cm.matter, cmocean.cm.dense] # Image colormap
+    # cmap = cmaps[0] # stick with one for now
+    beam_patch_ec = "grey" # edge color
+    beam_patch_fc = "white" # face color
+    pixel_scale = ref_wcs.proj_plane_pixel_scales()[0] # gives RA, Dec scales; pick one. They're almost certainly equal, so doesn't matter
+
+    # Save the last image from each line for colorbar making
+    im_cache = [None]*len(line_names)
+
+    # Loop thru cubes
+    for cube_idx, line_name in enumerate(line_names):
+        cube = cubes[cube_idx]
+        vlims = dict(zip(['vmin', 'vmax'], line_vlims[line_name]))
+        first_channel_idx, last_channel_idx = channel_indices[cube_idx]
+        cmap = cmaps[cube_idx]
+        # Loop through channels and plot
+        for frame_idx, channel_idx in enumerate(range(first_channel_idx, last_channel_idx+1)):
+            if frame_idx >= channel_grid_shape[0]*channel_grid_shape[1]:
+                break
+            velocity = cube.data.spectral_axis[channel_idx]
+            unaligned_channel_data = cube.data[channel_idx].to_value()
+            channel_data = reproject_interp((unaligned_channel_data, cube.wcs_flat), ref_wcs, shape_out=ref_shape, return_footprint=False)
+
+            print(f"Frame {frame_idx:2d}, Channel {channel_idx:3d}")
+            ### print the [min, mean, median, max] for each panel so that we can find the best vlims (min, max) for all of them
+            # print([f(channel_data) for f in (np.nanmin, np.nanmean, np.nanmedian, np.nanmax)])
+
+
+            # Setup Axes
+            ax = get_axis(line_name, frame_idx)
+            # Remove x and y labels on individual panels (use the "super" titles)
+            ax.set_xlabel(" ")
+            ax.set_ylabel(" ")
+            ss = frame_subplotspecs[frame_idx]
+            # Coordinate labels
+            if ss.is_last_row() and ss.is_first_col():
+                # Coordinates only on bottom left corner panel
+                # AND only Dec on first line, then RA on both lines
+                # Mess around with the rotation, position, and size of coordinate labels
+                ax.coords[0].set_ticklabel(rotation=tick_labelrotation, rotation_mode='anchor', pad=tick_labelpad, fontsize=tick_labelsize, ha='right', va='top')
+                ax.coords[0].set_major_formatter('d.dd')
+                if cube_idx == 0:
+                    ax.coords[1].set_major_formatter('d.dd')
+                    ax.coords[1].set_ticklabel(fontsize=tick_labelsize)
+                else:
+                    ax.tick_params(axis='y', labelleft=False)
+            else:
+                # If not the bottom left panel, no coordinates (panels have no space in between)
+                # Hide coordinates
+                ax.tick_params(axis='x', labelbottom=False)
+                ax.tick_params(axis='y', labelleft=False)
+            ax.tick_params(axis='both', direction='in')
+            # Plot
+            im_cache[cube_idx] = ax.imshow(channel_data, origin='lower', cmap=cmap, **vlims)
+            # Label velocity on each panel
+            if cube_idx == 0:
+                ax.text(text_x, text_y, f"{velocity.to_value():.0f} {velocity.unit.to_string('latex_inline')}", transform=ax.transAxes, **default_text_kwargs)
+            if frame_idx == 0:
+                ax.text(text_x, 1-text_y, get_data_name(line_name.split('-')[0]), transform=ax.transAxes, **default_text_kwargs)
+            # Beam on every panel
+            beam_patch = cube.data.beam.ellipse_to_plot(*(ax.transAxes + ax.transData.inverted()).transform([0.9, 0.1]), pixel_scale)
+            beam_patch.set(alpha=0.9, facecolor=beam_patch_fc, edgecolor=beam_patch_ec)
+            ax.add_artist(beam_patch)
+
+    # Colorbar
+    # Create a space to the right of the panels using the height/location of the mega_axis as an anchor
+    cbar_pad = 0.025
+    for cbar_i in range(len(line_names)):
+        cbar_ax = mega_axis.inset_axes([1. + 0.015 + cbar_pad*(cbar_i), 0, cbar_pad, 1])
+        cbar_kwargs = {}
+        if cbar_i == len(line_names)-1:
+            cbar_kwargs['label'] = label='T$_{\\rm MB}$ (K)'
+        cbar = fig.colorbar(im_cache[cbar_i], cax=cbar_ax, **cbar_kwargs)
+        if cbar_i != len(line_names)-1:
+            cbar_ax.tick_params(axis='y', labelright=False, right=False)
+
+    # Titles
+    fig.supxlabel("Galactic Longitude")
+    fig.supylabel("Galactic Latitude")
+
+    dpi_stub = f"_dpi{dpi}"
+
+    fig_save_name = f"channel_maps_{'-'.join(line_names)}{dpi_stub}.png"
+    savefig_kwargs = {"dpi": dpi}
+    savefig_kwargs['metadata'] = catalog.utils.create_png_metadata(title=f"channel maps {', '.join(line_names)} rebin",
+        file=__file__, func="cii_co_combined_channel_maps")
+
+    figure_save_path = catalog.utils.todays_image_folder()
+
+    full_save_path = os.path.join(figure_save_path, fig_save_name)
+    # fig.savefig(full_save_path, **savefig_kwargs)
+    fig.savefig(full_save_path.replace('.png', '.pdf'))
+    print(f"Figure saved to {os.path.join(figure_save_path, fig_save_name)}")
+
+
+"""
+Various other interesting things
+"""
 
 def peak_T_velocity_map():
     """
@@ -7758,7 +7973,7 @@ if __name__ == "__main__":
     """
     RRLs
     """
-    shell_expansion_rrls_and_cii()
+    # shell_expansion_rrls_and_cii()
 
     """
     Moment 0 examples
@@ -7996,6 +8211,8 @@ if __name__ == "__main__":
     # cii_channel_maps()
     # channel_movie('ciiAPEX', vel_lims=(0, 10))
     # co_channel_maps()
+    cii_co_combined_channel_maps()
+    # channel_maps_scratchpad()
 
     """
     Spectra

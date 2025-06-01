@@ -556,11 +556,10 @@ def m16_blue_clump():
         line_info["color"] = plot_color
         line_dict[line_stub] = line_info
 
-    def _plot_contours(line_stub, img_stub, key_suffix="", velocity_limits=None, levels=None, color='white'):
+    def _plot_contours(line_stub, img_stub, key_suffix="", velocity_limits=None, levels=None):
         """
         :param img_stub: select the image to overplot contours on, along with key_suffix
         :param velocity_limits: float tuple, km/s implied
-        :param color: contour color
         """
         line_info = line_dict[line_stub]
         cube_obj = line_info['CubeData']
@@ -573,7 +572,7 @@ def m16_blue_clump():
         mom0 = subcube.moment0()
         ax = img_info_dicts[img_stub]['ax'+key_suffix]
         mom0_reproj = reproject_interp((mom0.to_value(), mom0.wcs), img_info_dicts[img_stub]['wcs'+key_suffix], shape_out=img_info_dicts[img_stub]['img'+key_suffix].shape, return_footprint=False)
-        cs = ax.contour(mom0_reproj, levels=levels, colors=color, linewidths=0.6, alpha=0.7)
+        cs = ax.contour(mom0_reproj, levels=levels, colors='grey', linewidths=1.3, alpha=1)
         # print(line_stub, cs.levels)
         nonlocal levels_string # scope!!! we finally have to use this!
         levels_string += line_stub + " " + str(cs.levels) + ". "

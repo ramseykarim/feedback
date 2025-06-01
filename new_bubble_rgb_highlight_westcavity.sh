@@ -36,6 +36,10 @@ coord_boilerplate="-wcs degrees -grid yes -grid grid no -grid border yes -grid n
 -grid axes type exterior -grid format1 d.1 -grid format2 d.1 -grid numerics gap1 2 -grid numerics gap2 6 -grid tickmarks width 2 \
 -grid tickmarks color ${coord_color} -grid border width 3 -grid border color black -colorbar no"
 
+region_boilerplate="-region load catalogs/m16_lobes_outlined_4.reg \
+-region select all -region color green -region select none
+"
+
 function make_panel_img() {
   ds9 \
   optical/dss2-red.18.18.45.1-13.47.31.2.fits -scale SQRT -scale limits 3800 18000 \
@@ -47,9 +51,9 @@ function make_panel_img() {
 	-zoom to 0.18 0.18 \
   \
   $coord_boilerplate \
-  -frame next $coord_boilerplate \
-  -frame next $coord_boilerplate \
-  -frame next $coord_boilerplate \
+  -frame next $coord_boilerplate $region_boilerplate \
+  -frame next $coord_boilerplate $region_boilerplate \
+  -frame next $coord_boilerplate $region_boilerplate \
 
 }
 
