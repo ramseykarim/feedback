@@ -2820,14 +2820,20 @@ def scatter_radex_grid(select_grid=None, stub=""):
         metadata=catalog.utils.create_png_metadata(title="scatter plot. std error bars",
             file=__file__, func="scatter_radex_grid"))
 
-def calc_mass_from_masked_data():
+def calc_mass_from_masked_data(region_name):
     """
     Dec 30, 2023
     Using the 12co32 mask, PMO-grid data, find the mass for all the column density measurements.
     0.06404582 pc2 is the pixel area
     """
-    # data_fn = "misc_regrids/sample_mask_N19_11.0.21.0_vals_regrid.csv"; reg_stub = "N19"
-    data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"; reg_stub = "BNR"
+
+    data_fns = {
+        "N19": "misc_regrids/sample_mask_N19_11.0.21.0_vals_regrid.csv",
+        "BNR": "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
+    }
+    data_fn = data_fns[region_name]
+    reg_stub = region_name
+
     data_df = pd.read_csv(catalog.utils.search_for_file(data_fn))
     cd_colnames = [colname for colname in data_df.columns if "column_density" in colname]
     print("REGION:", reg_stub)
@@ -3481,6 +3487,8 @@ def trim_CO_mass_to_CII_grid(velocity_limits=None):
     """
     if velocity_limits is None:
         velocity_limits = (11*kms, 21*kms)
+        print(f"WARNING!!!! VELOCITY LIMITS DEFAULTING TO {velocity_limits=}")
+        raise RuntimeError("Remove this if you really want that; reminder that we use 10-21 for the paper")
     vel_stub_simple = make_simple_vel_stub(velocity_limits)
     pmo_fn = f"purplemountain/column_density_v3__13co10-pmo_{vel_stub_simple}.fits"
     # Make CII valid mask
@@ -6701,7 +6709,7 @@ def energetics_calculations():
     h2_t = 30 * u.K
     h2_therm_p, txt = _generic_therm_p(h2_t, n19_h2_n)
     print(f"N19 H2 shell thermal pressure {txt}")
-    h2_turb_p, txt = _generic_turb_p(1*kms * fwhm_conv, n19_h2_n, 2)
+    h2_turb_p, txt = _generic_turb_p(1*kms * fwhm_conv, n19_h2_n, 2) # the 2 needs to be replaced/refactored, we can't just multiply by 2. 2025-06-01.
     print(f"N19 H2 shell turbulent pressure {txt}")
     print("N19 H2 magnetic:")
     _reverse_engineer_B_field(h2_turb_p)
@@ -8161,6 +8169,8 @@ if __name__ == "__main__":
         'redshifted_2': (21*kms, 27*kms), # the originals
         'green-cloud': (21*kms, 23*kms), 'red-cloud': (23*kms, 27*kms), # the main green/red stuff, split more finely
         'north_cloud_3': (10*kms, 21*kms),
+        ### 2025-06-08 commentary: I've settled on 10-21, 21-23, and 23-27 which correspond here to `north_cloud_3`, `green-cloud`, `red-cloud`
+        #### For CII, I use 21-27 for the "natal cloud" which corresponds to `redshifted_2`
         ### new wave experimental 2024-01-15
         'blue_clump': (6*kms, 11*kms), 'high_velocity': (35*kms, 40*kms),
     }
@@ -8190,7 +8200,7 @@ if __name__ == "__main__":
     #     k = f"t{i}"
     # compare_data_with_radex_grid("t28")
     # scatter_radex_grid()
-    # calc_mass_from_masked_data()
+    # calc_mass_from_masked_data("BNR")
     # sum_chisq_to_get_masked_area_errorbars()
     # individual_pixel_ensemble_chisq()
     # for l in ["N19", "BNR"]:
@@ -8211,7 +8221,7 @@ if __name__ == "__main__":
     # cii_channel_maps()
     # channel_movie('ciiAPEX', vel_lims=(0, 10))
     # co_channel_maps()
-    cii_co_combined_channel_maps()
+    # cii_co_combined_channel_maps()
     # channel_maps_scratchpad()
 
     """
@@ -8244,7 +8254,10 @@ if __name__ == "__main__":
     # spitzer_expansion_plot()
     # ekin_ew_vs_age_plot()
     # integrate_cii_and_FIR_luminosities()
-    # trim_CO_mass_to_CII_grid(velocity_limits=(11*kms, 21*kms))
+    for vlim_label in ('north_cloud_3', 'green-cloud', 'red-cloud', 'redshifted_2'):
+        print(f"{vlim_label=} -> {velocity_limits[vlim_label]=}")
+        trim_CO_mass_to_CII_grid(velocity_limits=velocity_limits[vlim_label])
+        print('\n' + '='*8 + '\n')
     # bubble_geometry()
     # bubble_cross_cut(select=3.2)
     # fake_bubble_spectra()
