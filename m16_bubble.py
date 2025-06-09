@@ -6662,7 +6662,7 @@ def energetics_calculations():
     print(dashes)
     print()
 
-    """ Part 4: N19 Molecular """
+    """ Part 5: N19 Molecular """
     n19_h2_n = 5.6e3 * u.cm**-3
     n19_h2_col = 1.1e22 * u.cm**-2
     n19_h2_mass = 4200 * u.solMass
@@ -6674,7 +6674,7 @@ def energetics_calculations():
     print(dashes)
     print()
 
-    """ Part 4: N19 PDR Energetics """
+    """ Part 6: N19 PDR Energetics """
     n19_cii_n = 1500 * u.cm**-3
     n19_pdr_t = 100 * u.K
     def _generic_therm_p(t, n):
@@ -6705,7 +6705,7 @@ def energetics_calculations():
     print(dashes)
     print()
 
-    """ Part 4: N19 PDR Energetics """
+    """ Part 7: N19 H2 Energetics """
     h2_t = 30 * u.K
     h2_therm_p, txt = _generic_therm_p(h2_t, n19_h2_n)
     print(f"N19 H2 shell thermal pressure {txt}")
@@ -6727,7 +6727,7 @@ def energetics_calculations():
     print(f"Mass ratio {n19_h2_mass}/{n19_cii_mass} = {(n19_h2_mass/n19_cii_mass).decompose()} and ke ratio {(n19_h2_ke/n19_pdr_ke).decompose()}")
     print()
 
-    """ Part 5: N19 HII density and energy """
+    """ Part 8: N19 HII density and energy """
     n19_tot_p = 3e6 * p_unit
     def _hii_density_from_pressure(p):
         ntot = (n19_tot_p / (8000*u.K)).to(u.cm**-3)
@@ -6741,7 +6741,7 @@ def energetics_calculations():
     print()
 
 
-    """ Part 6: Xray plasma """
+    """ Part 9: Xray plasma """
     src_area = 886837.460929 * u.arcsec**2
     Y = 1.54 * 10**58 * u.m**-3
     em = Y * src_area.to_value()
