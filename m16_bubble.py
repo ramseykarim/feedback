@@ -32,6 +32,7 @@ import warnings
 import math
 import itertools
 import bisect
+import enum
 
 # from math import ceil
 # from scipy import signal
@@ -104,6 +105,8 @@ Hmass = const.u * H_mass_amu
 
 # Adopting Y = 0.25, Z=0
 mean_molecular_weight_neutral = 1.33
+mean_molecular_weight_molecular = 2.33 # I think we can quote a kauffmann paper?
+_mmw_corrected = not (mean_molecular_weight_molecular == mean_molecular_weight_neutral*2)
 
 """
 File i/o and other useful, reusable things.
@@ -659,7 +662,8 @@ def co_column_manage_inputs(line='10', isotope='13', velocity_limits=None, cutou
     cutout_reg_filename_stub = "_"+cutout_reg_stub if cutout_reg_stub is not None else ""
     velocity_stub = "_"+make_simple_vel_stub(velocity_limits) if velocity_limits is not None else ""
     ff_stub = f"ff{ff:.1f}" if ff is not None else ""
-    savename = os.path.join(save_path, f"column_density_v3_{ff_stub}_{thin_cube_stub}{cutout_reg_filename_stub}{velocity_stub}.fits")
+    mmw_stub = ".mmwcor" if _mmw_corrected else ".mmwOLD"
+    savename = os.path.join(save_path, f"column_density_v4_{ff_stub}_{thin_cube_stub}{cutout_reg_filename_stub}{velocity_stub}{mmw_stub}.fits")
 
     header_pairs = col_dens_calculator.create_header_comments()
 
@@ -1036,7 +1040,7 @@ class COColumnDensity:
         e_pixel_area = 2 * (self.pixel_scale/u.radian)**2 * self.los_distance * self.e_los_distance
         # Particle mass
         # H2 mass = 2 * H mass
-        self.particle_mass = 2 * mean_molecular_weight_neutral * Hmass
+        self.particle_mass = mean_molecular_weight_molecular * Hmass
         self.mass_per_pixel = (self.pixel_area * self.H2_column_density * self.particle_mass).to(u.solMass)
         # Uncertainty from both column density and distance
         e_from_pixel = e_pixel_area * self.H2_column_density * self.particle_mass
@@ -1071,6 +1075,7 @@ class COColumnDensity:
             12C/13C = {self.ratio_thick_to_thin:.2f}
             Hmass = {Hmass:.3E}
             mean mol weight (atomic) = {mean_molecular_weight_neutral:.2f}
+            mean mol weight (molecular) = {mean_molecular_weight_molecular:.2f}
             adopted particle mass = {self.particle_mass:.2E}
             pixel scale = {self.pixel_scale.to(u.arcsec):.3E}
             pixel area = {self.pixel_area.to(u.pc**2):.3E}
@@ -1337,11 +1342,12 @@ class COData:
         # All the data sources we will use and keys to describe them
         self.velocity_limits = velocity_limits
         self.vel_stub_simple = make_simple_vel_stub(self.velocity_limits)
+        mmw_stub = ".mmwcor" if _mmw_corrected else ".mmwOLD"
         self._map_filenames = {
             "column_70-160": "herschel/coldens_70-160_colorsolution_70zeroedat160.fits",
             "column_160-500": "herschel/m16_coldens_high.fits",
-            "column_13co10": f"purplemountain/column_density_v3__13co10-pmo_{self.vel_stub_simple}.fits",
-            "column_c18o10": f"purplemountain/column_density_v3__c18o10-pmo_{self.vel_stub_simple}.fits",
+            "column_13co10": f"purplemountain/column_density_v4__13co10-pmo_{self.vel_stub_simple}{mmw_stub}.fits",
+            "column_c18o10": f"purplemountain/column_density_v4__c18o10-pmo_{self.vel_stub_simple}{mmw_stub}.fits",
             "ratio_32_to_10": f"apex/ratio_v2_13co_32_to_10_pmo_{self.vel_stub_simple}.fits", # 13co32 to 13co10
             "ratio_13_to_18": f"purplemountain/ratio_13co_to_c18o_10_pmo_{self.vel_stub_simple}.fits", # 13co10 to c18o10
             "12co10": "12co10-pmo",
@@ -1768,7 +1774,7 @@ def sample_masked_map(region_name='N19'):
         mask[islice, jslice] = False
 
         # Configure velocity limits for later
-        velocity_limits = (11*kms, 21*kms)
+        velocity_limits = (10*kms, 21*kms) # changed from 11-21 to 10-21 on 2025-06-15
         vel_stub_simple = make_simple_vel_stub(velocity_limits)
 
 
@@ -1814,13 +1820,14 @@ def sample_masked_map(region_name='N19'):
         print(f"Mask area: {(pixel_area_physical*n_pixels_mask):.8f}")
         # Check mass using an average column density
         coldens = [0.5, 2] * u.cm**-2 * 1e22 # N(H2)
-        mass = (coldens * mean_molecular_weight_neutral * 2 * Hmass * pixel_area_physical * n_pixels_mask).to(u.solMass)
+        mass = (coldens * mean_molecular_weight_molecular * Hmass * pixel_area_physical * n_pixels_mask).to(u.solMass)
         print(mass)
 
 
     save_df_path = os.path.join(catalog.utils.m16_data_path, "misc_regrids")
+    mmw_stub = ".mmwcor" if _mmw_corrected else ".mmwOLD"
 
-    if False:
+    if True:
         # Save mask to FITS for later reference
         mask_float = mask.astype(float)
         hdr = mask_wcs.to_header()
@@ -1828,7 +1835,7 @@ def sample_masked_map(region_name='N19'):
         hdr['CREATOR'] = f"Ramsey, {__file__}.sample_masked_map"
         hdr['COMMENT'] = f"Using PMO grid and beam"
         hdu = fits.PrimaryHDU(data=mask_float, header=hdr)
-        save_mask_name = f"sample_mask_{region_name}_{vel_stub_simple}_regrid_mask.fits"
+        save_mask_name = f"sample_mask_{region_name}_{vel_stub_simple}_regrid_mask{mmw_stub}.fits"
         hdu.writeto(os.path.join(save_df_path, save_mask_name), overwrite=False)
         print("Wrote to ", save_mask_name)
 
@@ -1847,7 +1854,7 @@ def sample_masked_map(region_name='N19'):
     # Done with this mask!
 
 
-    if False:
+    if True:
         # Try reprojecting it to some sample data
         lookup_obj = COData(velocity_limits)
         lookup_obj.sample_type_setting = "mask_vals"
@@ -1857,7 +1864,7 @@ def sample_masked_map(region_name='N19'):
         result_df = pd.DataFrame(lookup_obj.sample_all_data())
 
         assert os.path.exists(save_df_path)
-        save_df_name = f"sample_mask_{region_name}_{vel_stub_simple}_vals_regrid.csv"
+        save_df_name = f"sample_mask_{region_name}_{vel_stub_simple}_vals_regrid{mmw_stub}.csv"
         save_df_full_path = os.path.join(save_df_path, save_df_name)
 
         """
@@ -1868,6 +1875,8 @@ def sample_masked_map(region_name='N19'):
         result_df["column_density_70-160"] = result_df["column_density_70-160"] / 2
         print(result_df)
 
+        if os.path.isfile(save_df_full_path):
+            raise RuntimeError(f"File already exists! {save_df_full_path}")
         result_df.to_csv(save_df_full_path)
         # plt.show()
 
@@ -2826,10 +2835,11 @@ def calc_mass_from_masked_data(region_name):
     Using the 12co32 mask, PMO-grid data, find the mass for all the column density measurements.
     0.06404582 pc2 is the pixel area
     """
+    mmw_stub = ".mmwcor" if _mmw_corrected else ".mmwOLD"
 
     data_fns = {
-        "N19": "misc_regrids/sample_mask_N19_11.0.21.0_vals_regrid.csv",
-        "BNR": "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
+        "N19": f"misc_regrids/sample_mask_N19_10.0.21.0_vals_regrid{mmw_stub}.csv", # changed 11 to 10 on 2025-06-15
+        "BNR": f"misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid{mmw_stub}.csv"
     }
     data_fn = data_fns[region_name]
     reg_stub = region_name
@@ -2849,7 +2859,7 @@ def calc_mass_from_masked_data(region_name):
         cdstd = np.std(col) * u.cm**-2
         cdtot = np.sum(col) * u.cm**-2 # works even though there are nans!
         pixel_area_physical = 0.06404582 * u.pc**2 # see notes 2023-12-30
-        mass = (cdtot * pixel_area_physical * 2 * Hmass * mean_molecular_weight_neutral).to(u.solMass)
+        mass = (cdtot * pixel_area_physical * Hmass * mean_molecular_weight_molecular).to(u.solMass)
         print(f"mean, std cd {cdavg:.1E} +/- {cdstd:.1E}")
         print(f"mass {mass:.2f}\n\t({mass:.1E})")
         print()
@@ -3159,11 +3169,14 @@ def unified_chisq_plotting_system(region_label="N19", abscal_pct=10):
     tk = 30
     grid_reader, extra_stub = grid_reader_filename_wrapper(tk, 'fine0.05')
     # grid_reader, extra_stub = grid_reader_filename_wrapper(tk)
+
+    mmw_stub = ".mmwcor" if _mmw_corrected else ".mmwOLD"
+
     if region_label == "N19":
-        data_fn = "misc_regrids/sample_mask_N19_11.0.21.0_vals_regrid.csv"
+        data_fn = f"misc_regrids/sample_mask_N19_10.0.21.0_vals_regrid{mmw_stub}.csv"
         # data_fn = "misc_regrids/sample_mask_test_1_11.0.21.0_vals_regrid.csv" # N19
     elif region_label == "BNR":
-        data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv"
+        data_fn = f"misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid{mmw_stub}.csv"
         # data_fn = "misc_regrids/sample_mask_BNR_23.0.27.0_vals_regrid.csv" # BNR
     else:
         raise RuntimeError(f"unknown region label {region_label}")
@@ -3425,8 +3438,8 @@ def unified_chisq_plotting_system(region_label="N19", abscal_pct=10):
     ax_center.set_xlabel("log$_{10}\ n$ [cm$^{-3}$]")
     ax_center.set_ylabel("log$_{10}\ {\\rm N}(H_2)$ [cm$^{-2}$]")
 
-    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid_full_analysis{tk}{extra_stub}_{region_label}_abscal{abscal_pct}.png"),
-        metadata=catalog.utils.create_png_metadata(title=f"+{abscal_pct}pct abscal. {', '.join(measurement_keys)}",
+    plt.savefig(os.path.join(catalog.utils.todays_image_folder(), f"chisq_grid_full_analysis{tk}{extra_stub}_{region_label}_abscal{abscal_pct}{mmw_stub}.png"),
+        metadata=catalog.utils.create_png_metadata(title=f"+{abscal_pct}pct abscal. {', '.join(measurement_keys)} MMW{mmw_stub}",
             file=__file__, func="unified_chisq_plotting_system"))
 
 def mask_footprint_reference_plot():
@@ -3477,7 +3490,7 @@ def print_out_particle_mass_for_rho():
     """
     atomic_particle_mass = Hmass * mean_molecular_weight_neutral
     print(f"Atomic Hmass * mu: {atomic_particle_mass:.2E}")
-    print(f"Molecular 2 * Hmass * mu: {2*atomic_particle_mass:.2E}")
+    print(f"Molecular 2 * Hmass * mu: {2*atomic_particle_mass:.2E}") # 2025-06-15: wrong, but doesn't look like we use this
 
 
 def trim_CO_mass_to_CII_grid(velocity_limits=None):
@@ -3490,7 +3503,8 @@ def trim_CO_mass_to_CII_grid(velocity_limits=None):
         print(f"WARNING!!!! VELOCITY LIMITS DEFAULTING TO {velocity_limits=}")
         raise RuntimeError("Remove this if you really want that; reminder that we use 10-21 for the paper")
     vel_stub_simple = make_simple_vel_stub(velocity_limits)
-    pmo_fn = f"purplemountain/column_density_v3__13co10-pmo_{vel_stub_simple}.fits"
+    mmw_stub = ".mmwcor" if _mmw_corrected else ".mmwOLD"
+    pmo_fn = f"purplemountain/column_density_v4__13co10-pmo_{vel_stub_simple}{mmw_stub}.fits"
     # Make CII valid mask
     cii_mask_fn = "sofia/cii_mom0_0.0.40.0.fits"
     cii_img, cii_hdr = fits.getdata(catalog.utils.search_for_file(cii_mask_fn), header=True)
@@ -6665,7 +6679,7 @@ def energetics_calculations():
     """ Part 5: N19 Molecular """
     n19_h2_n = 5.6e3 * u.cm**-3
     n19_h2_col = 1.1e22 * u.cm**-2
-    n19_h2_mass = 4200 * u.solMass
+    n19_h2_mass = 3700 * u.solMass # was 4200, updated 2025-06-15
     n19_size_mol = [2, 3] * u.pc
     l_mol = _limb_brightening_path(*n19_size_mol)
     print(f"Molecular limb brightening l: {l_mol:.1f}, l/2: {l_mol/2:.1f}")
@@ -6682,14 +6696,24 @@ def energetics_calculations():
         return therm_p, f"{therm_p:.2E} -> {therm_p:.1E}"
     fwhm_conv = 2*np.sqrt(2*np.log(2))
     print(f"fwhm conv {fwhm_conv:.3f}")
-    def _generic_turb_p(fwhm, n, mmw_mod):
-        particle_mass = Hmass * mean_molecular_weight_neutral * mmw_mod
+    class MmwType(enum.Enum):
+        Atomic = enum.auto()
+        Molecular = enum.auto()
+    def _generic_turb_p(fwhm, n, mmw: MmwType):
+        mmw = MmwType(mmw)
+        if mmw is MmwType.Atomic:
+            mmw = mean_molecular_weight_neutral
+        elif mmw is MmwType.Molecular:
+            mmw = mean_molecular_weight_molecular
+        else:
+            raise ValueError(f"What? {mmw}")
+        particle_mass = Hmass * mmw
         rho = n * particle_mass
         turb_p = p_conv(rho * (fwhm/fwhm_conv)**2)
         return turb_p, f"{turb_p:.2E} -> {turb_p:.1E}"
     pdr_therm_p, txt = _generic_therm_p(n19_pdr_t, n19_cii_n)
     print(f"N19 PDR shell thermal pressure {txt}")
-    pdr_turb_p, txt = _generic_turb_p(3.5*kms, n19_cii_n, 1)
+    pdr_turb_p, txt = _generic_turb_p(3.5*kms, n19_cii_n, MmwType.Atomic)
     print(f"N19 PDR shell turbulent pressure {txt}")
     print("N19 PDR magnetic:")
     _reverse_engineer_B_field(pdr_turb_p)
@@ -6709,7 +6733,7 @@ def energetics_calculations():
     h2_t = 30 * u.K
     h2_therm_p, txt = _generic_therm_p(h2_t, n19_h2_n)
     print(f"N19 H2 shell thermal pressure {txt}")
-    h2_turb_p, txt = _generic_turb_p(1*kms * fwhm_conv, n19_h2_n, 2) # the 2 needs to be replaced/refactored, we can't just multiply by 2. 2025-06-01.
+    h2_turb_p, txt = _generic_turb_p(1*kms * fwhm_conv, n19_h2_n, MmwType.Molecular) # Need to fix 2025-06-01. Fixed 2025-06-15
     print(f"N19 H2 shell turbulent pressure {txt}")
     print("N19 H2 magnetic:")
     _reverse_engineer_B_field(h2_turb_p)
@@ -6719,7 +6743,7 @@ def energetics_calculations():
     # n19_h2_ke = (0.5 * n19_h2_mass * n19_shell_v**2).to(u.erg)
     n19_h2_ke = ke_f(n19_h2_mass)
     print(f"N19 H2 kinetic energy {n19_h2_ke:.2E} -> {n19_h2_ke:.0E}")
-    n19_h2_therm_e = ((n19_h2_mass/(Hmass * 2 * mean_molecular_weight_neutral)) * (const.k_B * h2_t)).to(u.erg)
+    n19_h2_therm_e = ((n19_h2_mass/(Hmass * mean_molecular_weight_molecular)) * (const.k_B * h2_t)).to(u.erg)
     print(f"N19 H2 thermal energy {n19_h2_therm_e:.1E} -> {n19_h2_therm_e:.0E}")
     print(dashes)
     print()
@@ -8174,10 +8198,11 @@ if __name__ == "__main__":
         ### new wave experimental 2024-01-15
         'blue_clump': (6*kms, 11*kms), 'high_velocity': (35*kms, 40*kms),
     }
-    # for s in ['green-cloud', 'red-cloud', 'redshifted_2', 'north_cloud_2']:
-    # for s in ['redshifted_2', 'north_cloud_2']:
+    # for s in ['north_cloud_3', 'green-cloud', 'red-cloud', 'redshifted_2']:
     # for s in ['north_cloud_3']:
-    #     co_column_manage_inputs(line='10', isotope='13', velocity_limits=velocity_limits[s], cutout_reg_stub=None)
+    for s in ['blue_clump']:
+        for iso in ['13']: # ['13', '18']:
+            co_column_manage_inputs(line='10', isotope=iso, velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
         # get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
 
@@ -8200,12 +8225,15 @@ if __name__ == "__main__":
     #     k = f"t{i}"
     # compare_data_with_radex_grid("t28")
     # scatter_radex_grid()
-    # calc_mass_from_masked_data("BNR")
+    # calc_mass_from_masked_data("N19")
     # sum_chisq_to_get_masked_area_errorbars()
     # individual_pixel_ensemble_chisq()
     # for l in ["N19", "BNR"]:
+    #     print("REGION: ", l, "="*8)
+    #     print("Good Abscal: 10 -- USE THIS ONE!!!!")
     #     unified_chisq_plotting_system(region_label=l, abscal_pct=10)
-    #     for a in [5, 10, 15]:
+    #     for a in [5, 15]: # [5, 10, 15] but we already did 10
+    #         print(f"for comparison, ABSCAL {a}")
     #         unified_chisq_plotting_system(region_label=l, abscal_pct=a)
     # print_out_particle_mass_for_rho()
     # mask_footprint_reference_plot()
@@ -8254,10 +8282,10 @@ if __name__ == "__main__":
     # spitzer_expansion_plot()
     # ekin_ew_vs_age_plot()
     # integrate_cii_and_FIR_luminosities()
-    for vlim_label in ('north_cloud_3', 'green-cloud', 'red-cloud', 'redshifted_2'):
-        print(f"{vlim_label=} -> {velocity_limits[vlim_label]=}")
-        trim_CO_mass_to_CII_grid(velocity_limits=velocity_limits[vlim_label])
-        print('\n' + '='*8 + '\n')
+    # for vlim_label in ('north_cloud_3', 'green-cloud', 'red-cloud', 'redshifted_2'):
+    #     print(f"{vlim_label=} -> {make_vel_stub(velocity_limits[vlim_label])}")
+    #     trim_CO_mass_to_CII_grid(velocity_limits=velocity_limits[vlim_label])
+    #     print('\n' + '='*8 + '\n')
     # bubble_geometry()
     # bubble_cross_cut(select=3.2)
     # fake_bubble_spectra()
