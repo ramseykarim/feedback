@@ -482,6 +482,26 @@ def get_pv_and_regions(reg_filename_or_idx):
     return (pv_path, reg_list, reg_fn_stub)
 
 
+def get_stars_skycoord():
+    """
+    Get stars as lists of skycoords (and just convert to galactic while we're at it)
+    """
+    merged_df = pd.read_csv(catalog.utils.search_for_file("catalogs/HS_super_catalog.csv"), index_col=0)
+    merged_df['SkyCoord'] = SkyCoord(merged_df['RA'].values * u.deg, merged_df['DE'].values * u.deg, frame='icrs')
+
+    fuv_colnames = ('s_log10FUV_flux_solLum', 'h_log10FUV_flux_solLum')
+    _fuv_filters = [merged_df[c] > 4.49 for c in fuv_colnames]
+    fuv_filter = _fuv_filters[0] | _fuv_filters[1]
+    stoop_idx_col = merged_df['Stoop_tC1_idx']
+    index_filter = (stoop_idx_col <= 142) & (stoop_idx_col != 7)
+
+    filtered_df = merged_df[fuv_filter & index_filter]
+
+    coords = SkyCoord(filtered_df['SkyCoord'].values)
+    return coords.galactic
+
+
+
 """
 CO Column density
 """
@@ -5769,6 +5789,10 @@ def cii_co_combined_channel_maps():
     beam_patch_fc = "white" # face color
     pixel_scale = ref_wcs.proj_plane_pixel_scales()[0] # gives RA, Dec scales; pick one. They're almost certainly equal, so doesn't matter
 
+    star_coords = get_stars_skycoord()
+    def _plot_stars(ax):
+        ax.scatter(star_coords.l.deg, star_coords.b.deg, ec='k', linewidth=0.5, fc='none', marker='+', transform=ax.get_transform('world'))
+
     # Save the last image from each line for colorbar making
     im_cache = [None]*len(line_names)
 
@@ -5800,15 +5824,21 @@ def cii_co_combined_channel_maps():
             # Coordinate labels
             if ss.is_last_row() and ss.is_first_col():
                 # Coordinates only on bottom left corner panel
-                # AND only Dec on first line, then RA on both lines
+                # AND only RA and Dec on first line, (previously: then RA on both lines)
                 # Mess around with the rotation, position, and size of coordinate labels
-                ax.coords[0].set_ticklabel(rotation=tick_labelrotation, rotation_mode='anchor', pad=tick_labelpad, fontsize=tick_labelsize, ha='right', va='top')
-                ax.coords[0].set_major_formatter('d.dd')
                 if cube_idx == 0:
+                    ax.coords[0].set_ticklabel(rotation=tick_labelrotation, rotation_mode='anchor', pad=tick_labelpad, fontsize=tick_labelsize, ha='right', va='top')
+                    ax.coords[0].set_major_formatter('d.dd')
                     ax.coords[1].set_major_formatter('d.dd')
                     ax.coords[1].set_ticklabel(fontsize=tick_labelsize)
+
+                    # Plot stars
+                    _plot_stars(ax)
+
                 else:
+                    ax.tick_params(axis='x', labelbottom=False)
                     ax.tick_params(axis='y', labelleft=False)
+
             else:
                 # If not the bottom left panel, no coordinates (panels have no space in between)
                 # Hide coordinates
@@ -7858,6 +7888,12 @@ def contours_13cii(fixed_diameter=None):
         pixreg.visual['linewidth'] = 2
         pixreg.plot(ax=ax)
 
+
+    # Plot IRAS 18156-1343 from https://simbad.u-strasbg.fr/simbad/sim-basic?Ident=IRAS+18156-1343&submit=SIMBAD+search
+    iras_coord = SkyCoord("18 18 28.6 -13 42 22", frame='icrs', unit=(u.hourangle, u.deg))
+    ax.scatter([iras_coord.fk5.ra.deg], [iras_coord.fk5.dec.deg], marker='D', ec=marcs_colors[1], fc='none', linewidth=3, s=100, transform=ax.get_transform('world'))
+
+
     ax.set_xlabel("Right Ascension")
     ax.set_ylabel("Declination")
     plt.tight_layout()
@@ -8200,9 +8236,9 @@ if __name__ == "__main__":
     }
     # for s in ['north_cloud_3', 'green-cloud', 'red-cloud', 'redshifted_2']:
     # for s in ['north_cloud_3']:
-    for s in ['blue_clump']:
-        for iso in ['13']: # ['13', '18']:
-            co_column_manage_inputs(line='10', isotope=iso, velocity_limits=velocity_limits[s], cutout_reg_stub=None)
+    # for s in ['blue_clump']:
+    #     for iso in ['13']: # ['13', '18']:
+    #         co_column_manage_inputs(line='10', isotope=iso, velocity_limits=velocity_limits[s], cutout_reg_stub=None)
         # get_co32_to_10_ratio_for_density(velocity_limits=velocity_limits[s], isotope10='13', noise_cutoff=0)
         # get_13co10_to_c18o10_ratio_for_opticaldepth(velocity_limits=velocity_limits[s])
 
@@ -8277,7 +8313,7 @@ if __name__ == "__main__":
     # peak_T_velocity_map()
     # peak_T_and_moment_maps_CO(isotope='13', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
     # peak_T_and_moment_maps_CO(isotope='12', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
-    # contours_13cii(x)
+    contours_13cii(4)
     # spectra_13cii(x)
     # spitzer_expansion_plot()
     # ekin_ew_vs_age_plot()

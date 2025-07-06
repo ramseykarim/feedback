@@ -131,6 +131,22 @@ def big_average_spectrum_figure():
     cax = ref_ax.inset_axes([1, 0, 0.05, 1])
     fig.colorbar(im, cax=cax, label=f"{get_data_name(reference_line_stub)} integrated intensity between {make_vel_stub(ref_vel_lims)} ({ref_unit.to_string('latex_inline')})", orientation='vertical')
 
+
+    """ Plot stars on reference """
+    star_coords = get_stars_skycoord()
+    ref_ax.scatter(star_coords.l.deg, star_coords.b.deg, color='white', marker='+', transform=ref_ax.get_transform('world'))
+
+
+    """ Beam """
+    beam_patch_ec = "grey" # edge color
+    beam_patch_fc = "white" # face color
+    pixel_scale = ref_wcs.proj_plane_pixel_scales()[0]
+    beam_patch = ref_img_info['beam'].ellipse_to_plot(*(ref_ax.transAxes + ref_ax.transData.inverted()).transform([0.9, 0.1]), pixel_scale)
+    beam_patch.set(alpha=0.9, facecolor=beam_patch_fc, edgecolor=beam_patch_ec)
+    ref_ax.add_artist(beam_patch)
+    print("Beam:", ref_img_info['beam'])
+
+
     """
     Spectra
 
@@ -776,4 +792,4 @@ def pv_n19():
 
 
 if __name__ == "__main__":
-    m16_blue_clump()
+    big_average_spectrum_figure()
