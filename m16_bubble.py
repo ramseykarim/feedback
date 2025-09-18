@@ -6863,14 +6863,21 @@ def n19_time_calculation():
     def _vel_from_r(density):
         t = _age_from_r(density)
         return cs * (1 + (7*t*cs)/(4*_stromgren(density)))**(-3./7)
+    def _vel_from_r_simpler_way(density):
+        # 2025-09-17 why didn't I do it this way first?
+        # Sanity check: it is exactly the same as above, I checked.
+        r = _stromgren(density)
+        return cs * (r/r_shell)**(3./4)
     if True:
         print([f"{x:.3f}" for x in _age_from_r(n)])
         print([f"{x:.3f}" for x in _age_from_v(n)])
         print([f"{x:.3f}" for x in _vel_from_r(n)])
+        print([f"{x:.3f}" for x in _vel_from_r_simpler_way(n)])
 
     print("Weaver")
     lmech = 2.23e47 * u.erg/u.Myr
-    l36 = (lmech/(1e36*u.erg/u.s)).decompose()
+    l_to_36 = lambda lum : (lum/(1e36*u.erg/u.s)).decompose()
+    l36 = l_to_36(lmech)
     def _w77_t_from_r(density):
         dens = density.to(u.cm**-3).to_value()
         first = (1./27)**(5./3)
@@ -6891,6 +6898,18 @@ def n19_time_calculation():
     print([f"{x:.3f}" for x in _w77_t_from_v(n)])
     print([f"{x:.3f}" for x in _w77_v_from_r(n)])
 
+
+    # 2025-09-17: Try Weaver only for M16 just for kicks.
+    lmech_sollum = [2, 4] * u.solLum * 1e3 # 2 from H, 4 from S, see Table 3 in paper
+    lmech = lmech_sollum.to(u.erg/u.Myr)
+    print(f"M16 {lmech=}")
+    lmech = lmech[1] # I use S in Table 4, so I adopt that here
+    r_shell = 20*u.pc
+    v = 10*kms
+    print("M16 Weaver")
+    print([f"{x:.3f}" for x in _w77_t_from_r(n)])
+    print([f"{x:.3f}" for x in _w77_t_from_v(n)])
+    print([f"{x:.3f}" for x in _w77_v_from_r(n)])
 
 def cii_channel_maps_photoseries_slides_animation():
     """
@@ -8313,7 +8332,7 @@ if __name__ == "__main__":
     # peak_T_velocity_map()
     # peak_T_and_moment_maps_CO(isotope='13', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
     # peak_T_and_moment_maps_CO(isotope='12', transition='10', velocity_limits=velocity_limits['north_cloud_2'])
-    contours_13cii(4)
+    # contours_13cii(4)
     # spectra_13cii(x)
     # spitzer_expansion_plot()
     # ekin_ew_vs_age_plot()
@@ -8329,5 +8348,5 @@ if __name__ == "__main__":
     # vizier_query_dark_clouds()
     # n19_self_absorption()
     # energetics_calculations()
-    # n19_time_calculation()
+    n19_time_calculation()
     # cii_channel_maps_photoseries_slides_animation()
