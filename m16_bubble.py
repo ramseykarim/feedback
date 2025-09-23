@@ -6868,11 +6868,17 @@ def n19_time_calculation():
         # Sanity check: it is exactly the same as above, I checked.
         r = _stromgren(density)
         return cs * (r/r_shell)**(3./4)
+    def _vel_from_r_inertia(density):
+        r = _stromgren(density)
+        return cs * ((4./3)**0.5) * (r/r_shell)**(3./4)
     if True:
+        print("ages from r and v")
         print([f"{x:.3f}" for x in _age_from_r(n)])
         print([f"{x:.3f}" for x in _age_from_v(n)])
+        print("vels from r via t, r directly, and r with inertia")
         print([f"{x:.3f}" for x in _vel_from_r(n)])
         print([f"{x:.3f}" for x in _vel_from_r_simpler_way(n)])
+        print([f"{x:.3f}" for x in _vel_from_r_inertia(n)])
 
     print("Weaver")
     lmech = 2.23e47 * u.erg/u.Myr
